@@ -648,3 +648,92 @@ vulnagent_selfcheck_failed 0
 | admin | Admin@12345 | admin | 张启明 |
 | operator | Ops@12345 | operator | 李维 |
 | viewer | View@12345 | viewer | 陈可 |
+
+---
+
+## 10. 业务字典 `GET /meta`
+
+登录后任意角色可读，前端据此渲染枚举，避免字典在前端重复维护。
+
+```json
+{
+  "version": "0.1.0-dev",
+  "demo": false,
+  "statuses": [{ "value": "open", "label": "待处理" }],
+  "priorities": [{ "value": "P0", "label": "立即处置" }],
+  "roles": [{ "value": "admin", "label": "管理员" }],
+  "exposures": [{ "value": "public", "label": "公网" }],
+  "tiers": [{ "value": "core", "label": "核心" }],
+  "ecosystems": ["apk", "deb", "golang", "maven", "npm", "pypi", "rpm"],
+  "defaultPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 },
+                     "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
+  "riskFormula": "100 × (0.40·CVSS/10 + 0.20·EPSS + 0.25·在野利用 + 0.15·资产权重)",
+  "passwordPolicy": { "minLength": 10, "requireLetterDigit": true, "requireDiffFromOld": true,
+                      "sessionIdleMinutes": 30, "loginLockoutMinutes": 5 },
+  "harnessEnabled": true
+}
+```
+
+`statuses` 顺序即前端展示顺序，共 8 种状态；`harnessEnabled` 为 false 时助手页显示配置提示。
+
+---
+
+## 11. Agent 助手（Harness）
+
+模型凭据通过 `VA_LLM_BASE_URL`、`VA_LLM_API_KEY`、`VA_LLM_MODEL` 注入（通用 OpenAI 兼容协议），三项齐备才启用。未启用时相关接口返回 `503 harness_disabled`。
+
+### GET /agent/tools
+
+```json
+{ "enabled": true, "model": "deepseek-v4-1-flash-261017",
+  "tools": [{ "name": "list_findings", "description": "…", "risk": "low",
+              "readOnly": true, "minRole": "viewer", "params": { "type": "object" } }] }
+```
+
+工具共 16 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
+
+| 风险 | 工具 |
+|---|---|
+| low（只读，直接执行） | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、list_audit_logs（admin）、get_sync_status、get_selfcheck_latest |
+| medium（需审批） | rescan_asset、run_selfcheck（admin） |
+| high（需审批 + 口令再认证） | update_finding_status、create_ticket、upsert_product_map（admin） |
+
+### POST /agent/sessions
+
+请求 `{ "title": "排查 P0" }`，返回 `{ "session": { "id": "…", "owner": "admin", … } }`。会话按账号隔离，他人会话一律 403。
+
+### GET /agent/sessions
+
+返回当前账号最近 50 个会话，按更新时间倒序。
+
+### GET /agent/sessions/{id}/messages
+
+返回 `{ "session": {…}, "messages": [ { "role": "user|assistant|tool", "content": "…", "toolCalls": "[]", "toolCallId": "" } ] }`。
+
+### POST /agent/sessions/{id}/messages
+
+请求 `{ "content": "…" }`，响应为 `text/event-stream`，每行 `data: <json>`：
+
+| type | data | 说明 |
+|---|---|---|
+| message | `{role, content, toolCalls?}` | 用户或助手消息 |
+| tool_call | `{id, tool, args}` | 模型发起工具调用 |
+| tool_result | `{tool, ok, result}` | 工具结果（已脱敏） |
+| approval_required | `{…Approval}` | 写操作等待审批，本轮暂停 |
+| done | `{steps, waitingApproval?}` | 本轮结束 |
+| error | `{message}` | 执行失败 |
+
+### POST /agent/sessions/{id}/resume
+
+审批处理完成后继续本轮对话，响应同为 SSE。存在未处理审批时返回 `409 approval_pending`。
+
+### POST /agent/approvals/{id}
+
+请求 `{ "decision": "approve|reject", "password": "…" }`。
+
+- 审批一次性：`approved` 后立即消费，重复处理返回 `409 approval_expired`。
+- 审批绑定「会话 + 用户 + 工具 + 参数 SHA-256」，参数变化即失效；有效期 10 分钟。
+- high 风险必须携带当前账号口令（或 5 分钟内的再认证记录），否则返回 `401 reauth_required`。
+- 批准后立即执行工具并写入工具结果消息，前端再调用 `resume` 让模型汇总。
+
+九道执行闸门：静态工具表 → 参数 JSON ≤ 8KB → 角色最小权限 → 每会话 20 次/分钟 → 风险分级 → 参数指纹绑定 → 一次性消费 + TTL → 高风险口令再认证 → 每轮最多 4 步。所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals` 并记审计。

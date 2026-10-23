@@ -15,6 +15,10 @@ $env:VA_ADDR = ':8787'
 # $env:VA_COOKIE_SECURE = '1'
 # CVE 情报密钥建议放系统环境变量，避免写进脚本
 # $env:VULNAGENT_CVE_API_KEY = '...'
+# Agent Harness：三项齐备才启用，建议从系统环境变量注入，不要写进脚本
+# $env:VA_LLM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
+# $env:VA_LLM_API_KEY = '...'
+# $env:VA_LLM_MODEL = 'deepseek-v4-1-flash-261017'
 
 Write-Host "VulnAgent 生产模式启动：$env:VA_ADDR，数据目录 $env:VA_DATA_DIR" -ForegroundColor Cyan
 Set-Location (Join-Path $root 'server')

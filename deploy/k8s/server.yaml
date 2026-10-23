@@ -56,11 +56,26 @@ spec:
               value: "1"
             - name: VA_RESCAN_INTERVAL
               value: "30m"
-            - name: VULNAGENT_CVE_API_KEY
+            - name: VA_SEED_DEMO
+              value: "off"
+            # Agent Harness：三项齐备才启用，全部来自 Secret
+            - name: VA_LLM_BASE_URL
               valueFrom:
                 secretKeyRef:
                   name: vulnagent-secrets
-                  key: cve-api-key
+                  key: llm-base-url
+                  optional: true
+            - name: VA_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vulnagent-secrets
+                  key: llm-api-key
+                  optional: true
+            - name: VA_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: vulnagent-secrets
+                  key: llm-model
                   optional: true
           volumeMounts:
             - name: data
