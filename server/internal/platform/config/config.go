@@ -28,6 +28,8 @@ const (
 	DefaultIntelBaseURL = "https://cve.imfht.com"
 	// DefaultEPSSURL FIRST 每日全量 EPSS 评分（gzip CSV）
 	DefaultEPSSURL = "https://epss.cyentia.com/epss_scores-current.csv.gz"
+	// DefaultOSVURL OSV 精确版本查询接口
+	DefaultOSVURL = "https://api.osv.dev/v1/query"
 )
 
 // Config 进程运行配置
@@ -43,7 +45,9 @@ type Config struct {
 	RescanDebounce time.Duration
 	IntelBaseURL   string
 	EPSSURL        string
+	OSVURL         string
 	CookieSecure   bool
+	AgentToken     string
 }
 
 // Load 读取环境变量并填充默认值。缺失项一律回落到默认值，不返回错误，
@@ -65,7 +69,9 @@ func Load() Config {
 		RescanDebounce: rescanDebounce(),
 		IntelBaseURL:   envOr("VULNAGENT_CVE_BASE_URL", DefaultIntelBaseURL),
 		EPSSURL:        envOr("VA_EPSS_URL", DefaultEPSSURL),
+		OSVURL:         envOr("VA_OSV_URL", DefaultOSVURL),
 		CookieSecure:   truthy("VA_COOKIE_SECURE"),
+		AgentToken:     strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN")),
 	}
 }
 

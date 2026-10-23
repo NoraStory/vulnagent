@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 )
@@ -63,41 +64,10 @@ func ensureProductMap(db *sql.DB) (int, error) {
 	return inserted, nil
 }
 
-// loadProductMap 读取映射，键为 eco|name（小写）
-func loadProductMap(db *sql.DB) (map[string]productMapping, error) {
-	rows, err := db.Query(`SELECT eco, name, product, confidence, source, updated_at FROM product_map`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]productMapping)
-	for rows.Next() {
-		var m productMapping
-		if err := rows.Scan(&m.Eco, &m.Name, &m.Product, &m.Confidence, &m.Source, &m.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out[strings.ToLower(m.Eco)+"|"+strings.ToLower(m.Name)] = m
-	}
-	return out, rows.Err()
-}
-
 // rematchAllAssets 映射变更后重新匹配所有资产（只新增/更新结论，不删除历史）
 func (a *App) rematchAllAssets() (int, error) {
-	rows, err := a.db.Query(`SELECT id FROM assets ORDER BY id`)
+	ids, err := a.assetRepo().IDs(context.Background())
 	if err != nil {
-		return 0, err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 
@@ -107,7 +77,7 @@ func (a *App) rematchAllAssets() (int, error) {
 		if _, _, err := a.matchAssetFindings(policy, id); err != nil {
 			return rematched, err
 		}
-		if _, err := reconcileFindingStates(a.db, id, "系统"); err != nil {
+		if _, err := a.reconcileFindingStates(id, "系统"); err != nil {
 			return rematched, err
 		}
 		rematched++

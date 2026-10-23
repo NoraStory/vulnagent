@@ -45,7 +45,7 @@ func (a *App) rescanAsset(assetID int64, actor string) (scanOutcome, error) {
 	if _, osvErr := a.osvScanAsset(assetID, actor); osvErr != nil {
 		slog.Warn("OSV 匹配失败", "assetId", assetID, "err", osvErr)
 	}
-	recon, err := reconcileFindingStates(a.db, assetID, actor)
+	recon, err := a.reconcileFindingStates(assetID, actor)
 	if err != nil {
 		return out, err
 	}
@@ -58,23 +58,11 @@ func (a *App) rescanAsset(assetID int64, actor string) (scanOutcome, error) {
 func (a *App) rescanAssets(assetIDs []int64, all bool, actor string) ([]scanOutcome, error) {
 	ids := assetIDs
 	if all {
-		rows, err := a.db.Query(`SELECT id FROM assets ORDER BY id`)
+		list, err := a.assetRepo().IDs(context.Background())
 		if err != nil {
 			return nil, err
 		}
-		ids = nil
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
+		ids = list
 	}
 	if len(ids) > 500 {
 		ids = ids[:500]

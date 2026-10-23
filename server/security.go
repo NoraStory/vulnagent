@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/platform/config"
 )
 
@@ -226,8 +228,8 @@ func (a *App) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "新口令不能与原口令相同")
 		return
 	}
-	var hash string
-	if err := a.db.QueryRow(`SELECT pwd_hash FROM users WHERE username = ?`, u.Username).Scan(&hash); err != nil {
+	hash, err := a.identityRepo().PasswordHash(r.Context(), u.Username)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "账号不存在")
 		return
 	}
@@ -241,7 +243,7 @@ func (a *App) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新口令失败")
 		return
 	}
-	if _, err := a.db.Exec(`UPDATE users SET pwd_hash = ? WHERE username = ?`, string(newHash), u.Username); err != nil {
+	if err := a.identityRepo().UpdatePassword(r.Context(), u.Username, string(newHash)); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新口令失败")
 		return
 	}
@@ -263,21 +265,20 @@ func (a *App) handleUsersList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "admin"); !ok {
 		return
 	}
-	rows, err := a.db.Query(`SELECT username, name, role, last_login, disabled FROM users ORDER BY id ASC`)
+	rows, err := a.identityRepo().ListAccounts(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询账号失败")
 		return
 	}
-	defer rows.Close()
-	items := make([]settingsUser, 0, 8)
-	for rows.Next() {
-		var u settingsUser
-		var disabled int
-		if err := rows.Scan(&u.Username, &u.Name, &u.Role, &u.LastLogin, &disabled); err != nil {
-			continue
-		}
-		u.Disabled = disabled != 0
-		items = append(items, u)
+	items := make([]settingsUser, 0, len(rows))
+	for _, acc := range rows {
+		items = append(items, settingsUser{
+			Username:  acc.Username,
+			Name:      acc.Name,
+			Role:      acc.Role,
+			LastLogin: acc.LastLogin,
+			Disabled:  acc.Disabled,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
@@ -319,8 +320,12 @@ func (a *App) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "创建账号失败")
 		return
 	}
-	if _, err := a.db.Exec(`INSERT INTO users(username, name, pwd_hash, role, disabled, last_login)
-		VALUES(?,?,?,?,0,'')`, req.Username, req.Name, string(hash), req.Role); err != nil {
+	if err := a.identityRepo().CreateAccount(r.Context(), ports.Account{
+		Username: req.Username,
+		Name:     req.Name,
+		PwdHash:  string(hash),
+		Role:     req.Role,
+	}); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			writeErr(w, http.StatusConflict, "username_exists", "账号已存在")
 			return
@@ -350,14 +355,12 @@ func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 		return
 	}
-	var curRole, curName string
-	var curDisabled int
-	if err := a.db.QueryRow(`SELECT role, name, disabled FROM users WHERE username = ?`, target).
-		Scan(&curRole, &curName, &curDisabled); err != nil {
+	cur, err := a.identityRepo().FindAccount(r.Context(), target)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "账号不存在")
 		return
 	}
-	nextRole, nextName, nextDisabled := curRole, curName, curDisabled != 0
+	nextRole, nextName, nextDisabled := cur.Role, cur.Name, cur.Disabled
 	if req.Role != nil {
 		if !validRole(*req.Role) {
 			writeErr(w, http.StatusBadRequest, "bad_request", "角色必须为 admin / operator / viewer")
@@ -379,10 +382,10 @@ func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "cannot_modify_self", "不能停用或降级当前登录账号")
 		return
 	}
-	losesAdmin := curRole == "admin" && curDisabled == 0 && (nextRole != "admin" || nextDisabled)
+	losesAdmin := cur.Role == "admin" && !cur.Disabled && (nextRole != "admin" || nextDisabled)
 	if losesAdmin {
-		var activeAdmins int
-		if err := a.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0`).Scan(&activeAdmins); err != nil {
+		activeAdmins, err := a.identityRepo().CountActiveAdmins(r.Context())
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal_error", "更新账号失败")
 			return
 		}
@@ -391,12 +394,7 @@ func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	disabledValue := 0
-	if nextDisabled {
-		disabledValue = 1
-	}
-	if _, err := a.db.Exec(`UPDATE users SET name = ?, role = ?, disabled = ? WHERE username = ?`,
-		nextName, nextRole, disabledValue, target); err != nil {
+	if err := a.identityRepo().UpdateAccount(r.Context(), target, nextName, nextRole, nextDisabled); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新账号失败")
 		return
 	}
@@ -431,13 +429,12 @@ func (a *App) handleUserResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "重置口令失败")
 		return
 	}
-	res, err := a.db.Exec(`UPDATE users SET pwd_hash = ? WHERE username = ?`, string(hash), target)
-	if err != nil {
+	if err := a.identityRepo().UpdatePassword(r.Context(), target, string(hash)); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "not_found", "账号不存在")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "internal_error", "重置口令失败")
-		return
-	}
-	if affected, _ := res.RowsAffected(); affected == 0 {
-		writeErr(w, http.StatusNotFound, "not_found", "账号不存在")
 		return
 	}
 	a.sessions.dropUser(target, "")
@@ -451,7 +448,7 @@ func (a *App) handleAgentTokenRotate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "admin"); !ok {
 		return
 	}
-	if strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN")) != "" {
+	if strings.TrimSpace(config.Load().AgentToken) != "" {
 		writeErr(w, http.StatusConflict, "env_managed", "当前令牌由 VA_AGENT_TOKEN 指定，无法在控制台轮换")
 		return
 	}
@@ -463,23 +460,7 @@ func (a *App) handleAgentTokenRotate(w http.ResponseWriter, r *http.Request) {
 	token := hex.EncodeToString(buf)
 	sum := sha256.Sum256([]byte(token))
 
-	tx, err := a.db.Begin()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal_error", "轮换令牌失败")
-		return
-	}
-	if _, err := tx.Exec(`DELETE FROM agent_tokens`); err != nil {
-		tx.Rollback()
-		writeErr(w, http.StatusInternalServerError, "internal_error", "轮换令牌失败")
-		return
-	}
-	if _, err := tx.Exec(`INSERT INTO agent_tokens(token_hash, created_at) VALUES(?,?)`,
-		hex.EncodeToString(sum[:]), fmtT(nowT())); err != nil {
-		tx.Rollback()
-		writeErr(w, http.StatusInternalServerError, "internal_error", "轮换令牌失败")
-		return
-	}
-	if err := tx.Commit(); err != nil {
+	if err := a.identityRepo().ReplaceToken(r.Context(), hex.EncodeToString(sum[:]), fmtT(nowT())); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "轮换令牌失败")
 		return
 	}

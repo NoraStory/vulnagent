@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"vulnagent/server/internal/application/ports"
 )
 
 type assetItem struct {
@@ -36,55 +38,37 @@ type assetComponent struct {
 	Findings  int    `json:"findings"`
 }
 
-const assetSelect = `SELECT a.id, a.hostname, a.ip, a.os_family, a.os_version, a.env, a.exposure, a.tier,
-	a.owner, a.source, a.agent_status, a.last_seen_at,
-	(SELECT COUNT(*) FROM components c WHERE c.asset_id = a.id),
-	(SELECT COUNT(*) FROM findings f WHERE f.asset_id = a.id),
-	(SELECT COUNT(*) FROM findings f WHERE f.asset_id = a.id AND f.priority = 'P0'),
-	COALESCE((SELECT MAX(f.risk) FROM findings f WHERE f.asset_id = a.id), 0)
-	FROM assets a`
-
-func scanAsset(sc interface{ Scan(...any) error }) (assetItem, error) {
-	var it assetItem
-	err := sc.Scan(&it.ID, &it.Hostname, &it.IP, &it.OS, &it.OSVersion, &it.Env, &it.Exposure, &it.Tier,
-		&it.Owner, &it.Source, &it.AgentStatus, &it.LastSeen,
-		&it.Components, &it.Findings, &it.P0, &it.Risk)
-	return it, err
+func toAssetItem(it ports.AssetListItem) assetItem {
+	return assetItem{
+		ID:          it.ID,
+		Hostname:    it.Hostname,
+		IP:          it.IP,
+		OS:          it.OSFamily,
+		OSVersion:   it.OSVersion,
+		Env:         it.Env,
+		Exposure:    it.Exposure,
+		Tier:        it.Tier,
+		Owner:       it.Owner,
+		Source:      it.Source,
+		AgentStatus: it.AgentStatus,
+		LastSeen:    it.LastSeen,
+		Components:  it.Components,
+		Findings:    it.Findings,
+		P0:          it.P0,
+		Risk:        it.Risk,
+	}
 }
 
 func (a *App) handleAssets(w http.ResponseWriter, r *http.Request) {
 	page, size, offset := pageParams(r)
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-
-	where := "1=1"
-	args := []any{}
-	if q != "" {
-		like := "%" + q + "%"
-		where = "(a.hostname LIKE ? OR a.owner LIKE ? OR a.ip LIKE ?)"
-		args = append(args, like, like, like)
-	}
-
-	var total int
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM assets a WHERE `+where, args...).Scan(&total); err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产列表失败")
-		return
-	}
-	rows, err := a.db.Query(assetSelect+" WHERE "+where+" ORDER BY a.id ASC LIMIT ? OFFSET ?",
-		append(args, size, offset)...)
+	list, total, err := a.assetRepo().List(r.Context(), strings.TrimSpace(r.URL.Query().Get("q")), size, offset)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产列表失败")
 		return
 	}
-	defer rows.Close()
-
-	items := make([]assetItem, 0, size)
-	for rows.Next() {
-		it, err := scanAsset(rows)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal_error", "解析资产数据失败")
-			return
-		}
-		items = append(items, it)
+	items := make([]assetItem, 0, len(list))
+	for _, it := range list {
+		items = append(items, toAssetItem(it))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"demo":     a.demoMode(),
@@ -101,49 +85,44 @@ func (a *App) handleAssetDetail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "无效的资产 ID")
 		return
 	}
-	asset, err := scanAsset(a.db.QueryRow(assetSelect+" WHERE a.id = ?", id))
+	detail, err := a.assetRepo().Detail(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "资产不存在")
 		return
 	}
 
-	compRows, err := a.db.Query(`SELECT c.purl, c.name, c.version, c.eco, c.vendor, c.product, c.inferred,
-		(SELECT COUNT(*) FROM findings f WHERE f.asset_id = c.asset_id AND f.purl = c.purl)
-		FROM components c WHERE c.asset_id = ? ORDER BY c.eco ASC, c.name ASC`, id)
+	compRows, err := a.assetRepo().ComponentRows(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询组件清单失败")
 		return
 	}
-	defer compRows.Close()
-	components := make([]assetComponent, 0)
-	for compRows.Next() {
-		var c assetComponent
-		if err := compRows.Scan(&c.Purl, &c.Name, &c.Version, &c.Ecosystem, &c.Vendor, &c.Product, &c.Inferred, &c.Findings); err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal_error", "解析组件清单失败")
-			return
-		}
-		components = append(components, c)
+	components := make([]assetComponent, 0, len(compRows))
+	for _, c := range compRows {
+		components = append(components, assetComponent{
+			Purl:      c.PURL,
+			Name:      c.Name,
+			Version:   c.Version,
+			Ecosystem: c.Eco,
+			Vendor:    c.Vendor,
+			Product:   c.Product,
+			Inferred:  c.Inferred,
+			Findings:  c.Findings,
+		})
 	}
 
-	rows, err := a.db.Query(findingSelect+" WHERE f.asset_id = ? ORDER BY f.risk DESC, f.id ASC", id)
+	findingRows, err := a.findingRepo().ListByAsset(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产漏洞失败")
 		return
 	}
-	defer rows.Close()
-	findings := make([]findingItem, 0)
-	for rows.Next() {
-		it, err := scanFinding(rows)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal_error", "解析资产漏洞失败")
-			return
-		}
-		findings = append(findings, it)
+	findings := make([]findingItem, 0, len(findingRows))
+	for _, it := range findingRows {
+		findings = append(findings, toFindingItem(it))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"demo":       a.demoMode(),
-		"asset":      asset,
+		"asset":      toAssetItem(detail),
 		"components": components,
 		"findings":   findings,
 	})

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"vulnagent/server/internal/application/ports"
+	"vulnagent/server/internal/infrastructure/sqlite"
 	"vulnagent/server/internal/platform/config"
 )
 
@@ -268,13 +270,12 @@ func syncPOCFromAPI(ctx context.Context, db *sql.DB, client *cveClient, maxPages
 				stop = true
 				break
 			}
-			result, err := db.Exec(`INSERT OR IGNORE INTO cve_poc(cve_id, link, inserted_at) VALUES(?,?,?)`,
-				item.CveID, item.Link, insertedAt)
+			result, err := sqlite.NewIntelRepo(db).AddPOC(context.Background(), item.CveID, item.Link, insertedAt)
 			if err != nil {
 				return res, err
 			}
 			res.Fetched++
-			if affected, _ := result.RowsAffected(); affected > 0 {
+			if result {
 				res.Inserted++
 			}
 		}
@@ -337,8 +338,8 @@ func importBundle(db *sql.DB, path string) (syncResult, error) {
 		if poc.CveID == "" || poc.Link == "" {
 			continue
 		}
-		if _, err := db.Exec(`INSERT OR IGNORE INTO cve_poc(cve_id, link, inserted_at) VALUES(?,?,?)`,
-			poc.CveID, poc.Link, normalizeAPITime(poc.InsertAt)); err != nil {
+		if _, err := sqlite.NewIntelRepo(db).AddPOC(context.Background(), poc.CveID, poc.Link,
+			normalizeAPITime(poc.InsertAt)); err != nil {
 			return res, err
 		}
 	}
@@ -350,48 +351,45 @@ func importBundle(db *sql.DB, path string) (syncResult, error) {
 
 // upsertCVE 写入或更新单条 CVE，分值与严重级由向量本地计算
 func upsertCVE(db *sql.DB, item intelItem) (bool, error) {
+	repo := sqlite.NewIntelRepo(db)
+	ctx := context.Background()
 	score, err := BaseScore(item.CvssVector)
 	if err != nil {
 		score = 0
 	}
-	severity := SeverityOf(score)
 	published := normalizeAPITime(item.PublishedAt)
 	updated := normalizeAPITime(item.UpdatedAt)
 	if updated == "" {
 		updated = published
 	}
-
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM cves WHERE cve_id = ?`, item.CveID).Scan(&count); err != nil {
+	existing, err := repo.CVEExists(ctx, item.CveID)
+	if err != nil {
 		return false, err
 	}
-	if count == 0 {
-		if _, err := db.Exec(`INSERT INTO cves(cve_id, title, description, cvss_vector, cvss_score, severity,
-			cwe_id, cwe_cn, published_at, updated_at, record_state, official, epss, exploit_state, fixed_version)
-			VALUES(?,?,?,?,?,?,?,?,?,?,'published',1,0,'none','')`,
-			item.CveID, item.Title, item.text(), item.CvssVector, score, severity,
-			int(item.CweID), item.CweCN, published, updated); err != nil {
-			return false, err
-		}
-	} else {
-		if _, err := db.Exec(`UPDATE cves SET title = ?, description = ?, cvss_vector = ?, cvss_score = ?,
-			severity = ?, cwe_id = ?, cwe_cn = ?, published_at = ?, updated_at = ? WHERE cve_id = ?`,
-			item.Title, item.text(), item.CvssVector, score, severity,
-			int(item.CweID), item.CweCN, published, updated, item.CveID); err != nil {
-			return false, err
-		}
+	if err := repo.UpsertCVE(ctx, ports.CVEInput{
+		ID:          item.CveID,
+		Title:       item.Title,
+		Description: item.text(),
+		Vector:      item.CvssVector,
+		Score:       score,
+		Severity:    SeverityOf(score),
+		CWEID:       int(item.CweID),
+		CWECN:       item.CweCN,
+		PublishedAt: published,
+		UpdatedAt:   updated,
+	}); err != nil {
+		return false, err
 	}
+	insertedAt := fmtT(nowT())
 	for _, link := range item.Pocs {
 		if link == "" {
 			continue
 		}
-		insertedAt := fmtT(nowT())
-		if _, err := db.Exec(`INSERT OR IGNORE INTO cve_poc(cve_id, link, inserted_at) VALUES(?,?,?)`,
-			item.CveID, link, insertedAt); err != nil {
+		if _, err := repo.AddPOC(ctx, item.CveID, link, insertedAt); err != nil {
 			return false, err
 		}
 	}
-	return count == 0, nil
+	return !existing, nil
 }
 
 // normalizeAPITime 兼容 RFC1123(GMT) 与 RFC3339，统一为东八区 RFC3339
@@ -423,7 +421,10 @@ func cveCursor(db *sql.DB) time.Time {
 		}
 	}
 	var latest string
-	if err := db.QueryRow(`SELECT COALESCE(MAX(updated_at), '') FROM cves`).Scan(&latest); err == nil && latest != "" {
+	if v, err := sqlite.NewIntelRepo(db).LatestCVEUpdate(context.Background()); err == nil {
+		latest = v
+	}
+	if latest != "" {
 		if t, err := parseT(latest); err == nil {
 			return t
 		}
@@ -432,8 +433,8 @@ func cveCursor(db *sql.DB) time.Time {
 }
 
 func pocCursor(db *sql.DB) time.Time {
-	var latest string
-	if err := db.QueryRow(`SELECT COALESCE(MAX(inserted_at), '') FROM cve_poc`).Scan(&latest); err == nil && latest != "" {
+	latest, err := sqlite.NewIntelRepo(db).LatestPOCUpdate(context.Background())
+	if err == nil && latest != "" {
 		if t, err := parseT(latest); err == nil {
 			return t
 		}
@@ -443,31 +444,14 @@ func pocCursor(db *sql.DB) time.Time {
 
 // normalizeSyncCounts 让同步计数与库内真实条数一致，避免展示演示期的大数字
 func normalizeSyncCounts(db *sql.DB) {
-	if _, err := db.Exec(`UPDATE sync_cursors SET count = (SELECT COUNT(*) FROM cves) WHERE source IN ('cve','epss')`); err != nil {
-		slog.Warn("刷新同步计数失败", "err", err)
-	}
-	if _, err := db.Exec(`UPDATE sync_cursors SET count = (SELECT COUNT(*) FROM cve_poc) WHERE source = 'poc'`); err != nil {
+	if err := sqlite.NewSyncRepo(db).NormalizeCounts(context.Background()); err != nil {
 		slog.Warn("刷新同步计数失败", "err", err)
 	}
 }
 
 // markSync 更新同步游标状态，供概览与自检读取
 func markSync(db *sql.DB, source, status, errMsg string) {
-	var count int
-	switch source {
-	case "cve":
-		_ = db.QueryRow(`SELECT COUNT(*) FROM cves`).Scan(&count)
-	case "poc":
-		_ = db.QueryRow(`SELECT COUNT(*) FROM cve_poc`).Scan(&count)
-	default:
-		_ = db.QueryRow(`SELECT COUNT(*) FROM cves`).Scan(&count)
-	}
-	_, err := db.Exec(`INSERT INTO sync_cursors(source, last_run_at, status, count, error)
-		VALUES(?,?,?,?,?)
-		ON CONFLICT(source) DO UPDATE SET last_run_at = excluded.last_run_at, status = excluded.status,
-		count = excluded.count, error = excluded.error`,
-		source, fmtT(nowT()), status, count, errMsg)
-	if err != nil {
-		slog.Error("更新同步状态失败", "source", source, "err", err)
+	if err := sqlite.NewSyncRepo(db).MarkRun(context.Background(), source, status, errMsg, fmtT(nowT())); err != nil {
+		slog.Warn("更新同步状态失败", "source", source, "err", err)
 	}
 }

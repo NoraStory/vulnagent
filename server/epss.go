@@ -107,8 +107,7 @@ func (a *App) importEPSS(reader io.Reader) (epssResult, error) {
 	}
 
 	// 把最新 EPSS 同步到漏洞快照，再按当前策略重算风险分
-	if _, err := a.db.Exec(`UPDATE findings SET epss = COALESCE(
-		(SELECT epss FROM cves WHERE cves.cve_id = findings.cve_id), epss)`); err != nil {
+	if err := a.findingRepo().SyncEPSSSnapshot(context.Background()); err != nil {
 		return res, fmt.Errorf("同步漏洞 EPSS 快照失败: %w", err)
 	}
 	recomputed, err := a.recomputeFindings(loadPolicy(a.db))
@@ -119,12 +118,7 @@ func (a *App) importEPSS(reader io.Reader) (epssResult, error) {
 	res.Cursor = fmtT(nowT())
 
 	// 同步状态：count 表示已有 EPSS 数据的 CVE 数
-	var covered int
-	_ = a.db.QueryRow(`SELECT COUNT(*) FROM cves WHERE epss > 0`).Scan(&covered)
-	if _, err := a.db.Exec(`INSERT INTO sync_cursors(source, last_run_at, status, count, error)
-		VALUES('epss', ?, 'ok', ?, '')
-		ON CONFLICT(source) DO UPDATE SET last_run_at = excluded.last_run_at, status = 'ok',
-		count = excluded.count, error = ''`, res.Cursor, covered); err != nil {
+	if err := a.syncRepo().MarkEPSS(context.Background(), res.Cursor); err != nil {
 		slog.Warn("更新 EPSS 同步状态失败", "err", err)
 	}
 	slog.Info("EPSS 导入完成", "rows", res.Rows, "matched", res.Matched,

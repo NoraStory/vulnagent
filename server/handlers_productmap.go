@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"vulnagent/server/internal/application/ports"
 )
 
 // handleProductMapList 列出产品映射，支持按名称/产品/生态过滤
@@ -11,27 +14,21 @@ func (a *App) handleProductMapList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "admin"); !ok {
 		return
 	}
-	where := "1=1"
-	args := []any{}
-	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
-		like := "%" + strings.ToLower(q) + "%"
-		where = "(lower(name) LIKE ? OR lower(product) LIKE ? OR lower(eco) LIKE ?)"
-		args = append(args, like, like, like)
-	}
-	rows, err := a.db.Query(`SELECT eco, name, product, confidence, source, updated_at
-		FROM product_map WHERE `+where+` ORDER BY eco, name LIMIT 500`, args...)
+	rows, err := a.intelRepo().ProductMapList(r.Context(), strings.TrimSpace(r.URL.Query().Get("q")), 500)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询产品映射失败")
 		return
 	}
-	defer rows.Close()
-	items := make([]productMapping, 0, 32)
-	for rows.Next() {
-		var m productMapping
-		if err := rows.Scan(&m.Eco, &m.Name, &m.Product, &m.Confidence, &m.Source, &m.UpdatedAt); err != nil {
-			continue
-		}
-		items = append(items, m)
+	items := make([]productMapping, 0, len(rows))
+	for _, m := range rows {
+		items = append(items, productMapping{
+			Eco:        m.Eco,
+			Name:       m.Name,
+			Product:    m.Product,
+			Confidence: m.Confidence,
+			Source:     m.Source,
+			UpdatedAt:  m.UpdatedAt,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"demo": a.demoMode(), "total": len(items), "items": items})
 }
@@ -67,11 +64,14 @@ func (a *App) handleProductMapUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := fmtT(nowT())
-	if _, err := a.db.Exec(`INSERT INTO product_map(eco, name, product, confidence, source, updated_at)
-		VALUES(?,?,?,?, 'manual', ?)
-		ON CONFLICT(eco, name) DO UPDATE SET product = excluded.product,
-		confidence = excluded.confidence, source = 'manual', updated_at = excluded.updated_at`,
-		req.Eco, req.Name, req.Product, req.Confidence, now); err != nil {
+	if err := a.intelRepo().UpsertProductMapping(r.Context(), ports.ProductMapping{
+		Eco:        req.Eco,
+		Name:       req.Name,
+		Product:    req.Product,
+		Confidence: req.Confidence,
+		Source:     "manual",
+		UpdatedAt:  now,
+	}, now); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "保存映射失败")
 		return
 	}
@@ -101,13 +101,12 @@ func (a *App) handleProductMapDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "缺少 eco 或 name")
 		return
 	}
-	res, err := a.db.Exec(`DELETE FROM product_map WHERE eco = ? AND name = ?`, eco, name)
-	if err != nil {
+	if err := a.intelRepo().DeleteProductMapping(r.Context(), eco, name); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "not_found", "映射不存在")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "internal_error", "删除映射失败")
-		return
-	}
-	if affected, _ := res.RowsAffected(); affected == 0 {
-		writeErr(w, http.StatusNotFound, "not_found", "映射不存在")
 		return
 	}
 	rematched, err := a.rematchAllAssets()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -16,6 +17,8 @@ import (
 	"strings"
 
 	"vulnagent/server/internal/collect"
+	"vulnagent/server/internal/infrastructure/sqlite"
+	"vulnagent/server/internal/platform/config"
 )
 
 const agentTokenFileName = "agent.token"
@@ -24,7 +27,7 @@ const agentTokenFileName = "agent.token"
 // 优先级：VA_AGENT_TOKEN > 数据目录下的 agent.token > 新生成（写入 0600 文件）。
 // 数据库只保存 SHA-256 摘要，明文仅落在本机数据目录。
 func ensureAgentToken(db *sql.DB, dataDir string) (string, error) {
-	token := strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN"))
+	token := config.Load().AgentToken
 	path := filepath.Join(dataDir, agentTokenFileName)
 	source := "环境变量 VA_AGENT_TOKEN"
 
@@ -49,8 +52,7 @@ func ensureAgentToken(db *sql.DB, dataDir string) (string, error) {
 
 	sum := sha256.Sum256([]byte(token))
 	sumHex := hex.EncodeToString(sum[:])
-	if _, err := db.Exec(`INSERT OR IGNORE INTO agent_tokens(token_hash, created_at) VALUES(?,?)`,
-		sumHex, fmtT(nowT())); err != nil {
+	if err := sqlite.NewIdentityRepo(db).SaveTokenHash(context.Background(), sumHex, fmtT(nowT())); err != nil {
 		return "", err
 	}
 	slog.Info("Agent 接入凭据就绪", "source", source, "file", path)
@@ -69,17 +71,12 @@ func (a *App) agentAuthorized(r *http.Request) bool {
 	sum := sha256.Sum256([]byte(token))
 	sumHex := hex.EncodeToString(sum[:])
 
-	rows, err := a.db.Query(`SELECT token_hash FROM agent_tokens`)
+	stored, err := a.identityRepo().ListTokenHashes(r.Context())
 	if err != nil {
 		return false
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var stored string
-		if err := rows.Scan(&stored); err != nil {
-			return false
-		}
-		if subtle.ConstantTimeCompare([]byte(stored), []byte(sumHex)) == 1 {
+	for _, hash := range stored {
+		if subtle.ConstantTimeCompare([]byte(hash), []byte(sumHex)) == 1 {
 			return true
 		}
 	}

@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/application/ports"
 )
 
 // ---------- 概览 ----------
@@ -92,57 +94,46 @@ type overviewResp struct {
 }
 
 func (a *App) handleOverview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var counts overviewCounts
-	rows, err := a.db.Query(`SELECT priority, COUNT(*) FROM findings GROUP BY priority`)
+	prio, err := a.statsRepo().FindingsByPriority(ctx)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "统计漏洞分布失败")
 		return
 	}
-	for rows.Next() {
-		var p string
-		var n int
-		if err := rows.Scan(&p, &n); err != nil {
-			continue
-		}
-		switch p {
+	for _, item := range prio {
+		switch item.Priority {
 		case "P0":
-			counts.P0 = n
+			counts.P0 = item.Count
 		case "P1":
-			counts.P1 = n
+			counts.P1 = item.Count
 		case "P2":
-			counts.P2 = n
+			counts.P2 = item.Count
 		case "P3":
-			counts.P3 = n
+			counts.P3 = item.Count
 		}
-		counts.Total += n
+		counts.Total += item.Count
 	}
-	rows.Close()
 
-	statusRows, err := a.db.Query(`SELECT status, COUNT(*) FROM findings GROUP BY status`)
+	statuses, err := a.statsRepo().FindingsByStatus(ctx)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "统计漏洞状态失败")
 		return
 	}
-	for statusRows.Next() {
-		var s string
-		var n int
-		if err := statusRows.Scan(&s, &n); err != nil {
-			continue
-		}
-		switch s {
+	for _, item := range statuses {
+		switch item.Status {
 		case "open":
-			counts.Open = n
+			counts.Open = item.Count
 		case "fixing":
-			counts.Fixing = n
+			counts.Fixing = item.Count
 		case "fixed":
-			counts.Fixed = n
+			counts.Fixed = item.Count
 		case "verified":
-			counts.Verified = n
+			counts.Verified = item.Count
 		case "risk_accepted":
-			counts.RiskAccepted = n
+			counts.RiskAccepted = item.Count
 		}
 	}
-	statusRows.Close()
 
 	// 近 14 天趋势：按 first_seen 累加当前优先级
 	now := nowT()
@@ -151,87 +142,65 @@ func (a *App) handleOverview(w http.ResponseWriter, r *http.Request) {
 		day := timeAtMidnight(now.AddDate(0, 0, -i))
 		end := day.AddDate(0, 0, 1)
 		p := trendPoint{Date: day.Format("2006-01-02")}
-		pRows, err := a.db.Query(`SELECT priority, COUNT(*) FROM findings WHERE first_seen < ? GROUP BY priority`, fmtT(end))
+		buckets, err := a.statsRepo().PriorityBefore(ctx, fmtT(end))
 		if err != nil {
 			continue
 		}
-		for pRows.Next() {
-			var prio string
-			var n int
-			if err := pRows.Scan(&prio, &n); err != nil {
-				continue
-			}
-			switch prio {
+		for _, item := range buckets {
+			switch item.Priority {
 			case "P0":
-				p.P0 = n
+				p.P0 = item.Count
 			case "P1":
-				p.P1 = n
+				p.P1 = item.Count
 			case "P2":
-				p.P2 = n
+				p.P2 = item.Count
 			case "P3":
-				p.P3 = n
+				p.P3 = item.Count
 			}
-			p.Total += n
+			p.Total += item.Count
 		}
-		pRows.Close()
 		trend = append(trend, p)
 	}
 
-	topRows, err := a.db.Query(`SELECT f.component_name, f.component_version, f.eco,
-		COUNT(DISTINCT f.cve_id), MAX(f.risk), COUNT(DISTINCT f.asset_id),
-		(SELECT f2.priority FROM findings f2
-			WHERE f2.component_name = f.component_name AND f2.component_version = f.component_version
-			AND f2.eco = f.eco ORDER BY f2.risk DESC LIMIT 1)
-		FROM findings f
-		GROUP BY f.component_name, f.component_version, f.eco
-		ORDER BY MAX(f.risk) DESC, COUNT(DISTINCT f.cve_id) DESC
-		LIMIT 6`)
+	topRows, err := a.statsRepo().TopComponents(ctx, 6)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "统计高风险组件失败")
 		return
 	}
 	tops := make([]topComponent, 0, 6)
-	for topRows.Next() {
-		var t topComponent
-		if err := topRows.Scan(&t.Name, &t.Version, &t.Ecosystem, &t.CveCount, &t.MaxRisk, &t.AssetCount, &t.Priority); err == nil {
-			tops = append(tops, t)
-		}
+	for _, item := range topRows {
+		tops = append(tops, topComponent{
+			Name:       item.Name,
+			Version:    item.Version,
+			Ecosystem:  item.Eco,
+			CveCount:   item.CVECount,
+			MaxRisk:    item.MaxRisk,
+			Priority:   item.Priority,
+			AssetCount: item.AssetCount,
+		})
 	}
-	topRows.Close()
 
 	syncs := a.loadSync()
 	agents := a.loadAgents()
 	sc := a.latestSelfcheckSummary()
 
-	evRows, err := a.db.Query(`SELECT e.id, e.created_at, e.actor, e.event, c.cve_id, a.hostname, e.detail
-		FROM finding_events e
-		JOIN findings f ON f.id = e.finding_id
-		JOIN cves c ON c.cve_id = f.cve_id
-		JOIN assets a ON a.id = f.asset_id
-		ORDER BY e.created_at DESC, e.id DESC LIMIT 8`)
-	if err == nil {
-		defer evRows.Close()
-	}
 	events := make([]overviewEvent, 0)
-	if evRows != nil {
-		for evRows.Next() {
-			var e overviewEvent
-			var event, cveID, host string
-			if err := evRows.Scan(&e.ID, &e.Time, &e.Actor, &event, &cveID, &host, &e.Detail); err != nil {
-				continue
-			}
+	evs, err := a.statsRepo().RecentFindingEvents(ctx, 8)
+	if err == nil {
+		for _, item := range evs {
+			e := overviewEvent{ID: item.ID, Time: item.Time, Actor: item.Actor, Detail: item.Detail}
 			e.Action = "finding.event"
 			switch {
-			case strings.HasPrefix(event, "status:"):
+			case strings.HasPrefix(item.Event, "status:"):
 				e.Action = "finding.status"
-			case strings.HasPrefix(event, "ticket:"):
+			case strings.HasPrefix(item.Event, "ticket:"):
 				e.Action = "finding.ticket"
-			case strings.HasPrefix(event, "rescan:"):
+			case strings.HasPrefix(item.Event, "rescan:"):
 				e.Action = "finding.rescan"
-			case strings.HasPrefix(event, "assignee:"):
+			case strings.HasPrefix(item.Event, "assignee:"):
 				e.Action = "finding.assign"
 			}
-			e.Target = cveID + " @ " + host
+			e.Target = item.CVEID + " @ " + item.Hostname
 			events = append(events, e)
 		}
 	}
@@ -255,31 +224,30 @@ func timeAtMidnight(t time.Time) time.Time {
 }
 
 func (a *App) loadSync() []syncItem {
-	rows, err := a.db.Query(`SELECT source, last_run_at, status, count, error FROM sync_cursors
-		ORDER BY CASE source WHEN 'cve' THEN 1 WHEN 'poc' THEN 2 ELSE 3 END`)
+	cursors, err := a.syncRepo().Cursors(context.Background())
 	if err != nil {
 		return []syncItem{}
 	}
-	defer rows.Close()
-	items := make([]syncItem, 0, 3)
-	for rows.Next() {
-		var it syncItem
-		if err := rows.Scan(&it.Source, &it.LastRunAt, &it.Status, &it.Count, &it.Error); err != nil {
-			continue
-		}
-		it.LagHours = int(math.Round(hoursSince(it.LastRunAt)))
-		items = append(items, it)
+	items := make([]syncItem, 0, len(cursors))
+	for _, it := range cursors {
+		items = append(items, syncItem{
+			Source:    it.Source,
+			LastRunAt: it.LastRunAt,
+			Status:    it.Status,
+			Count:     it.Count,
+			LagHours:  int(math.Round(hoursSince(it.LastRunAt))),
+			Error:     it.Error,
+		})
 	}
 	return items
 }
 
 func (a *App) loadAgents() agentSummary {
-	var s agentSummary
-	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent'`).Scan(&s.Total)
-	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'online'`).Scan(&s.Online)
-	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'offline'`).Scan(&s.Offline)
-	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'stale'`).Scan(&s.Stale)
-	return s
+	s, err := a.statsRepo().AgentSummary(context.Background())
+	if err != nil {
+		return agentSummary{}
+	}
+	return agentSummary{Total: s.Total, Online: s.Online, Offline: s.Offline, Stale: s.Stale}
 }
 
 func (a *App) latestSelfcheckSummary() selfcheckSummary {
@@ -315,21 +283,20 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policy := loadPolicy(a.db)
-	rows, err := a.db.Query(`SELECT username, name, role, last_login, disabled FROM users ORDER BY id ASC`)
+	accounts, err := a.identityRepo().ListAccounts(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询账号失败")
 		return
 	}
-	defer rows.Close()
-	users := make([]settingsUser, 0, 3)
-	for rows.Next() {
-		var u settingsUser
-		var disabled int
-		if err := rows.Scan(&u.Username, &u.Name, &u.Role, &u.LastLogin, &disabled); err != nil {
-			continue
-		}
-		u.Disabled = disabled != 0
-		users = append(users, u)
+	users := make([]settingsUser, 0, len(accounts))
+	for _, acc := range accounts {
+		users = append(users, settingsUser{
+			Username:  acc.Username,
+			Name:      acc.Name,
+			Role:      acc.Role,
+			LastLogin: acc.LastLogin,
+			Disabled:  acc.Disabled,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"demo":       a.demoMode(),
@@ -372,8 +339,7 @@ func (a *App) handleRiskPolicy(w http.ResponseWriter, r *http.Request) {
 
 	wJSON, _ := json.Marshal(req.Weights)
 	tJSON, _ := json.Marshal(req.Thresholds)
-	if _, err := a.db.Exec(`UPDATE risk_policy SET weights = ?, thresholds = ?, updated_at = ? WHERE id = 1`,
-		string(wJSON), string(tJSON), fmtT(nowT())); err != nil {
+	if err := a.policyRepo().SaveRiskPolicy(r.Context(), string(wJSON), string(tJSON), fmtT(nowT())); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "保存策略失败")
 		return
 	}
@@ -389,47 +355,26 @@ func (a *App) handleRiskPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) recomputeFindings(p RiskPolicy) (int, error) {
-	type row struct {
-		id             int64
-		cvss, epss     float64
-		exploit        string
-		exposure, tier string
-	}
-	rows, err := a.db.Query(`SELECT f.id, f.cvss, f.epss, f.exploit, a.exposure, a.tier
-		FROM findings f JOIN assets a ON a.id = f.asset_id`)
+	ctx := context.Background()
+	list, err := a.findingRepo().ListForRecompute(ctx)
 	if err != nil {
 		return 0, err
 	}
-	list := make([]row, 0, 64)
-	for rows.Next() {
-		var it row
-		if err := rows.Scan(&it.id, &it.cvss, &it.epss, &it.exploit, &it.exposure, &it.tier); err != nil {
-			continue
-		}
-		list = append(list, it)
-	}
-	rows.Close()
-
-	tx, err := a.db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	stmt, err := tx.Prepare(`UPDATE findings SET risk = ?, priority = ?, score_breakdown = ?, asset_weight = ? WHERE id = ?`)
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
+	updates := make([]ports.ScoreUpdate, 0, len(list))
 	for _, it := range list {
-		risk, prio, bd := p.Score(it.cvss, it.epss, it.exploit, it.exposure, it.tier)
-		if _, err := stmt.Exec(risk, prio, marshalBreakdown(bd), assetWeight(it.exposure, it.tier), it.id); err != nil {
-			return 0, err
-		}
+		risk, prio, bd := p.Score(it.CVSS, it.EPSS, it.Exploit, it.Exposure, it.Tier)
+		updates = append(updates, ports.ScoreUpdate{
+			ID:          it.ID,
+			Risk:        risk,
+			Priority:    prio,
+			Breakdown:   marshalBreakdown(bd),
+			AssetWeight: assetWeight(it.Exposure, it.Tier),
+		})
 	}
-	if err := tx.Commit(); err != nil {
+	if err := a.findingRepo().BulkUpdateScores(ctx, updates); err != nil {
 		return 0, err
 	}
-	return len(list), nil
+	return len(updates), nil
 }
 
 // ---------- 审计 ----------
@@ -450,40 +395,35 @@ func (a *App) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page, size, offset := pageParams(r)
-	action := strings.TrimSpace(r.URL.Query().Get("action"))
-	actor := strings.TrimSpace(r.URL.Query().Get("actor"))
+	filter := ports.AuditFilter{
+		Action: strings.TrimSpace(r.URL.Query().Get("action")),
+		Actor:  strings.TrimSpace(r.URL.Query().Get("actor")),
+		Limit:  size,
+		Offset: offset,
+	}
 
-	where := []string{"1=1"}
-	args := []any{}
-	if action != "" {
-		where = append(where, "action LIKE ?")
-		args = append(args, "%"+action+"%")
-	}
-	if actor != "" {
-		where = append(where, "actor LIKE ?")
-		args = append(args, "%"+actor+"%")
-	}
-	whereSQL := strings.Join(where, " AND ")
-
-	var total int
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE `+whereSQL, args...).Scan(&total); err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal_error", "查询审计日志失败")
-		return
-	}
-	rows, err := a.db.Query(`SELECT id, created_at, actor, role, action, target, ip, detail FROM audit_logs
-		WHERE `+whereSQL+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, append(args, size, offset)...)
+	total, err := a.auditRepo().Count(r.Context(), filter)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询审计日志失败")
 		return
 	}
-	defer rows.Close()
-	items := make([]auditItem, 0, size)
-	for rows.Next() {
-		var it auditItem
-		if err := rows.Scan(&it.ID, &it.Time, &it.Actor, &it.Role, &it.Action, &it.Target, &it.IP, &it.Detail); err != nil {
-			continue
-		}
-		items = append(items, it)
+	entries, err := a.auditRepo().List(r.Context(), filter)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "查询审计日志失败")
+		return
+	}
+	items := make([]auditItem, 0, len(entries))
+	for _, e := range entries {
+		items = append(items, auditItem{
+			ID:     e.ID,
+			Time:   e.CreatedAt,
+			Actor:  e.Actor,
+			Role:   e.Role,
+			Action: e.Action,
+			Target: e.Target,
+			IP:     e.IP,
+			Detail: e.Detail,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"demo":     a.demoMode(),

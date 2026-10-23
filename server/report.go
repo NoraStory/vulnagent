@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/go-pdf/fpdf"
 
+	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/domain/vuln"
 )
 
@@ -43,11 +45,8 @@ type reportFinding struct {
 
 // reportFilter 报告筛选条件；priority 单独拆出，用于统计不受优先级筛选影响的分布
 type reportFilter struct {
-	whereAll  string
-	argsAll   []any
-	whereBase string
-	argsBase  []any
-	labels    []string
+	query  ports.ReportFilter
+	labels []string
 }
 
 func reportFilterFromQuery(r *http.Request) reportFilter {
@@ -56,87 +55,60 @@ func reportFilterFromQuery(r *http.Request) reportFilter {
 	status := query.Get("status")
 	keyword := strings.TrimSpace(query.Get("q"))
 
-	base := []string{"1=1"}
-	baseArgs := []any{}
 	labels := make([]string, 0, 3)
 	if status != "" {
-		base = append(base, "f.status = ?")
-		baseArgs = append(baseArgs, status)
 		labels = append(labels, "状态："+statusLabel(status))
 	}
 	if keyword != "" {
-		like := "%" + keyword + "%"
-		base = append(base, "(a.hostname LIKE ? OR f.cve_id LIKE ? OR f.component_name LIKE ?)")
-		baseArgs = append(baseArgs, like, like, like)
 		labels = append(labels, "关键词："+keyword)
 	}
-
-	all := append([]string{}, base...)
-	allArgs := append([]any{}, baseArgs...)
 	if priority != "" {
-		all = append(all, "f.priority = ?")
-		allArgs = append(allArgs, priority)
 		labels = append([]string{"优先级：" + priority}, labels...)
 	}
 
 	return reportFilter{
-		whereAll:  strings.Join(all, " AND "),
-		argsAll:   allArgs,
-		whereBase: strings.Join(base, " AND "),
-		argsBase:  baseArgs,
-		labels:    labels,
+		query:  ports.ReportFilter{Priority: priority, Status: status, Query: keyword},
+		labels: labels,
 	}
 }
 
 func statusLabel(status string) string { return vuln.StatusLabel(status) }
 
 func (a *App) loadReportFindings(f reportFilter, limit int) ([]reportFinding, error) {
-	rows, err := a.db.Query(`SELECT f.priority, f.cve_id, c.title, f.component_name, f.component_version,
-		f.fixed_version, a.hostname, f.status, f.cvss, f.epss, f.risk
-		FROM findings f
-		JOIN assets a ON a.id = f.asset_id
-		JOIN cves c ON c.cve_id = f.cve_id
-		WHERE `+f.whereAll+` ORDER BY f.risk DESC, f.id ASC LIMIT ?`, append(f.argsAll, limit)...)
+	rows, err := a.findingRepo().ReportRows(context.Background(), f.query, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	items := make([]reportFinding, 0, limit)
-	for rows.Next() {
-		var it reportFinding
-		if err := rows.Scan(&it.Priority, &it.CveID, &it.Title, &it.Component, &it.Version,
-			&it.Fixed, &it.Hostname, &it.Status, &it.Cvss, &it.Epss, &it.Risk); err != nil {
-			return nil, err
-		}
-		items = append(items, it)
+	items := make([]reportFinding, 0, len(rows))
+	for _, it := range rows {
+		items = append(items, reportFinding{
+			Priority:  it.Priority,
+			CveID:     it.CVEID,
+			Title:     it.Title,
+			Component: it.Component,
+			Version:   it.Version,
+			Fixed:     it.FixedVersion,
+			Hostname:  it.Hostname,
+			Status:    it.Status,
+			Cvss:      it.CVSS,
+			Epss:      it.EPSS,
+			Risk:      it.Risk,
+		})
 	}
-	return items, rows.Err()
+	return items, nil
 }
 
 // reportStats 返回筛选范围内的总数、涉及资产数与各优先级数量
 func (a *App) reportStats(f reportFilter) (int, int, map[string]int, error) {
-	var total, assets int
-	if err := a.db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT f.asset_id) FROM findings f
-		JOIN assets a ON a.id = f.asset_id WHERE `+f.whereAll, f.argsAll...).Scan(&total, &assets); err != nil {
-		return 0, 0, nil, err
-	}
-	rows, err := a.db.Query(`SELECT f.priority, COUNT(*) FROM findings f
-		JOIN assets a ON a.id = f.asset_id WHERE `+f.whereBase+` GROUP BY f.priority`, f.argsBase...)
+	total, assets, err := a.findingRepo().ReportTotals(context.Background(), f.query)
 	if err != nil {
 		return 0, 0, nil, err
 	}
-	defer rows.Close()
-	byPriority := map[string]int{}
-	for rows.Next() {
-		var name string
-		var count int
-		if err := rows.Scan(&name, &count); err != nil {
-			return 0, 0, nil, err
-		}
-		byPriority[name] = count
+	byPriority, err := a.findingRepo().ReportByPriority(context.Background(), f.query)
+	if err != nil {
+		return 0, 0, nil, err
 	}
-	return total, assets, byPriority, rows.Err()
+	return total, assets, byPriority, nil
 }
 
 func (a *App) handleFindingReportPDF(w http.ResponseWriter, r *http.Request) {

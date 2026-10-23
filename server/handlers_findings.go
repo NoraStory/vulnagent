@@ -1,13 +1,14 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/domain/vuln"
 )
 
@@ -81,67 +82,54 @@ type findingDetail struct {
 	Events         []eventItem   `json:"events"`
 }
 
-const findingSelect = `SELECT f.id, f.cve_id, c.title, f.priority, f.risk, f.cvss, f.epss, f.exploit,
-	f.status, f.assignee, f.inferred, f.first_seen,
-	a.id, a.hostname, a.env, a.exposure, a.tier,
-	f.component_name, f.component_version, f.eco, f.purl, f.fixed_version
-	FROM findings f
-	JOIN assets a ON a.id = f.asset_id
-	JOIN cves c ON c.cve_id = f.cve_id`
-
-func scanFinding(sc interface{ Scan(...any) error }) (findingItem, error) {
-	var it findingItem
-	err := sc.Scan(&it.ID, &it.CveID, &it.Title, &it.Priority, &it.Risk, &it.Cvss, &it.Epss, &it.Exploit,
-		&it.Status, &it.Assignee, &it.Inferred, &it.FirstSeen,
-		&it.Asset.ID, &it.Asset.Hostname, &it.Asset.Env, &it.Asset.Exposure, &it.Asset.Tier,
-		&it.Component.Name, &it.Component.Version, &it.Component.Ecosystem, &it.Component.Purl, &it.Component.FixedVersion)
-	return it, err
+// toFindingItem 把仓储模型转换为接口 DTO
+func toFindingItem(it ports.FindingListItem) findingItem {
+	return findingItem{
+		ID:        it.ID,
+		CveID:     it.CVEID,
+		Title:     it.Title,
+		Priority:  it.Priority,
+		Risk:      it.Risk,
+		Cvss:      it.CVSS,
+		Epss:      it.EPSS,
+		Exploit:   it.Exploit,
+		Status:    it.Status,
+		Assignee:  it.Assignee,
+		Inferred:  it.Inferred,
+		FirstSeen: it.FirstSeen,
+		Asset: assetRef{
+			ID:       it.AssetID,
+			Hostname: it.AssetHostname,
+			Env:      it.AssetEnv,
+			Exposure: it.AssetExposure,
+			Tier:     it.AssetTier,
+		},
+		Component: componentRef{
+			Name:         it.ComponentName,
+			Version:      it.ComponentVersion,
+			Ecosystem:    it.ComponentEco,
+			Purl:         it.PURL,
+			FixedVersion: it.FixedVersion,
+		},
+	}
 }
 
 func (a *App) handleFindings(w http.ResponseWriter, r *http.Request) {
 	page, size, offset := pageParams(r)
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	priority := r.URL.Query().Get("priority")
-	status := r.URL.Query().Get("status")
-
-	where := []string{"1=1"}
-	args := []any{}
-	if priority != "" {
-		where = append(where, "f.priority = ?")
-		args = append(args, priority)
-	}
-	if status != "" {
-		where = append(where, "f.status = ?")
-		args = append(args, status)
-	}
-	if q != "" {
-		like := "%" + q + "%"
-		where = append(where, "(a.hostname LIKE ? OR f.cve_id LIKE ? OR f.component_name LIKE ?)")
-		args = append(args, like, like, like)
-	}
-	whereSQL := strings.Join(where, " AND ")
-
-	var total int
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM findings f JOIN assets a ON a.id = f.asset_id WHERE `+whereSQL, args...).Scan(&total); err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal_error", "查询漏洞列表失败")
-		return
-	}
-	rows, err := a.db.Query(findingSelect+" WHERE "+whereSQL+" ORDER BY f.risk DESC, f.id ASC LIMIT ? OFFSET ?",
-		append(args, size, offset)...)
+	list, total, err := a.findingRepo().List(r.Context(), ports.FindingFilter{
+		Priority: r.URL.Query().Get("priority"),
+		Status:   r.URL.Query().Get("status"),
+		Query:    strings.TrimSpace(r.URL.Query().Get("q")),
+		Limit:    size,
+		Offset:   offset,
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询漏洞列表失败")
 		return
 	}
-	defer rows.Close()
-
-	items := make([]findingItem, 0, size)
-	for rows.Next() {
-		it, err := scanFinding(rows)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal_error", "解析漏洞数据失败")
-			return
-		}
-		items = append(items, it)
+	items := make([]findingItem, 0, len(list))
+	for _, it := range list {
+		items = append(items, toFindingItem(it))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"demo":     a.demoMode(),
@@ -153,8 +141,11 @@ func (a *App) handleFindings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) getFinding(id int64) (findingItem, error) {
-	row := a.db.QueryRow(findingSelect+" WHERE f.id = ?", id)
-	return scanFinding(row)
+	it, err := a.findingRepo().Get(context.Background(), id)
+	if err != nil {
+		return findingItem{}, err
+	}
+	return toFindingItem(it), nil
 }
 
 func (a *App) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
@@ -169,54 +160,39 @@ func (a *App) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var desc, cweCN, published, breakdownRaw string
-	var cweID int
-	err = a.db.QueryRow(`SELECT c.description, c.cwe_id, c.cwe_cn, c.published_at, f.score_breakdown
-		FROM findings f JOIN cves c ON c.cve_id = f.cve_id WHERE f.id = ?`, id).
-		Scan(&desc, &cweID, &cweCN, &published, &breakdownRaw)
-	if err != nil && err != sql.ErrNoRows {
+	extra, err := a.findingRepo().Extra(r.Context(), id)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询漏洞详情失败")
 		return
 	}
 
 	breakdown := make([]ScoreFactor, 0)
-	_ = json.Unmarshal([]byte(breakdownRaw), &breakdown)
+	_ = json.Unmarshal([]byte(extra.Breakdown), &breakdown)
 
-	pocRows, err := a.db.Query(`SELECT link, inserted_at FROM cve_poc WHERE cve_id = ? ORDER BY inserted_at DESC`, it.CveID)
-	if err == nil {
-		defer pocRows.Close()
+	pocLinks, err := a.findingRepo().POCs(r.Context(), it.CveID)
+	if err != nil {
+		pocLinks = nil
 	}
-	pocs := make([]pocItem, 0)
-	if pocRows != nil {
-		for pocRows.Next() {
-			var p pocItem
-			if err := pocRows.Scan(&p.Link, &p.InsertedAt); err == nil {
-				pocs = append(pocs, p)
-			}
-		}
+	pocs := make([]pocItem, 0, len(pocLinks))
+	for _, p := range pocLinks {
+		pocs = append(pocs, pocItem{Link: p.Link, InsertedAt: p.InsertedAt})
 	}
 
-	eventRows, err := a.db.Query(`SELECT created_at, event, actor, detail FROM finding_events
-		WHERE finding_id = ? ORDER BY created_at ASC, id ASC`, id)
-	if err == nil {
-		defer eventRows.Close()
+	eventRows, err := a.findingRepo().Events(r.Context(), id)
+	if err != nil {
+		eventRows = nil
 	}
-	events := make([]eventItem, 0)
-	if eventRows != nil {
-		for eventRows.Next() {
-			var e eventItem
-			if err := eventRows.Scan(&e.Time, &e.Event, &e.Actor, &e.Detail); err == nil {
-				events = append(events, e)
-			}
-		}
+	events := make([]eventItem, 0, len(eventRows))
+	for _, e := range eventRows {
+		events = append(events, eventItem{Time: e.Time, Event: e.Event, Actor: e.Actor, Detail: e.Detail})
 	}
 
 	out := findingDetail{
 		findingItem:    it,
 		Demo:           a.demoMode(),
-		Description:    desc,
-		Cwe:            cweRef{ID: cweID, CN: cweCN},
-		PublishedAt:    published,
+		Description:    extra.Description,
+		Cwe:            cweRef{ID: extra.CWEID, CN: extra.CWECN},
+		PublishedAt:    extra.PublishedAt,
 		ScoreBreakdown: breakdown,
 		Poc:            pocs,
 		Advice:         buildAdvice(it),
@@ -325,7 +301,7 @@ func (a *App) handleFindingPatch(w http.ResponseWriter, r *http.Request) {
 	if req.Assignee != nil {
 		newAssignee = strings.TrimSpace(*req.Assignee)
 	}
-	if _, err := a.db.Exec(`UPDATE findings SET status = ?, assignee = ? WHERE id = ?`, newStatus, newAssignee, id); err != nil {
+	if err := a.findingRepo().UpdateStatusAssignee(r.Context(), id, newStatus, newAssignee); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新漏洞失败")
 		return
 	}
@@ -333,14 +309,12 @@ func (a *App) handleFindingPatch(w http.ResponseWriter, r *http.Request) {
 	now := fmtT(nowT())
 	if newStatus != cur.Status {
 		event := fmt.Sprintf("status: %s → %s", cur.Status, newStatus)
-		a.db.Exec(`INSERT INTO finding_events(finding_id, event, actor, detail, created_at) VALUES(?,?,?,?,?)`,
-			id, event, u.Name, "控制台手动更新", now)
+		_ = a.findingRepo().AddEvent(r.Context(), id, event, u.Name, "控制台手动更新", now)
 		a.audit(r, "finding.status", cur.CveID+" @ "+cur.Asset.Hostname, cur.Status+" → "+newStatus)
 	}
 	if newAssignee != cur.Assignee {
 		event := fmt.Sprintf("assignee: %s → %s", firstNonEmpty(cur.Assignee, "未指派"), firstNonEmpty(newAssignee, "未指派"))
-		a.db.Exec(`INSERT INTO finding_events(finding_id, event, actor, detail, created_at) VALUES(?,?,?,?,?)`,
-			id, event, u.Name, "控制台重新指派", now)
+		_ = a.findingRepo().AddEvent(r.Context(), id, event, u.Name, "控制台重新指派", now)
 		a.audit(r, "finding.assign", cur.CveID+" @ "+cur.Asset.Hostname, event)
 	}
 
@@ -368,9 +342,7 @@ func (a *App) handleFindingTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var maxSeq int
-	_ = a.db.QueryRow(`SELECT COALESCE(MAX(CAST(substr(ticket_id, 9) AS INTEGER)), 0)
-		FROM findings WHERE ticket_id LIKE 'VA-2026-%'`).Scan(&maxSeq)
+	maxSeq, _ := a.findingRepo().NextTicketSeq(r.Context())
 	ticketID := fmt.Sprintf("VA-2026-%04d", maxSeq+1)
 	status := cur.Status
 	assignee := cur.Assignee
@@ -380,8 +352,7 @@ func (a *App) handleFindingTicket(w http.ResponseWriter, r *http.Request) {
 	if status == "open" || status == "triaged" {
 		status = "fixing"
 	}
-	if _, err := a.db.Exec(`UPDATE findings SET ticket_id = ?, status = ?, assignee = ? WHERE id = ?`,
-		ticketID, status, assignee, id); err != nil {
+	if err := a.findingRepo().CreateTicket(r.Context(), id, ticketID, status, assignee); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "创建工单失败")
 		return
 	}
@@ -391,8 +362,7 @@ func (a *App) handleFindingTicket(w http.ResponseWriter, r *http.Request) {
 	if cur.Status != status {
 		detail = "工单已创建，状态由 " + cur.Status + " 流转为 " + status
 	}
-	a.db.Exec(`INSERT INTO finding_events(finding_id, event, actor, detail, created_at) VALUES(?,?,?,?,?)`,
-		id, "ticket: "+ticketID+" 已创建", u.Name, detail, now)
+	_ = a.findingRepo().AddEvent(r.Context(), id, "ticket: "+ticketID+" 已创建", u.Name, detail, now)
 	a.audit(r, "finding.ticket", cur.CveID+" @ "+cur.Asset.Hostname, "创建工单 "+ticketID)
 	a.dispatch("ticket.created", map[string]any{
 		"ticketId": ticketID,
@@ -448,8 +418,7 @@ func (a *App) handleFindingRescan(w http.ResponseWriter, r *http.Request) {
 	if outcome.Reopened > 0 {
 		detail += fmt.Sprintf(" · 重新打开 %d 条", outcome.Reopened)
 	}
-	if _, err := a.db.Exec(`INSERT INTO finding_events(finding_id, event, actor, detail, created_at)
-		VALUES(?,?,?,?,?)`, id, "rescan: 已执行复扫 "+scanID, u.Name, detail, now); err != nil {
+	if err := a.findingRepo().AddEvent(r.Context(), id, "rescan: 已执行复扫 "+scanID, u.Name, detail, now); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "写入处理记录失败")
 		return
 	}

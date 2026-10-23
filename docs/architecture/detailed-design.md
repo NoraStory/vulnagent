@@ -636,6 +636,8 @@ CREATE TABLE sync_cursors (
 - 匹配阶段只读内存索引，结果批量落库；重算用临时表 + 原子替换，避免读抖动。
 - 迁移：`server/internal/infrastructure/sqlite/migrations/*.sql` 通过 `go:embed` 打包，启动时按文件名顺序执行未应用脚本，执行记录写入 `schema_migrations`；脚本全部使用 `IF NOT EXISTS`，对既有库幂等。
 - 只读连接：Harness 读工具使用 `mode=ro` 的独立连接（`sqlite.OpenReadOnly`），从连接层杜绝写入。
+- 端口与仓储：`server/internal/application/ports` 定义读写契约（资产、情报、漏洞、账号、审计、策略、通知、同步、统计），`server/internal/infrastructure/sqlite/*_repo.go` 提供实现；接口层只做 DTO 编解码与参数校验，不再直接拼 SQL。
+- 仍保留直接 SQL 的只有基础设施与运维代码：`selfcheck.go`（探测）、`seed.go`（演示数据）、`ensureProductMap`（内置映射初始化）与 `backup` 子命令。
 - 配置：全部环境变量集中在 `server/internal/platform/config`，默认数据目录 `./data`，可用 `VA_DATA_DIR` 覆盖。
 
 ---

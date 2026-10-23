@@ -39,7 +39,8 @@ func TestReconcileFindingStates(t *testing.T) {
 		assetID, purl, "log4j-core", "2.14.1", "maven", "CVE-TEST-0001")
 
 	// 1. 旧版本仍受影响：保持 fixing
-	res, err := reconcileFindingStates(db, assetID, "测试")
+	app := &App{db: db}
+	res, err := app.reconcileFindingStates(assetID, "测试")
 	if err != nil {
 		t.Fatalf("首次复扫失败：%v", err)
 	}
@@ -50,7 +51,7 @@ func TestReconcileFindingStates(t *testing.T) {
 	// 2. 组件升级到修复版本：自动 verified
 	mustExec(`UPDATE components SET version = '2.17.1', purl = ? WHERE asset_id = ?`,
 		"pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1", assetID)
-	res, err = reconcileFindingStates(db, assetID, "测试")
+	res, err = app.reconcileFindingStates(assetID, "测试")
 	if err != nil {
 		t.Fatalf("升级后复扫失败：%v", err)
 	}
@@ -67,7 +68,7 @@ func TestReconcileFindingStates(t *testing.T) {
 
 	// 3. 版本回退：重新打开
 	mustExec(`UPDATE components SET version = '2.14.1' WHERE asset_id = ? AND name = 'log4j-core'`, assetID)
-	res, err = reconcileFindingStates(db, assetID, "测试")
+	res, err = app.reconcileFindingStates(assetID, "测试")
 	if err != nil {
 		t.Fatalf("回退后复扫失败：%v", err)
 	}
@@ -91,7 +92,7 @@ func TestReconcileFindingStates(t *testing.T) {
 		assetID, "pkg:npm/lodash@4.17.20", "lodash", "4.17.20", "npm", "CVE-TEST-0002")
 	mustExec(`DELETE FROM components WHERE asset_id = ? AND name = 'lodash'`, assetID)
 
-	res, err = reconcileFindingStates(db, assetID, "测试")
+	res, err = app.reconcileFindingStates(assetID, "测试")
 	if err != nil {
 		t.Fatalf("移除组件后复扫失败：%v", err)
 	}

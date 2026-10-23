@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/infrastructure/sqlite"
 )
 
 // ---------- 演示数据定义 ----------
@@ -808,10 +811,10 @@ func demoAudits(now time.Time) []auditSeed {
 	return rows
 }
 
-// loadPolicy 读取当前风险策略
+// loadPolicy 读取当前风险策略，实现见 sqlite.PolicyRepo
 func loadPolicy(db *sql.DB) RiskPolicy {
-	var w, t string
-	if err := db.QueryRow(`SELECT weights, thresholds FROM risk_policy WHERE id = 1`).Scan(&w, &t); err != nil {
+	w, t, err := sqlite.NewPolicyRepo(db).RiskPolicy(context.Background())
+	if err != nil {
 		return defaultPolicy()
 	}
 	return unmarshalPolicy(w, t)

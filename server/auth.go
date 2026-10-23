@@ -15,7 +15,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/domain/identity"
+	"vulnagent/server/internal/infrastructure/sqlite"
 	"vulnagent/server/internal/platform/config"
 )
 
@@ -163,8 +165,17 @@ func (a *App) audit(r *http.Request, action, target, detail string) {
 
 // auditAs 以指定身份写审计日志（Agent 上报等无会话场景）
 func (a *App) auditAs(actor, role, ip, ua, action, target, detail string) {
-	if _, err := a.db.Exec(`INSERT INTO audit_logs(actor, role, action, target, ip, ua, detail, created_at)
-		VALUES(?,?,?,?,?,?,?,?)`, actor, role, action, target, ip, ua, detail, fmtT(nowT())); err != nil {
+	entry := ports.AuditEntry{
+		Actor:     actor,
+		Role:      role,
+		Action:    action,
+		Target:    target,
+		IP:        ip,
+		UA:        ua,
+		Detail:    detail,
+		CreatedAt: fmtT(nowT()),
+	}
+	if err := a.auditRepo().Insert(context.Background(), entry); err != nil {
 		slog.Error("写审计日志失败", "action", action, "err", err)
 	}
 }
@@ -187,10 +198,12 @@ func ensureUsers(db *sql.DB) error {
 	if !seedDemoEnabled() {
 		return ensureBootstrapAdmin(db)
 	}
+	ctx := context.Background()
+	repo := sqlite.NewIdentityRepo(db)
 	now := fmtT(nowT())
 	for _, acc := range demoAccounts {
-		var n int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = ?`, acc.Username).Scan(&n); err != nil {
+		n, err := repo.CountByUsername(ctx, acc.Username)
+		if err != nil {
 			return err
 		}
 		if n > 0 {
@@ -200,8 +213,13 @@ func ensureUsers(db *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		if _, err := db.Exec(`INSERT INTO users(username, name, pwd_hash, role, disabled, last_login)
-			VALUES(?,?,?,?,0,?)`, acc.Username, acc.Name, string(hash), acc.Role, now); err != nil {
+		if err := repo.CreateAccount(ctx, ports.Account{
+			Username:  acc.Username,
+			Name:      acc.Name,
+			PwdHash:   string(hash),
+			Role:      acc.Role,
+			LastLogin: now,
+		}); err != nil {
 			return err
 		}
 	}
@@ -209,8 +227,10 @@ func ensureUsers(db *sql.DB) error {
 }
 
 func ensureBootstrapAdmin(db *sql.DB) error {
-	var admins int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'admin'`).Scan(&admins); err != nil {
+	ctx := context.Background()
+	repo := sqlite.NewIdentityRepo(db)
+	admins, err := repo.CountActiveAdmins(ctx)
+	if err != nil {
 		return err
 	}
 	if admins > 0 {
@@ -224,8 +244,13 @@ func ensureBootstrapAdmin(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if _, err := db.Exec(`INSERT INTO users(username, name, pwd_hash, role, disabled, last_login)
-		VALUES('admin','管理员',?,'admin',0,?)`, string(hash), fmtT(nowT())); err != nil {
+	if err := repo.CreateAccount(ctx, ports.Account{
+		Username:  "admin",
+		Name:      "管理员",
+		PwdHash:   string(hash),
+		Role:      "admin",
+		LastLogin: fmtT(nowT()),
+	}); err != nil {
 		return err
 	}
 	slog.Info("已初始化管理员账号", "username", "admin", "hint", "请登录后立即修改口令")
@@ -257,11 +282,8 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var pwdHash, name, role string
-	var disabled int
-	err := a.db.QueryRow(`SELECT pwd_hash, name, role, disabled FROM users WHERE username = ?`, req.Username).
-		Scan(&pwdHash, &name, &role, &disabled)
-	if err != nil || disabled != 0 || bcrypt.CompareHashAndPassword([]byte(pwdHash), []byte(req.Password)) != nil {
+	acc, err := a.identityRepo().FindAccount(r.Context(), req.Username)
+	if err != nil || acc.Disabled || bcrypt.CompareHashAndPassword([]byte(acc.PwdHash), []byte(req.Password)) != nil {
 		locked := a.loginGuard.fail(key)
 		detail := "用户名或口令错误"
 		if locked {
@@ -273,9 +295,9 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.loginGuard.reset(key)
 
-	u := User{Username: req.Username, Name: name, Role: role}
+	u := User{Username: acc.Username, Name: acc.Name, Role: acc.Role}
 	tok := a.sessions.create(u)
-	a.db.Exec(`UPDATE users SET last_login = ? WHERE username = ?`, fmtT(nowT()), req.Username)
+	_ = a.identityRepo().TouchLogin(r.Context(), acc.Username, fmtT(nowT()))
 	a.setSessionCookie(w, r, tok)
 	// 登录本身也需要留痕
 	req2 := r.Clone(r.Context())

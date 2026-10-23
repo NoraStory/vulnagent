@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	"vulnagent/server/internal/collect"
+	"vulnagent/server/internal/domain/asset"
 )
 
 // ingestOutcome 一次清单入库的结果
@@ -28,54 +30,36 @@ func (a *App) ingestComponents(hostname, ip, osName, osVersion, source string, c
 		agentStatus = "online"
 	}
 
-	_, err := a.db.Exec(`INSERT INTO assets(hostname, ip, os_family, os_version, env, exposure, tier, owner,
-		source, agent_status, last_seen_at) VALUES(?,?,?,?, 'prod', 'internal', 'normal', '', ?, ?, ?)
-		ON CONFLICT(hostname) DO UPDATE SET ip = excluded.ip, os_family = excluded.os_family,
-		os_version = excluded.os_version,
-		source = CASE WHEN assets.source = 'agent' THEN 'agent' ELSE excluded.source END,
-		agent_status = CASE WHEN excluded.agent_status = 'online' THEN 'online' ELSE assets.agent_status END,
-		last_seen_at = excluded.last_seen_at`,
-		hostname, ip, osName, osVersion, source, agentStatus, now)
+	assetID, err := a.assetRepo().UpsertReported(context.Background(), hostname, ip, osName, osVersion, source, agentStatus, now)
 	if err != nil {
 		return out, err
 	}
-	if err := a.db.QueryRow(`SELECT id FROM assets WHERE hostname = ?`, hostname).Scan(&out.AssetID); err != nil {
-		return out, err
-	}
+	out.AssetID = assetID
 
-	tx, err := a.db.Begin()
-	if err != nil {
-		return out, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM components WHERE asset_id = ?`, out.AssetID); err != nil {
-		return out, err
-	}
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO components(asset_id, purl, eco, name, version, vendor, product, inferred)
-		VALUES(?,?,?,?,?,?,?,0)`)
-	if err != nil {
-		return out, err
-	}
+	comps := make([]asset.Component, 0, len(components))
 	for _, c := range components {
 		if c.PURL == "" || c.Name == "" || c.Version == "" {
 			continue
 		}
-		if _, err := stmt.Exec(out.AssetID, c.PURL, c.Eco, c.Name, c.Version, c.Vendor, c.Product); err != nil {
-			stmt.Close()
-			return out, err
-		}
-		out.Components++
+		comps = append(comps, asset.Component{
+			PURL:    c.PURL,
+			Eco:     c.Eco,
+			Name:    c.Name,
+			Version: c.Version,
+			Vendor:  c.Vendor,
+			Product: c.Product,
+		})
 	}
-	stmt.Close()
-	if err := tx.Commit(); err != nil {
+	if err := a.assetRepo().ReplaceComponents(context.Background(), out.AssetID, comps); err != nil {
 		return out, err
 	}
+	out.Components = len(comps)
 
 	out.Created, out.Updated, err = a.matchAssetFindings(loadPolicy(a.db), out.AssetID)
 	if err != nil {
 		return out, err
 	}
-	recon, err := reconcileFindingStates(a.db, out.AssetID, "系统")
+	recon, err := a.reconcileFindingStates(out.AssetID, "系统")
 	if err != nil {
 		slog.Warn("复扫收敛失败", "assetId", out.AssetID, "err", err)
 	} else {

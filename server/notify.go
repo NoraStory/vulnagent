@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/application/ports"
 )
 
 // 支持的事件类型
@@ -28,24 +30,22 @@ type notifyConfig struct {
 	LastSentAt string   `json:"lastSentAt"`
 }
 
-func loadNotifyConfig(db *sql.DB) notifyConfig {
-	var cfg notifyConfig
-	var events string
-	err := db.QueryRow(`SELECT webhook_url, secret, events, last_event, last_status, last_error, last_sent_at
-		FROM notify_settings WHERE id = 1`).
-		Scan(&cfg.URL, &cfg.Secret, &events, &cfg.LastEvent, &cfg.LastStatus, &cfg.LastError, &cfg.LastSentAt)
-	if err != nil {
-		return notifyConfig{Events: []string{}}
+func (a *App) loadNotifyConfig() notifyConfig {
+	s, _ := a.notifyRepo().Get(context.Background())
+	return notifyConfig{
+		URL:        s.URL,
+		Secret:     s.Secret,
+		Events:     s.Events,
+		LastEvent:  s.LastEvent,
+		LastStatus: s.LastStatus,
+		LastError:  s.LastError,
+		LastSentAt: s.LastSentAt,
 	}
-	if err := json.Unmarshal([]byte(events), &cfg.Events); err != nil || cfg.Events == nil {
-		cfg.Events = []string{}
-	}
-	return cfg
 }
 
 // dispatch 异步推送事件，未配置或未订阅时直接跳过
 func (a *App) dispatch(event string, data map[string]any) {
-	cfg := loadNotifyConfig(a.db)
+	cfg := a.loadNotifyConfig()
 	if strings.TrimSpace(cfg.URL) == "" || !containsString(cfg.Events, event) {
 		return
 	}
@@ -101,8 +101,7 @@ func postWebhook(cfg notifyConfig, event string, payload []byte) error {
 }
 
 func (a *App) markNotify(event, status, errMsg string) {
-	if _, err := a.db.Exec(`UPDATE notify_settings SET last_event = ?, last_status = ?, last_error = ?, last_sent_at = ?
-		WHERE id = 1`, event, status, errMsg, fmtT(nowT())); err != nil {
+	if err := a.notifyRepo().MarkResult(context.Background(), event, status, errMsg, fmtT(nowT())); err != nil {
 		slog.Warn("记录 Webhook 状态失败", "err", err)
 	}
 }
@@ -122,7 +121,7 @@ func (a *App) handleNotifyGet(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "admin"); !ok {
 		return
 	}
-	cfg := loadNotifyConfig(a.db)
+	cfg := a.loadNotifyConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"url":        cfg.URL,
 		"secretSet":  cfg.Secret != "",
@@ -161,17 +160,18 @@ func (a *App) handleNotifyUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "包含不支持的事件类型")
 		return
 	}
-	eventsJSON, _ := json.Marshal(req.Events)
-
-	cur := loadNotifyConfig(a.db)
+	cur := a.loadNotifyConfig()
 	secret := cur.Secret
 	if req.ClearSecret {
 		secret = ""
 	} else if req.Secret != "" {
 		secret = req.Secret
 	}
-	if _, err := a.db.Exec(`UPDATE notify_settings SET webhook_url = ?, secret = ?, events = ?, updated_at = ?
-		WHERE id = 1`, req.URL, secret, string(eventsJSON), fmtT(nowT())); err != nil {
+	if err := a.notifyRepo().Save(r.Context(), ports.NotifySettings{
+		URL:    req.URL,
+		Secret: secret,
+		Events: req.Events,
+	}, fmtT(nowT())); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "保存通知设置失败")
 		return
 	}
@@ -183,7 +183,7 @@ func (a *App) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "admin"); !ok {
 		return
 	}
-	cfg := loadNotifyConfig(a.db)
+	cfg := a.loadNotifyConfig()
 	if strings.TrimSpace(cfg.URL) == "" {
 		writeErr(w, http.StatusBadRequest, "not_configured", "请先配置 Webhook 地址")
 		return

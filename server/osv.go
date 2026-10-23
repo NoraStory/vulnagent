@@ -3,25 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"vulnagent/server/internal/application/ports"
+	"vulnagent/server/internal/domain/asset"
+	"vulnagent/server/internal/platform/config"
 )
 
 const defaultOSVURL = "https://api.osv.dev/v1/query"
 
-func osvURLFromEnv() string {
-	if v := strings.TrimSpace(os.Getenv("VA_OSV_URL")); v != "" {
-		return v
-	}
-	return defaultOSVURL
-}
+func osvURLFromEnv() string { return config.Load().OSVURL }
 
 // OSV 生态映射：只处理有明确包名/版本语义的生态
 var osvEcosystem = map[string]string{
@@ -100,20 +97,11 @@ func (a *App) osvScanAssets(assetIDs []int64, all bool) (osvResult, error) {
 	var total osvResult
 	ids := assetIDs
 	if all {
-		rows, err := a.db.Query(`SELECT id FROM assets ORDER BY id`)
+		list, err := a.assetRepo().IDs(context.Background())
 		if err != nil {
 			return total, err
 		}
-		ids = nil
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return total, err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
+		ids = list
 	}
 	for _, id := range ids {
 		res, err := a.osvScanAsset(id, "系统")
@@ -136,26 +124,23 @@ func (a *App) osvScanAssets(assetIDs []int64, all bool) (osvResult, error) {
 // osvScanAsset 对单个资产按组件查询 OSV，写入 CVE 元数据、区间与漏洞结论
 func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 	var res osvResult
-	var exposure, tier string
-	if err := a.db.QueryRow(`SELECT exposure, tier FROM assets WHERE id = ?`, assetID).Scan(&exposure, &tier); err != nil {
-		return res, err
-	}
-	rows, err := a.db.Query(`SELECT purl, name, version, eco FROM components WHERE asset_id = ?`, assetID)
+	ctx0 := context.Background()
+	host, err := a.assetRepo().Get(ctx0, assetID)
 	if err != nil {
 		return res, err
 	}
-	comps := make([]osvComponent, 0, 256)
-	for rows.Next() {
-		var c osvComponent
-		if err := rows.Scan(&c.purl, &c.name, &c.version, &c.eco); err != nil {
-			rows.Close()
-			return res, err
-		}
-		if _, ok := osvEcosystem[strings.ToLower(c.eco)]; ok && c.version != "" {
-			comps = append(comps, c)
+	exposure, tier := string(host.Exposure), string(host.Tier)
+	inventory, err := a.assetRepo().Components(ctx0, assetID)
+	if err != nil {
+		return res, err
+	}
+	comps := make([]osvComponent, 0, len(inventory))
+	for _, c := range inventory {
+		comp := osvComponent{purl: c.PURL, name: c.Name, version: c.Version, eco: c.Eco}
+		if _, ok := osvEcosystem[strings.ToLower(comp.eco)]; ok && comp.version != "" {
+			comps = append(comps, comp)
 		}
 	}
-	rows.Close()
 	res.Components = len(comps)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -212,42 +197,34 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 				res.Errors++
 			}
 			product := strings.ToLower(item.comp.name)
-			if _, err := a.db.Exec(`INSERT INTO cve_affected(cve_id, product, version_start_incl, version_end_excl, fixed_version)
-				VALUES(?,?,?,?,?)
-				ON CONFLICT(cve_id, product) DO UPDATE SET
-				version_start_incl = excluded.version_start_incl,
-				version_end_excl = excluded.version_end_excl,
-				fixed_version = excluded.fixed_version`,
-				cveID, product, "", fixed, fixed); err != nil {
+			if err := a.intelRepo().UpsertAffected(ctx0, cveID, product, "", fixed, fixed); err != nil {
 				slog.Warn("写入 OSV 受影响区间失败", "cve", cveID, "err", err)
 			}
 
 			risk, priority, breakdown := policy.Score(score, 0, "none", exposure, tier)
-			var existingID int64
-			err := a.db.QueryRow(`SELECT id FROM findings WHERE asset_id = ? AND purl = ? AND cve_id = ?`,
-				assetID, item.comp.purl, cveID).Scan(&existingID)
-			switch {
-			case err == sql.ErrNoRows:
-				_, err = a.db.Exec(`INSERT INTO findings(asset_id, purl, component_name, component_version, eco,
-					cve_id, cvss, epss, exploit, asset_weight, risk, priority, score_breakdown, status, inferred,
-					fixed_version, assignee, ticket_id, first_seen, last_seen)
-					VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', 0, ?, '', '', ?, ?)`,
-					assetID, item.comp.purl, item.comp.name, item.comp.version, item.comp.eco,
-					cveID, score, 0, "none", assetWeight(exposure, tier), risk, priority,
-					marshalBreakdown(breakdown), fixed, now, now)
-				if err == nil {
+			wasCreated, err := a.findingRepo().UpsertOSV(ctx0, ports.MatchInput{
+				AssetID: assetID,
+				Component: asset.Component{
+					PURL:    item.comp.purl,
+					Name:    item.comp.name,
+					Version: item.comp.version,
+					Eco:     item.comp.eco,
+				},
+				CVEID:        cveID,
+				CVSS:         score,
+				EPSS:         0,
+				Exploit:      "none",
+				AssetWeight:  assetWeight(exposure, tier),
+				Risk:         risk,
+				Priority:     priority,
+				Breakdown:    marshalBreakdown(breakdown),
+				FixedVersion: fixed,
+				Now:          now,
+			})
+			if err == nil {
+				if wasCreated {
 					res.Created++
-				}
-			case err != nil:
-				res.Errors++
-				continue
-			default:
-				_, err = a.db.Exec(`UPDATE findings SET component_name = ?, component_version = ?, eco = ?,
-					cvss = ?, risk = ?, priority = ?, score_breakdown = ?, fixed_version = ?, last_seen = ?
-					WHERE id = ?`,
-					item.comp.name, item.comp.version, item.comp.eco, score, risk, priority,
-					marshalBreakdown(breakdown), fixed, now, existingID)
-				if err == nil {
+				} else {
 					res.Updated++
 				}
 			}
@@ -257,7 +234,7 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 			}
 		}
 	}
-	if _, err := reconcileFindingStates(a.db, assetID, actor); err != nil {
+	if _, err := a.reconcileFindingStates(assetID, actor); err != nil {
 		return res, err
 	}
 	slog.Info("OSV 匹配完成", "assetId", assetID, "components", res.Components,
