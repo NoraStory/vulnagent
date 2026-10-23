@@ -421,7 +421,7 @@ func (a *App) recomputeFindings(p RiskPolicy) (int, error) {
 	}
 	defer stmt.Close()
 	for _, it := range list {
-		risk, prio, bd := p.score(it.cvss, it.epss, it.exploit, it.exposure, it.tier)
+		risk, prio, bd := p.Score(it.cvss, it.epss, it.exploit, it.exposure, it.tier)
 		if _, err := stmt.Exec(risk, prio, marshalBreakdown(bd), assetWeight(it.exposure, it.tier), it.id); err != nil {
 			return 0, err
 		}

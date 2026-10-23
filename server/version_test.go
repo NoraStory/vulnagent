@@ -36,14 +36,25 @@ func TestCompareVersion(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := CompareVersion(c.eco, c.a, c.b)
-		if sign(got) != c.want {
+		if normalize(got) != c.want {
 			t.Fatalf("CompareVersion(%s,%s,%s)=%d, want %d", c.eco, c.a, c.b, got, c.want)
 		}
 		rev := CompareVersion(c.eco, c.b, c.a)
-		if sign(rev) != -c.want {
+		if normalize(rev) != -c.want {
 			t.Fatalf("CompareVersion(%s,%s,%s)=%d, want %d（反向一致性）", c.eco, c.b, c.a, rev, -c.want)
 		}
 	}
+}
+
+// normalize 把比较结果归一化到 -1/0/1
+func normalize(v int) int {
+	switch {
+	case v < 0:
+		return -1
+	case v > 0:
+		return 1
+	}
+	return 0
 }
 
 func TestAffectedRange(t *testing.T) {

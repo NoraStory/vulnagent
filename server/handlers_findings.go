@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"vulnagent/server/internal/domain/vuln"
 )
 
 type assetRef struct {
@@ -280,10 +282,8 @@ func mavenGroup(purl string) string {
 	return ""
 }
 
-var validStatuses = map[string]bool{
-	"open": true, "triaged": true, "fixing": true, "fixed": true, "verified": true,
-	"closed": true, "risk_accepted": true, "false_positive": true,
-}
+// validStatuses 状态字典来自领域层，避免与复扫/报表各写一套
+func isValidStatus(s string) bool { return vuln.Status(s).Valid() }
 
 func (a *App) handleFindingPatch(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireRole(w, r, "operator")
@@ -307,7 +307,7 @@ func (a *App) handleFindingPatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "仅支持修改 status 与 assignee")
 		return
 	}
-	if req.Status != nil && !validStatuses[*req.Status] {
+	if req.Status != nil && !isValidStatus(*req.Status) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "status 取值不在允许范围内")
 		return
 	}

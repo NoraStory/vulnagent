@@ -4,30 +4,12 @@ import (
 	"database/sql"
 	"log/slog"
 	"strings"
+
+	"vulnagent/server/internal/domain/vuln"
 )
 
-// AffectedRange 一条受影响版本区间（左闭右开）
-type AffectedRange struct {
-	CveID            string
-	Product          string
-	VersionStartIncl string
-	VersionEndExcl   string
-	FixedVersion     string
-}
-
-// Matches 判断组件版本是否落在区间内，ecosystem 决定版本比较规则
-func (r AffectedRange) Matches(eco, version string) bool {
-	if version == "" {
-		return false
-	}
-	if r.VersionStartIncl != "" && CompareVersion(eco, version, r.VersionStartIncl) < 0 {
-		return false
-	}
-	if r.VersionEndExcl != "" && CompareVersion(eco, version, r.VersionEndExcl) >= 0 {
-		return false
-	}
-	return true
-}
+// AffectedRange 兼容别名，领域实现见 internal/domain/vuln
+type AffectedRange = vuln.AffectedRange
 
 type cveMeta struct {
 	score   float64
@@ -136,7 +118,7 @@ func (a *App) matchAssetFindings(policy RiskPolicy, assetID int64) (int, int, er
 				if !ok {
 					continue
 				}
-				risk, priority, breakdown := policy.score(meta.score, meta.epss, meta.exploit, exposure, tier)
+				risk, priority, breakdown := policy.Score(meta.score, meta.epss, meta.exploit, exposure, tier)
 				fixed := r.FixedVersion
 				if fixed == "" {
 					fixed = meta.fixed

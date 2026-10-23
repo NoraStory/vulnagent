@@ -222,7 +222,7 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 				slog.Warn("写入 OSV 受影响区间失败", "cve", cveID, "err", err)
 			}
 
-			risk, priority, breakdown := policy.score(score, 0, "none", exposure, tier)
+			risk, priority, breakdown := policy.Score(score, 0, "none", exposure, tier)
 			var existingID int64
 			err := a.db.QueryRow(`SELECT id FROM findings WHERE asset_id = ? AND purl = ? AND cve_id = ?`,
 				assetID, item.comp.purl, cveID).Scan(&existingID)

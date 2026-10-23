@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"vulnagent/server/internal/domain/vuln"
 )
 
 // reconcileResult 复扫收敛结果
@@ -52,7 +54,7 @@ func reconcileFindingStates(db *sql.DB, assetID int64, actor string) (reconcileR
 	}
 
 	rows, err := db.Query(`SELECT id, cve_id, status, fixed_version, component_name, component_version, eco
-		FROM findings WHERE asset_id = ? AND status IN ('open','triaged','fixing','fixed','verified')`, assetID)
+		FROM findings WHERE asset_id = ? AND status IN (`+vuln.ActiveStatusSQL()+`)`, assetID)
 	if err != nil {
 		return out, err
 	}

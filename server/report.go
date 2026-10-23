@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/go-pdf/fpdf"
+
+	"vulnagent/server/internal/domain/vuln"
 )
 
 // cjkFont 报告使用思源黑体（SIL OFL 1.1），随二进制内嵌，部署无外部字体依赖
@@ -23,17 +25,6 @@ var priorityRGB = map[string][3]int{
 	"P1": {181, 71, 8},
 	"P2": {0, 100, 214},
 	"P3": {90, 100, 115},
-}
-
-var statusCN = map[string]string{
-	"open":           "待处理",
-	"triaged":        "已定级",
-	"fixing":         "修复中",
-	"fixed":          "已修复",
-	"verified":       "已验证",
-	"risk_accepted":  "风险接受",
-	"false_positive": "误报",
-	"closed":         "已关闭",
 }
 
 type reportFinding struct {
@@ -97,12 +88,7 @@ func reportFilterFromQuery(r *http.Request) reportFilter {
 	}
 }
 
-func statusLabel(status string) string {
-	if v, ok := statusCN[status]; ok {
-		return v
-	}
-	return status
-}
+func statusLabel(status string) string { return vuln.StatusLabel(status) }
 
 func (a *App) loadReportFindings(f reportFilter, limit int) ([]reportFinding, error) {
 	rows, err := a.db.Query(`SELECT f.priority, f.cve_id, c.title, f.component_name, f.component_version,

@@ -607,7 +607,7 @@ func seedDemo(db *sql.DB) error {
 				if !matchSeedAffected(c, comp) {
 					continue
 				}
-				risk, priority, breakdown := policy.score(c.score, c.epss, c.exploit, a.exposure, a.tier)
+				risk, priority, breakdown := policy.Score(c.score, c.epss, c.exploit, a.exposure, a.tier)
 				status := findingStatusPattern[idx%len(findingStatusPattern)]
 				assignee := ""
 				if status != "open" || idx%4 != 0 {

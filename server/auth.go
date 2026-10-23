@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"vulnagent/server/internal/domain/identity"
 )
 
 // User 对外暴露的用户信息
@@ -100,17 +102,8 @@ func userFrom(r *http.Request) *User {
 	return nil
 }
 
-func roleRank(role string) int {
-	switch role {
-	case "admin":
-		return 3
-	case "operator":
-		return 2
-	case "viewer":
-		return 1
-	}
-	return 0
-}
+// roleRank 角色权重来自领域层，未知角色为 0
+func roleRank(role string) int { return identity.Role(role).Rank() }
 
 // withAuth 除登录与健康检查外的接口都要求会话
 func (a *App) withAuth(next http.Handler) http.Handler {
