@@ -1,0 +1,208 @@
+{
+  "id": "apple-vuln-agent",
+  "version": 1,
+  "tags": [
+    "task",
+    "evidence-backed"
+  ],
+  "brandEvidence": {
+    "name": "Apple Design Library (referenced)",
+    "checkedAt": "2026-10-22",
+    "sources": [
+      {
+        "kind": "user-provided",
+        "reference": "Referenced Design Library 苹果 (dl_builtin_apple) tokens: brand-500 #007AFF, text-800 #1D1D1F, text-500 #6E6E73, background-200 #F2F2F7, background-300 #E5E5EA, background-400 #D1D1D6, background-600 #8E8E93, state-error #FF3B30, state-success #34C759, chart-3 #FF9F0A"
+      }
+    ],
+    "derivations": [
+      {
+        "role": "data.labelRoles[0].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#5E5CE6",
+        "basis": "Compared #FFFFFF and #0A0A0A on #5E5CE6; chose #FFFFFF."
+      },
+      {
+        "role": "data.labelRoles[1].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#30D158",
+        "basis": "Compared #FFFFFF and #0A0A0A on #30D158; chose #0A0A0A."
+      },
+      {
+        "role": "data.labelRoles[2].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#FF9F0A",
+        "basis": "Compared #FFFFFF and #0A0A0A on #FF9F0A; chose #0A0A0A."
+      },
+      {
+        "role": "data.labelRoles[3].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#8E8E93",
+        "basis": "Compared #FFFFFF and #0A0A0A on #8E8E93; chose #0A0A0A."
+      },
+      {
+        "role": "data.labelRoles[4].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#FF3B30",
+        "basis": "Compared #FFFFFF and #0A0A0A on #FF3B30; chose #0A0A0A."
+      },
+      {
+        "role": "data.labelRoles[5].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#FFCC00",
+        "basis": "Compared #FFFFFF and #0A0A0A on #FFCC00; chose #0A0A0A."
+      },
+      {
+        "role": "data.labelRoles[6].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#34C759",
+        "basis": "Compared #FFFFFF and #0A0A0A on #34C759; chose #0A0A0A."
+      },
+      {
+        "role": "data.labelRoles[7].text",
+        "method": "wcag-contrast-choice",
+        "fill": "#007AFF",
+        "basis": "Compared #FFFFFF and #0A0A0A on #007AFF; chose #0A0A0A."
+      }
+    ]
+  },
+  "document": {
+    "background": "#F2F2F7",
+    "text": "#1D1D1F",
+    "mutedText": "#6E6E73",
+    "connector": "#8E8E93",
+    "primaryConnector": "#0064D6"
+  },
+  "node": {
+    "neutral": {
+      "fill": "#F2F2F7",
+      "stroke": "#D1D1D6",
+      "text": "#1D1D1F"
+    },
+    "primary": {
+      "fill": "#0064D6",
+      "stroke": "#0064D6",
+      "text": "#FFFFFF"
+    },
+    "emphasis": {
+      "fill": "#E8F2FF",
+      "stroke": "#0064D6",
+      "text": "#1D1D1F"
+    },
+    "secondary": {
+      "fill": "#FFFFFF",
+      "stroke": "#E5E5EA",
+      "text": "#1D1D1F"
+    }
+  },
+  "style": {
+    "shape": {
+      "roughness": 0,
+      "strokeWidth": 1,
+      "strokeStyle": "solid",
+      "fillStyle": "solid",
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      }
+    },
+    "text": {
+      "fontFamily": "helvetica",
+      "fontFamilyAliases": [
+        2,
+        "2"
+      ],
+      "codeFontFamily": "cascadia",
+      "codeFontFamilyAliases": [
+        3,
+        "3"
+      ],
+      "fontSize": 16,
+      "groupTitleFontSize": 20,
+      "titleFontSize": 28
+    },
+    "arrow": {
+      "roughness": 0,
+      "strokeWidth": 1,
+      "strokeStyle": "solid",
+      "opacity": 100,
+      "route": "straight",
+      "startArrowhead": null,
+      "endArrowhead": "triangle",
+      "roundness": null,
+      "elbowed": false
+    },
+    "allowed": {
+      "strokeWidths": [
+        1,
+        2
+      ],
+      "strokeStyles": [
+        "solid",
+        "dashed"
+      ],
+      "rectangleRoundnessTypes": [
+        null,
+        3
+      ],
+      "arrowRoutes": [
+        "straight",
+        "elbowed",
+        "curved"
+      ],
+      "arrowheads": [
+        null,
+        "triangle"
+      ]
+    }
+  },
+  "data": {
+    "accents": [],
+    "other": "#8E8E93",
+    "labelRoles": [
+      {
+        "fill": "#5E5CE6",
+        "text": "#FFFFFF"
+      },
+      {
+        "fill": "#30D158",
+        "text": "#0A0A0A"
+      },
+      {
+        "fill": "#FF9F0A",
+        "text": "#0A0A0A"
+      },
+      {
+        "fill": "#8E8E93",
+        "text": "#0A0A0A"
+      },
+      {
+        "fill": "#FF3B30",
+        "text": "#0A0A0A"
+      },
+      {
+        "fill": "#FFCC00",
+        "text": "#0A0A0A"
+      },
+      {
+        "fill": "#34C759",
+        "text": "#0A0A0A"
+      },
+      {
+        "fill": "#007AFF",
+        "text": "#0A0A0A"
+      }
+    ]
+  },
+  "semantic": {
+    "critical": "#FF3B30",
+    "high": "#FF9F0A",
+    "medium": "#FFCC00",
+    "low": "#34C759",
+    "info": "#007AFF"
+  },
+  "series": [
+    "#5E5CE6",
+    "#30D158",
+    "#FF9F0A"
+  ]
+}

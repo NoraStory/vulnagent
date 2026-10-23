@@ -1,0 +1,19 @@
+[Unit]
+Description=VulnAgent 主机采集与上报（一次性）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/vulnagent/agent.env
+ExecStart=/opt/vulnagent/server/vulnagent agent --server ${VA_SERVER} --token-file /etc/vulnagent/agent.token
+Nice=10
+IOSchedulingClass=idle
+
+# Agent 只读访问包数据库，不写入任何业务数据
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ReadOnlyPaths=/var/lib/dpkg /var/lib/rpm /lib/apk/db /etc

@@ -1,0 +1,182 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-page text-ink antialiased;
+    font-feature-settings: "tnum" 1;
+  }
+
+  ::selection {
+    background: rgba(0, 122, 255, 0.16);
+  }
+
+  *:focus-visible {
+    outline: 2px solid rgba(0, 122, 255, 0.45);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #d1d1d6;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #aeaeb2;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-card border border-line bg-surface shadow-card;
+  }
+
+  .card-pad {
+    @apply p-5;
+  }
+
+  .btn {
+    @apply inline-flex h-9 select-none items-center justify-center gap-1.5 rounded-control px-3.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .btn-primary {
+    @apply bg-brand text-white hover:bg-brand-strong;
+  }
+
+  .btn-secondary {
+    @apply border border-lineStrong bg-surface text-ink hover:bg-subtle;
+  }
+
+  .btn-ghost {
+    @apply text-ink2 hover:bg-subtle hover:text-ink;
+  }
+
+  .btn-danger {
+    @apply border border-[#FFD5D1] bg-[#FFECEA] text-[#C4170E] hover:bg-[#FFDFDB];
+  }
+
+  .input {
+    @apply h-9 w-full rounded-control border border-lineStrong bg-surface px-3 text-[13px] text-ink placeholder:text-ink3 focus:border-brand focus:outline-none focus:ring-[3px] focus:ring-brand/15;
+  }
+
+  .range {
+    @apply h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line focus:outline-none;
+  }
+
+  .range::-webkit-slider-thumb {
+    @apply h-[15px] w-[15px] appearance-none rounded-full border-2 border-white bg-brand-strong shadow-[0_1px_3px_rgba(0,0,0,.24)];
+  }
+
+  .range::-moz-range-thumb {
+    @apply h-[15px] w-[15px] rounded-full border-2 border-white bg-brand-strong;
+  }
+
+  .pill {
+    @apply inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px] font-medium leading-none;
+  }
+
+  .th {
+    @apply whitespace-nowrap px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.04em] text-ink3;
+  }
+
+  .td {
+    @apply px-4 py-3 align-middle text-[13px] text-ink;
+  }
+
+  .row-hover {
+    @apply cursor-pointer transition-colors hover:bg-subtle;
+  }
+
+  .metric {
+    @apply text-[34px] font-semibold leading-[40px] tracking-[-0.02em];
+  }
+
+  .mono {
+    @apply font-mono text-[12px] tracking-[-0.01em];
+  }
+
+  .divider {
+    @apply h-px w-full bg-line;
+  }
+
+  .nav-item {
+    @apply flex h-9 items-center gap-2.5 rounded-[9px] px-2.5 text-[13px] font-medium text-ink2 transition-colors hover:bg-subtle hover:text-ink;
+  }
+
+  .nav-item-active {
+    @apply bg-brand-soft text-brand-strong hover:bg-brand-soft hover:text-brand-strong;
+  }
+}
+
+@layer utilities {
+  .animate-rise {
+    animation: rise 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+
+  .animate-drawer {
+    animation: drawer 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .animate-fade {
+    animation: fade 0.2s ease-out both;
+  }
+
+  @keyframes rise {
+    from {
+      transform: translateY(8px);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes drawer {
+    from {
+      transform: translateX(28px);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-rise,
+    .animate-drawer,
+    .animate-fade {
+      animation: none;
+    }
+  }
+
+  /* 抽屉打开时把提示条抬到操作按钮上方，避免遮挡 */
+  body[data-drawer="open"] .toast-stack {
+    bottom: 92px;
+  }
+}

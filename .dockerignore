@@ -1,0 +1,10 @@
+web/node_modules
+web/dist
+server/bin
+data
+.tmp
+.tmp-verify
+.gomodcache
+.git
+docs
+*.md

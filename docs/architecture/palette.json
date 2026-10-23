@@ -1,0 +1,42 @@
+{
+  "id": "apple-vuln-agent",
+  "brand": {
+    "name": "Apple Design Library (referenced)",
+    "checkedAt": "2026-10-22",
+    "sources": [
+      {
+        "kind": "user-provided",
+        "reference": "Referenced Design Library 苹果 (dl_builtin_apple) tokens: brand-500 #007AFF, text-800 #1D1D1F, text-500 #6E6E73, background-200 #F2F2F7, background-300 #E5E5EA, background-400 #D1D1D6, background-600 #8E8E93, state-error #FF3B30, state-success #34C759, chart-3 #FF9F0A"
+      }
+    ]
+  },
+  "palette": {
+    "primary": "#0064D6",
+    "series": ["#5E5CE6", "#30D158", "#FF9F0A"],
+    "other": "#8E8E93",
+    "background": "#F2F2F7",
+    "text": "#1D1D1F",
+    "mutedText": "#6E6E73",
+    "connector": "#8E8E93",
+    "onPrimary": "#FFFFFF",
+    "emphasisFill": "#E8F2FF",
+    "emphasisText": "#1D1D1F",
+    "neutral": {
+      "fill": "#F2F2F7",
+      "stroke": "#D1D1D6",
+      "text": "#1D1D1F"
+    },
+    "secondary": {
+      "fill": "#FFFFFF",
+      "stroke": "#E5E5EA",
+      "text": "#1D1D1F"
+    },
+    "semantic": {
+      "critical": "#FF3B30",
+      "high": "#FF9F0A",
+      "medium": "#FFCC00",
+      "low": "#34C759",
+      "info": "#007AFF"
+    }
+  }
+}

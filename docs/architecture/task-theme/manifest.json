@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "primitives": "./primitives.json",
+  "defaultUiTheme": "warm-gray",
+  "defaultDiagramTheme": "apple-vuln-agent",
+  "uiThemes": {
+    "warm-gray": "./ui-theme.json"
+  },
+  "diagramThemes": {
+    "apple-vuln-agent": "./diagram-theme.json"
+  }
+}

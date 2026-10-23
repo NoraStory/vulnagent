@@ -1,0 +1,87 @@
+# 每小时采集节点上的系统包并上报控制面。
+# 若节点已安装 systemd Agent，可删除本 CronJob。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vulnagent-agent
+  namespace: vulnagent
+spec:
+  schedule: "17 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: vulnagent-agent
+        spec:
+          restartPolicy: Never
+          hostPID: false
+          containers:
+            - name: agent
+              image: vulnagent:0.1.0
+              imagePullPolicy: IfNotPresent
+              command: ["/app/server/vulnagent"]
+              args:
+                - agent
+                - --server=http://vulnagent.vulnagent.svc.cluster.local:8787
+                - --token-file=/etc/vulnagent/agent.token
+              env:
+                - name: TZ
+                  value: Asia/Shanghai
+                - name: HOSTNAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+              volumeMounts:
+                - name: dpkg
+                  mountPath: /var/lib/dpkg
+                  readOnly: true
+                - name: rpm
+                  mountPath: /var/lib/rpm
+                  readOnly: true
+                - name: apk
+                  mountPath: /lib/apk/db
+                  readOnly: true
+                - name: os-release
+                  mountPath: /etc/os-release
+                  readOnly: true
+                - name: token
+                  mountPath: /etc/vulnagent
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              securityContext:
+                runAsUser: 0
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: dpkg
+              hostPath:
+                path: /var/lib/dpkg
+                type: DirectoryOrCreate
+            - name: rpm
+              hostPath:
+                path: /var/lib/rpm
+                type: DirectoryOrCreate
+            - name: apk
+              hostPath:
+                path: /lib/apk/db
+                type: DirectoryOrCreate
+            - name: os-release
+              hostPath:
+                path: /etc/os-release
+                type: File
+            - name: token
+              secret:
+                secretName: vulnagent-agent-token

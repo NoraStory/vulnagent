@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vulnagent
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vulnagent-data
+  namespace: vulnagent
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnagent
+  namespace: vulnagent
+  labels:
+    app: vulnagent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vulnagent
+  template:
+    metadata:
+      labels:
+        app: vulnagent
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: server
+          image: vulnagent:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: ["server"]
+          ports:
+            - name: http
+              containerPort: 8787
+          env:
+            - name: VA_ADDR
+              value: ":8787"
+            - name: VA_DATA_DIR
+              value: /app/data
+            - name: VA_SESSION_IDLE
+              value: "30m"
+            - name: VA_COOKIE_SECURE
+              value: "1"
+            - name: VA_RESCAN_INTERVAL
+              value: "30m"
+            - name: VULNAGENT_CVE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vulnagent-secrets
+                  key: cve-api-key
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vulnagent-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vulnagent
+  namespace: vulnagent
+spec:
+  selector:
+    app: vulnagent
+  ports:
+    - name: http
+      port: 8787
+      targetPort: http
+  type: ClusterIP

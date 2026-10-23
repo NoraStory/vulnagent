@@ -1,0 +1,28 @@
+[Unit]
+Description=VulnAgent 控制面（API + Web）
+Documentation=https://github.com/your-org/vulnagent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vulnagent
+Group=vulnagent
+WorkingDirectory=/opt/vulnagent/server
+EnvironmentFile=-/etc/vulnagent/server.env
+ExecStart=/opt/vulnagent/server/vulnagent server
+Restart=on-failure
+RestartSec=3
+
+# 最小权限：只允许写数据目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/vulnagent
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
