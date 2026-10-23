@@ -1,21 +1,21 @@
 import type { Priority } from "./types";
 
 export const priorityMeta: Record<Priority, { label: string; color: string; soft: string; text: string }> = {
-  P0: { label: "严重", color: "#FF3B30", soft: "#FFECEA", text: "#C4170E" },
-  P1: { label: "高危", color: "#FF9F0A", soft: "#FFF3E0", text: "#9A5B00" },
-  P2: { label: "中危", color: "#FFCC00", soft: "#FFF9DB", text: "#7A6000" },
-  P3: { label: "低危", color: "#8E8E93", soft: "#F2F2F7", text: "#55555A" }
+  P0: { label: "严重", color: "#B42318", soft: "#FDECEA", text: "#B42318" },
+  P1: { label: "高危", color: "#B54708", soft: "#FDF1E3", text: "#B54708" },
+  P2: { label: "中危", color: "#A15C07", soft: "#FEF6E7", text: "#A15C07" },
+  P3: { label: "低危", color: "#667085", soft: "#F2F4F7", text: "#475467" }
 };
 
 export const statusMeta: Record<string, { label: string; color: string }> = {
-  open: { label: "待处理", color: "#FF3B30" },
-  triaged: { label: "已定级", color: "#FF9F0A" },
-  fixing: { label: "修复中", color: "#007AFF" },
-  fixed: { label: "已修复", color: "#34C759" },
-  verified: { label: "已验证", color: "#34C759" },
-  closed: { label: "已关闭", color: "#8E8E93" },
-  risk_accepted: { label: "风险接受", color: "#8E8E93" },
-  false_positive: { label: "误报", color: "#8E8E93" }
+  open: { label: "待处理", color: "#B42318" },
+  triaged: { label: "已定级", color: "#B54708" },
+  fixing: { label: "修复中", color: "#2A5BD7" },
+  fixed: { label: "已修复", color: "#12805C" },
+  verified: { label: "已验证", color: "#12805C" },
+  closed: { label: "已关闭", color: "#667085" },
+  risk_accepted: { label: "风险接受", color: "#667085" },
+  false_positive: { label: "误报", color: "#667085" }
 };
 
 export const roleMeta: Record<string, string> = {

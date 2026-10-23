@@ -1,0 +1,535 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AlertCircle,
+  Bot,
+  Check,
+  ChevronDown,
+  Loader2,
+  Plus,
+  Send,
+  ShieldAlert,
+  Sparkles,
+  X
+} from "lucide-react";
+import { api, ApiError } from "../lib/api";
+import { timeAgo } from "../lib/format";
+import type {
+  HarnessApproval,
+  HarnessEvent,
+  HarnessMessage,
+  HarnessSession,
+  HarnessToolSpec
+} from "../lib/types";
+
+type Item =
+  | { key: string; kind: "user" | "assistant"; content: string; at?: string }
+  | { key: string; kind: "tool"; tool: string; ok: boolean; running?: boolean; result?: unknown }
+  | {
+      key: string;
+      kind: "approval";
+      approval: HarnessApproval;
+      status: "pending" | "approved" | "rejected";
+      error?: string;
+    }
+  | { key: string; kind: "error"; content: string };
+
+const suggestions = [
+  "总结当前最紧急的 3 个漏洞，并说明依据",
+  "看看情报同步是否滞后，需要处理吗",
+  "列出公网暴露且含 P0/P1 漏洞的资产"
+];
+
+const riskLabel: Record<string, string> = { low: "只读", medium: "需审批", high: "需审批 + 口令" };
+const riskClass: Record<string, string> = {
+  low: "bg-signal-soft text-signal",
+  medium: "bg-warnSoft text-warn",
+  high: "bg-dangerSoft text-danger"
+};
+
+function parseResult(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toItems(messages: HarnessMessage[]): Item[] {
+  const items: Item[] = [];
+  messages.forEach((message) => {
+    if (message.role === "user" || message.role === "assistant") {
+      if (!message.content.trim()) return;
+      items.push({
+        key: `m-${message.id}`,
+        kind: message.role,
+        content: message.content,
+        at: message.createdAt
+      });
+      return;
+    }
+    if (message.role === "tool") {
+      let result: unknown = message.content;
+      try {
+        result = JSON.parse(message.content);
+      } catch {
+        /* 保留原始文本 */
+      }
+      items.push({
+        key: `m-${message.id}`,
+        kind: "tool",
+        tool: "工具结果",
+        ok: !message.content.startsWith("工具执行失败"),
+        result
+      });
+    }
+  });
+  return items;
+}
+
+export function AssistantPage() {
+  const [tools, setTools] = useState<HarnessToolSpec[]>([]);
+  const [model, setModel] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const [sessions, setSessions] = useState<HarnessSession[]>([]);
+  const [activeId, setActiveId] = useState("");
+  const [items, setItems] = useState<Item[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [passwords, setPasswords] = useState<Record<string, string>>({});
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const active = sessions.find((session) => session.id === activeId);
+
+  useEffect(() => {
+    let mounted = true;
+    api
+      .harnessTools()
+      .then((result) => {
+        if (!mounted) return;
+        setEnabled(result.enabled);
+        setModel(result.model);
+        setTools(result.tools ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    api
+      .harnessSessions()
+      .then((result) => {
+        if (!mounted) return;
+        setSessions(result.sessions ?? []);
+        if ((result.sessions ?? []).length > 0) {
+          setActiveId((current) => current || result.sessions[0].id);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeId) {
+      setItems([]);
+      return;
+    }
+    let mounted = true;
+    api
+      .harnessMessages(activeId)
+      .then((result) => {
+        if (mounted) setItems(toItems(result.messages ?? []));
+      })
+      .catch((err) => {
+        if (mounted) setError(err instanceof ApiError ? err.message : "读取会话失败");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [activeId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [items, busy]);
+
+  const handleEvent = useCallback((event: HarnessEvent) => {
+    const stamp = Date.now();
+    if (event.type === "message") {
+      const data = event.data ?? {};
+      if (data.role !== "assistant" || !String(data.content ?? "").trim()) return;
+      setItems((prev) => [
+        ...prev,
+        { key: `a-${stamp}`, kind: "assistant", content: String(data.content) }
+      ]);
+      return;
+    }
+    if (event.type === "tool_call") {
+      const data = event.data ?? {};
+      const name = data.tool ?? "tool";
+      setItems((prev) => [
+        ...prev,
+        { key: `t-${stamp}-${name}`, kind: "tool", tool: name, ok: true, running: true }
+      ]);
+      return;
+    }
+    if (event.type === "tool_result") {
+      const data = event.data ?? {};
+      setItems((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          const item = next[i];
+          if (item.kind === "tool" && item.running) {
+            next[i] = { ...item, running: false, ok: Boolean(data.ok), result: data.result };
+            return next;
+          }
+        }
+        return [
+          ...next,
+          {
+            key: `tr-${stamp}`,
+            kind: "tool",
+            tool: String(data.tool ?? "tool"),
+            ok: Boolean(data.ok),
+            result: data.result
+          }
+        ];
+      });
+      return;
+    }
+    if (event.type === "approval_required") {
+      const approval = event.data as HarnessApproval;
+      setItems((prev) => [
+        ...prev,
+        { key: `ap-${approval.id}`, kind: "approval", approval, status: "pending" }
+      ]);
+      return;
+    }
+    if (event.type === "error") {
+      const message = String(event.data?.message ?? "助手执行失败");
+      setItems((prev) => [...prev, { key: `e-${stamp}`, kind: "error", content: message }]);
+      setError(message);
+    }
+  }, []);
+
+  async function ensureSession(text: string): Promise<string> {
+    if (activeId) return activeId;
+    const title = text.length > 18 ? `${text.slice(0, 18)}…` : text;
+    const { session } = await api.harnessCreateSession(title);
+    setSessions((prev) => [session, ...prev]);
+    setActiveId(session.id);
+    return session.id;
+  }
+
+  async function send(text: string) {
+    const content = text.trim();
+    if (!content || busy || !enabled) return;
+    setError("");
+    setBusy(true);
+    setInput("");
+    try {
+      const sessionId = await ensureSession(content);
+      setItems((prev) => [...prev, { key: `u-${Date.now()}`, kind: "user", content }]);
+      await api.harnessChat(sessionId, content, handleEvent);
+      const refreshed = await api.harnessSessions();
+      setSessions(refreshed.sessions ?? []);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "无法连接助手服务";
+      setError(message);
+      setItems((prev) => [...prev, { key: `e-${Date.now()}`, kind: "error", content: message }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resume() {
+    if (!activeId) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.harnessResume(activeId, handleEvent);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "继续对话失败";
+      setError(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decide(approval: HarnessApproval, decision: "approve" | "reject", key: string) {
+    setError("");
+    try {
+      await api.harnessDecision(approval.id, decision, passwords[approval.id] ?? "");
+      setItems((prev) =>
+        prev.map((item) =>
+          item.key === key && item.kind === "approval"
+            ? { ...item, status: decision === "approve" ? "approved" : "rejected", error: undefined }
+            : item
+        )
+      );
+      if (decision === "approve") {
+        await resume();
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "审批失败";
+      setItems((prev) =>
+        prev.map((item) =>
+          item.key === key && item.kind === "approval" ? { ...item, error: message } : item
+        )
+      );
+    }
+  }
+
+  async function createSession() {
+    try {
+      const { session } = await api.harnessCreateSession("排查会话");
+      setSessions((prev) => [session, ...prev]);
+      setActiveId(session.id);
+      setItems([]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "创建会话失败");
+    }
+  }
+
+  if (!enabled) {
+    return (
+      <div className="card card-pad flex flex-col items-start gap-3">
+        <div className="flex items-center gap-2 text-ink">
+          <Sparkles size={16} className="text-brand" />
+          <h2 className="text-[15px] font-semibold">Agent 助手未启用</h2>
+        </div>
+        <p className="max-w-[640px] text-[13px] leading-[21px] text-ink2">
+          配置通用 OpenAI 兼容模型凭据后重启服务即可启用：<code className="mono">VA_LLM_BASE_URL</code>、
+          <code className="mono">VA_LLM_API_KEY</code>、<code className="mono">VA_LLM_MODEL</code>。
+          助手只通过静态注册的只读工具取数，写操作必须人工审批。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid min-h-[calc(100vh-140px)] grid-cols-1 gap-4 md:grid-cols-[248px_minmax(0,1fr)]">
+      <aside className="card hidden flex-col overflow-hidden md:flex">
+        <div className="flex items-center justify-between border-b border-line px-3.5 py-3">
+          <span className="text-[12px] font-medium text-ink2">会话</span>
+          <button type="button" className="btn btn-secondary h-7 px-2 text-[12px]" onClick={() => void createSession()}>
+            <Plus size={13} />
+            新建
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {sessions.length === 0 && (
+            <p className="px-2 py-6 text-center text-[12px] text-ink3">还没有会话，直接提问即可创建</p>
+          )}
+          {sessions.map((session) => (
+            <button
+              key={session.id}
+              type="button"
+              onClick={() => setActiveId(session.id)}
+              className={`mb-1 flex w-full flex-col items-start gap-0.5 rounded-[10px] px-2.5 py-2 text-left transition-colors ${
+                session.id === activeId ? "bg-brand-soft text-brand-strong" : "text-ink2 hover:bg-subtle"
+              }`}
+            >
+              <span className="w-full truncate text-[12.5px] font-medium">{session.title}</span>
+              <span className="text-[10.5px] text-ink3">{timeAgo(session.updatedAt)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="border-t border-line px-3.5 py-2.5 text-[10.5px] text-ink3">
+          模型 {model || "—"} · 工具 {tools.length} 个
+        </div>
+      </aside>
+
+      <section className="card flex min-h-[520px] flex-col overflow-hidden">
+        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-ink text-white">
+              <Bot size={15} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold text-ink">{active?.title ?? "新会话"}</p>
+              <p className="text-[10.5px] text-ink3">
+                只读工具直接执行 · 写操作需审批 · 高风险需口令再认证
+              </p>
+            </div>
+          </div>
+          <span className="pill bg-signal-soft text-signal">{model || "模型"}</span>
+        </header>
+
+        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          {items.length === 0 && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-brand-soft text-brand">
+                <Sparkles size={20} />
+              </span>
+              <p className="text-[13px] text-ink2">从信号到结论，问点什么吧</p>
+              <div className="flex max-w-[560px] flex-wrap justify-center gap-2">
+                {suggestions.map((text) => (
+                  <button
+                    key={text}
+                    type="button"
+                    onClick={() => void send(text)}
+                    className="rounded-full border border-line bg-surface px-3 py-1.5 text-[12px] text-ink2 transition-colors hover:border-lineStrong hover:text-ink"
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {items.map((item) => {
+            if (item.kind === "user") {
+              return (
+                <div key={item.key} className="animate-rise flex justify-end">
+                  <div className="bubble-user whitespace-pre-wrap">{item.content}</div>
+                </div>
+              );
+            }
+            if (item.kind === "assistant") {
+              return (
+                <div key={item.key} className="animate-rise flex items-start gap-2">
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink text-white">
+                    <Sparkles size={12} />
+                  </span>
+                  <div className="bubble-assistant whitespace-pre-wrap">{item.content}</div>
+                </div>
+              );
+            }
+            if (item.kind === "tool") {
+              return (
+                <details key={item.key} className="animate-fade group rounded-[10px] border border-line bg-subtle/70 px-3 py-2">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-ink2">
+                    {item.running ? (
+                      <Loader2 size={12} className="animate-spin text-brand" />
+                    ) : item.ok ? (
+                      <Check size={12} className="text-ok" />
+                    ) : (
+                      <X size={12} className="text-danger" />
+                    )}
+                    <span className="mono">{item.tool}</span>
+                    <span className="text-ink3">{item.running ? "执行中" : item.ok ? "完成" : "失败"}</span>
+                    <ChevronDown size={12} className="ml-auto text-ink3 transition-transform group-open:rotate-180" />
+                  </summary>
+                  {!item.running && (
+                    <pre className="mono mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface p-2 text-[11px] text-ink2">
+                      {parseResult(item.result)}
+                    </pre>
+                  )}
+                </details>
+              );
+            }
+            if (item.kind === "approval") {
+              const high = item.approval.risk === "high";
+              return (
+                <div
+                  key={item.key}
+                  className="animate-rise rounded-[12px] border border-[#F5D9B8] bg-warnSoft/60 px-3.5 py-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert size={14} className="text-warn" />
+                    <span className="text-[12.5px] font-semibold text-ink">需要人工审批</span>
+                    <span className={`pill ${riskClass[item.approval.risk] ?? ""}`}>
+                      {riskLabel[item.approval.risk] ?? item.approval.risk}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[12px] text-ink2">{item.approval.reason}</p>
+                  <pre className="mono mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface/80 p-2 text-[11px] text-ink2">
+                    {item.approval.tool} {item.approval.args}
+                  </pre>
+                  {item.status === "pending" ? (
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      {high && (
+                        <input
+                          className="input h-8 w-[220px]"
+                          type="password"
+                          placeholder="输入当前账号口令再认证"
+                          value={passwords[item.approval.id] ?? ""}
+                          onChange={(event) =>
+                            setPasswords((prev) => ({ ...prev, [item.approval.id]: event.target.value }))
+                          }
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-primary h-8 px-3 text-[12px]"
+                        onClick={() => void decide(item.approval, "approve", item.key)}
+                      >
+                        <Check size={13} />
+                        批准并执行
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-8 px-3 text-[12px]"
+                        onClick={() => void decide(item.approval, "reject", item.key)}
+                      >
+                        <X size={13} />
+                        拒绝
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-[11.5px] text-ink2">
+                      已{item.status === "approved" ? "批准并执行" : "拒绝"} · 审批一次性生效
+                    </p>
+                  )}
+                  {item.error && (
+                    <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-danger">
+                      <AlertCircle size={12} />
+                      {item.error}
+                    </p>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <div key={item.key} className="rounded-[10px] border border-[#F5C6C2] bg-dangerSoft px-3 py-2 text-[12px] text-danger">
+                {item.content}
+              </div>
+            );
+          })}
+          <div ref={bottomRef} />
+        </div>
+
+        {error && (
+          <div className="mx-4 mb-2 flex items-start gap-1.5 rounded-[8px] bg-dangerSoft px-2.5 py-1.5 text-[11.5px] text-danger">
+            <AlertCircle size={12} className="mt-0.5 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <footer className="border-t border-line px-4 py-3">
+          <div className="flex items-end gap-2">
+            <textarea
+              className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"
+              rows={2}
+              placeholder="描述你的问题，Enter 发送，Shift + Enter 换行"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send(input);
+                }
+              }}
+              disabled={busy}
+            />
+            <button
+              type="button"
+              className="btn btn-primary h-[42px] w-[42px] shrink-0 px-0"
+              onClick={() => void send(input)}
+              disabled={busy || !input.trim()}
+              aria-label="发送"
+            >
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}

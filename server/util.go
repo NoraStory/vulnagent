@@ -8,25 +8,21 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"vulnagent/server/internal/platform/clock"
 )
 
-// cst 固定使用东八区，避免依赖系统时区数据库
-var cst = time.FixedZone("CST", 8*3600)
+// 时间与时区统一由 platform/clock 提供，这里保留包内别名以减少改动。
+var cst = clock.Zone()
 
-func nowT() time.Time { return time.Now().In(cst) }
+func nowT() time.Time { return clock.Now() }
 
-func fmtT(t time.Time) string { return t.In(cst).Format(time.RFC3339) }
+func fmtT(t time.Time) string { return clock.Format(t) }
 
-func parseT(s string) (time.Time, error) { return time.Parse(time.RFC3339, s) }
+func parseT(s string) (time.Time, error) { return clock.Parse(s) }
 
 // hoursSince 返回某时间字符串距今的小时数，解析失败返回 0
-func hoursSince(s string) float64 {
-	t, err := parseT(s)
-	if err != nil {
-		return 0
-	}
-	return nowT().Sub(t).Hours()
-}
+func hoursSince(s string) float64 { return clock.HoursSince(s) }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

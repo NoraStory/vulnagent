@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { AlertCircle, Loader2, LockKeyhole } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api, ApiError } from "../lib/api";
 
@@ -51,23 +51,21 @@ export function LoginPage() {
         className="pointer-events-none absolute inset-x-0 top-0 h-[420px] opacity-90"
         style={{
           background:
-            "radial-gradient(900px 340px at 50% -140px, #FFFFFF 0%, rgba(255,255,255,0) 72%)"
+            "radial-gradient(900px 340px at 50% -160px, rgba(42,91,215,0.10) 0%, rgba(42,91,215,0) 70%)"
         }}
       />
 
       <div className="relative w-full max-w-[392px]">
         <div className="mb-6 flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-brand text-white shadow-[0_4px_12px_rgba(0,122,255,.28)]">
-            <ShieldCheck size={19} />
-          </span>
+          <img src="/brand/mark.svg" alt="Signal" className="h-9 w-9 rounded-[10px]" />
           <span className="leading-tight">
-            <span className="block text-[15px] font-semibold tracking-[-0.01em] text-ink">VulnAgent</span>
-            <span className="block text-[11px] text-ink3">安全漏洞运维 Agent</span>
+            <span className="block text-[15px] font-semibold tracking-[-0.01em] text-ink">Signal</span>
+            <span className="block text-[11px] text-ink3">漏洞信号台 · 从信号到结论</span>
           </span>
         </div>
 
         <div className="card overflow-hidden p-7">
-          <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-ink">登录控制面</h1>
+          <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-ink">登录控制台</h1>
           <p className="mt-1 text-[12.5px] leading-[19px] text-ink2">
             使用平台账号登录，所有写操作都会留痕审计。
           </p>
@@ -133,7 +131,7 @@ export function LoginPage() {
         </div>
 
         <p className="mt-5 text-center text-[11px] text-ink3">
-          {demo ? "演示环境 · 漏洞与情报为示例数据，不对接真实外部源" : "VulnAgent 控制面 · 写操作留痕审计"}
+          {demo ? "演示环境 · 漏洞与情报为示例数据，不对接真实外部源" : "Signal 漏洞信号台 · 写操作留痕审计"}
         </p>
       </div>
     </div>

@@ -4,44 +4,54 @@ import "context"
 
 // PriorityCount 按优先级统计
 type PriorityCount struct {
-	Priority string
-	Count    int
+	Priority string `json:"priority"`
+	Count    int    `json:"count"`
 }
 
 // StatusCount 按状态统计
 type StatusCount struct {
-	Status string
-	Count  int
+	Status string `json:"status"`
+	Count  int    `json:"count"`
 }
 
 // TopComponent 高风险组件聚合
 type TopComponent struct {
-	Name       string
-	Version    string
-	Eco        string
-	CVECount   int
-	MaxRisk    int
-	AssetCount int
-	Priority   string
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Eco        string `json:"ecosystem"`
+	CVECount   int    `json:"cveCount"`
+	MaxRisk    int    `json:"maxRisk"`
+	AssetCount int    `json:"assetCount"`
+	Priority   string `json:"priority"`
 }
 
 // AgentSummary Agent 在线情况
 type AgentSummary struct {
-	Total   int
-	Online  int
-	Offline int
-	Stale   int
+	Total   int `json:"total"`
+	Online  int `json:"online"`
+	Offline int `json:"offline"`
+	Stale   int `json:"stale"`
 }
 
 // FindingEvent 漏洞处置事件（概览展示用）
 type FindingEvent struct {
-	ID       int64
-	Time     string
-	Actor    string
-	Event    string
-	CVEID    string
-	Hostname string
-	Detail   string
+	ID       int64  `json:"id"`
+	Time     string `json:"time"`
+	Actor    string `json:"actor"`
+	Event    string `json:"event"`
+	CVEID    string `json:"cveId"`
+	Hostname string `json:"hostname"`
+	Detail   string `json:"detail"`
+}
+
+// SelfcheckSummary 最近一次自检摘要
+type SelfcheckSummary struct {
+	RunID     string `json:"runId"`
+	Status    string `json:"status"`
+	CheckedAt string `json:"checkedAt"`
+	Passed    int    `json:"passed"`
+	Warnings  int    `json:"warnings"`
+	Failed    int    `json:"failed"`
 }
 
 // Gauges 指标接口使用的绝对值
@@ -64,6 +74,8 @@ type StatsRepository interface {
 	RecentFindingEvents(ctx context.Context, limit int) ([]FindingEvent, error)
 	// Gauges 返回资产/组件/CVE/Agent/自检的绝对计数
 	Gauges(ctx context.Context) (Gauges, error)
+	// LatestSelfcheck 返回最近一次自检摘要，从未执行时 found=false
+	LatestSelfcheck(ctx context.Context) (SelfcheckSummary, bool, error)
 }
 
 // RecomputeRow 重算风险分所需的一行

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"vulnagent/server/internal/application/harness"
 	"vulnagent/server/internal/platform/config"
 )
 
@@ -35,6 +36,12 @@ type App struct {
 	scanDebounce time.Duration
 
 	loginGuard *loginLimiter
+
+	// Harness：只读连接 + 应用服务
+	roOnce  sync.Once
+	roDB    *sql.DB
+	roErr   error
+	harness *harnessapp.Service
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -43,6 +50,16 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/me", a.handleMe)
 	mux.HandleFunc("POST /api/v1/me/password", a.handlePasswordChange)
 	mux.HandleFunc("GET /api/v1/healthz", a.handleHealthz)
+	mux.HandleFunc("GET /api/v1/meta", a.handleMeta)
+
+	// Agent Harness：会话、流式对话与人工审批
+	mux.HandleFunc("GET /api/v1/agent/tools", a.handleHarnessTools)
+	mux.HandleFunc("GET /api/v1/agent/sessions", a.handleHarnessSessions)
+	mux.HandleFunc("POST /api/v1/agent/sessions", a.handleHarnessCreateSession)
+	mux.HandleFunc("GET /api/v1/agent/sessions/{id}/messages", a.handleHarnessMessages)
+	mux.HandleFunc("POST /api/v1/agent/sessions/{id}/messages", a.handleHarnessChat)
+	mux.HandleFunc("POST /api/v1/agent/sessions/{id}/resume", a.handleHarnessResume)
+	mux.HandleFunc("POST /api/v1/agent/approvals/{id}", a.handleHarnessDecision)
 
 	mux.HandleFunc("GET /api/v1/users", a.handleUsersList)
 	mux.HandleFunc("POST /api/v1/users", a.handleUserCreate)
@@ -148,6 +165,12 @@ func runServer() {
 		selfDigest: computeSelfSBOMDigest(), scanDebounce: scanDebounceFromEnv(),
 		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter()}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
+	app.initHarness(cfg)
+	defer func() {
+		if app.roDB != nil {
+			_ = app.roDB.Close()
+		}
+	}()
 	if inserted, err := ensureProductMap(db); err != nil {
 		slog.Error("初始化产品映射失败", "err", err)
 		os.Exit(1)

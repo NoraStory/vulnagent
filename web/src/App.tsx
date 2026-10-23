@@ -8,6 +8,7 @@ import { AssetsPage } from "./pages/Assets";
 import { AssetDetailPage } from "./pages/AssetDetail";
 import { SelfCheckPage } from "./pages/SelfCheck";
 import { SettingsPage } from "./pages/Settings";
+import { AssistantPage } from "./pages/Assistant";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/findings" element={<FindingsPage />} />
         <Route path="/assets" element={<AssetsPage />} />
         <Route path="/assets/:id" element={<AssetDetailPage />} />
+        <Route path="/assistant" element={<AssistantPage />} />
         <Route path="/selfcheck" element={<SelfCheckPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

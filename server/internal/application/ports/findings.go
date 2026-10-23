@@ -4,28 +4,28 @@ import "context"
 
 // FindingListItem 漏洞列表/详情的主体字段
 type FindingListItem struct {
-	ID               int64
-	CVEID            string
-	Title            string
-	Priority         string
-	Risk             int
-	CVSS             float64
-	EPSS             float64
-	Exploit          string
-	Status           string
-	Assignee         string
-	Inferred         bool
-	FirstSeen        string
-	AssetID          int64
-	AssetHostname    string
-	AssetEnv         string
-	AssetExposure    string
-	AssetTier        string
-	ComponentName    string
-	ComponentVersion string
-	ComponentEco     string
-	PURL             string
-	FixedVersion     string
+	ID               int64   `json:"id"`
+	CVEID            string  `json:"cveId"`
+	Title            string  `json:"title"`
+	Priority         string  `json:"priority"`
+	Risk             int     `json:"risk"`
+	CVSS             float64 `json:"cvss"`
+	EPSS             float64 `json:"epss"`
+	Exploit          string  `json:"exploit"`
+	Status           string  `json:"status"`
+	Assignee         string  `json:"assignee"`
+	Inferred         bool    `json:"inferred"`
+	FirstSeen        string  `json:"firstSeen"`
+	AssetID          int64   `json:"assetId"`
+	AssetHostname    string  `json:"assetHostname"`
+	AssetEnv         string  `json:"assetEnv"`
+	AssetExposure    string  `json:"assetExposure"`
+	AssetTier        string  `json:"assetTier"`
+	ComponentName    string  `json:"componentName"`
+	ComponentVersion string  `json:"componentVersion"`
+	ComponentEco     string  `json:"componentEco"`
+	PURL             string  `json:"purl"`
+	FixedVersion     string  `json:"fixedVersion"`
 }
 
 // FindingFilter 漏洞列表筛选条件
@@ -39,25 +39,25 @@ type FindingFilter struct {
 
 // FindingExtra 详情页的附加信息
 type FindingExtra struct {
-	Description string
-	CWEID       int
-	CWECN       string
-	PublishedAt string
-	Breakdown   string
+	Description string `json:"description"`
+	CWEID       int    `json:"cweId"`
+	CWECN       string `json:"cweCn"`
+	PublishedAt string `json:"publishedAt"`
+	Breakdown   string `json:"breakdown"`
 }
 
 // PocLink 公开 POC 链接
 type PocLink struct {
-	Link       string
-	InsertedAt string
+	Link       string `json:"link"`
+	InsertedAt string `json:"insertedAt"`
 }
 
 // FindingEventRow 处置事件
 type FindingEventRow struct {
-	Time   string
-	Event  string
-	Actor  string
-	Detail string
+	Time   string `json:"time"`
+	Event  string `json:"event"`
+	Actor  string `json:"actor"`
+	Detail string `json:"detail"`
 }
 
 // ReportFilter 报告/导出筛选条件

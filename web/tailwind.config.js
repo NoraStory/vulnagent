@@ -4,45 +4,43 @@ export default {
   theme: {
     extend: {
       colors: {
-        page: "#F2F2F7",
-        surface: "#FFFFFF",
-        subtle: "#F7F7FA",
-        line: "#E5E5EA",
-        lineStrong: "#D1D1D6",
-        ink: "#1D1D1F",
-        ink2: "#6E6E73",
-        ink3: "#8E8E93",
+        page: "var(--color-page)",
+        surface: "var(--color-surface)",
+        subtle: "var(--color-subtle)",
+        line: "var(--color-line)",
+        lineStrong: "var(--color-line-strong)",
+        ink: "var(--color-ink)",
+        ink2: "var(--color-ink-2)",
+        ink3: "var(--color-ink-3)",
         brand: {
-          DEFAULT: "#007AFF",
-          strong: "#0064D6",
-          soft: "#E8F2FF"
+          DEFAULT: "var(--color-brand)",
+          strong: "var(--color-brand-strong)",
+          soft: "var(--color-brand-soft)"
         },
-        ok: "#34C759",
-        warn: "#FF9F0A",
-        danger: "#FF3B30",
-        muted: "#8E8E93"
+        signal: {
+          DEFAULT: "var(--color-signal)",
+          soft: "var(--color-signal-soft)"
+        },
+        ok: "var(--color-ok)",
+        okSoft: "var(--color-ok-soft)",
+        warn: "var(--color-warn)",
+        warnSoft: "var(--color-warn-soft)",
+        danger: "var(--color-danger)",
+        dangerSoft: "var(--color-danger-soft)",
+        muted: "var(--color-ink-3)"
       },
       fontFamily: {
-        sans: [
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "\"SF Pro Text\"",
-          "\"DM Sans\"",
-          "\"PingFang SC\"",
-          "\"Microsoft YaHei\"",
-          "sans-serif"
-        ],
-        mono: ["\"JetBrains Mono\"", "ui-monospace", "Consolas", "monospace"]
+        sans: ["var(--font-sans)"],
+        mono: ["var(--font-mono)"]
       },
       borderRadius: {
-        card: "18px",
-        panel: "14px",
-        control: "10px"
+        card: "var(--radius-card)",
+        panel: "var(--radius-panel)",
+        control: "var(--radius-control)"
       },
       boxShadow: {
-        card: "0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.05)",
-        float: "0 8px 24px -8px rgba(0,0,0,.10), 0 4px 8px -4px rgba(0,0,0,.05)",
-        drawer: "-16px 0 48px -24px rgba(0,0,0,.16)"
+        card: "var(--shadow-card)",
+        float: "var(--shadow-float)"
       },
       fontSize: {
         micro: ["11px", "16px"],

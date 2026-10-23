@@ -1,6 +1,12 @@
 package main
 
-import "vulnagent/server/internal/infrastructure/sqlite"
+import (
+	"database/sql"
+	"path/filepath"
+
+	"vulnagent/server/internal/infrastructure/sqlite"
+	"vulnagent/server/internal/platform/config"
+)
 
 // 仓储按需构造：都只是持有 *sql.DB 的轻量结构体，
 // 这样测试中直接构造 &App{db: db} 也能正常工作。
@@ -21,3 +27,16 @@ func (a *App) notifyRepo() *sqlite.NotifyRepo { return sqlite.NewNotifyRepo(a.db
 func (a *App) syncRepo() *sqlite.SyncRepo { return sqlite.NewSyncRepo(a.db) }
 
 func (a *App) statsRepo() *sqlite.StatsRepo { return sqlite.NewStatsRepo(a.db) }
+
+func (a *App) harnessRepo() *sqlite.HarnessRepo { return sqlite.NewHarnessRepo(a.db) }
+
+// readDB 返回 Harness 读工具专用的只读连接；打开失败时回落到主连接
+func (a *App) readDB() *sql.DB {
+	a.roOnce.Do(func() {
+		a.roDB, a.roErr = sqlite.OpenReadOnly(filepath.Join(a.dataDir, config.DefaultDBFile))
+	})
+	if a.roErr != nil || a.roDB == nil {
+		return a.db
+	}
+	return a.roDB
+}

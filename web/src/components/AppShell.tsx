@@ -10,7 +10,7 @@ import {
   ScrollText,
   Server,
   ShieldAlert,
-  ShieldCheck
+  Sparkles
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
@@ -27,6 +27,10 @@ const navGroups = [
     ]
   },
   {
+    label: "智能",
+    items: [{ to: "/assistant", label: "助手", icon: Sparkles }]
+  },
+  {
     label: "平台",
     items: [
       { to: "/selfcheck", label: "自检", icon: Activity },
@@ -39,6 +43,7 @@ const pageMeta: Record<string, { title: string; subtitle: string; crumb: string 
   "/": { title: "安全概览", subtitle: "漏洞态势、情报新鲜度与采集健康度", crumb: "概览" },
   "/findings": { title: "漏洞清单", subtitle: "按风险优先级排序，可解释、可闭环", crumb: "漏洞" },
   "/assets": { title: "资产与组件", subtitle: "主机清单、SBOM 与暴露面权重", crumb: "资产" },
+  "/assistant": { title: "Agent 助手", subtitle: "只读工具直接执行，写操作需审批", crumb: "助手" },
   "/selfcheck": { title: "平台自检", subtitle: "数据库、情报同步、采集链路与平台自身", crumb: "自检" },
   "/settings": { title: "审计与设置", subtitle: "风险策略、账号权限与操作留痕", crumb: "审计与设置" }
 };
@@ -87,12 +92,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex h-full min-h-screen bg-page">
       <aside className="sticky top-0 hidden h-screen w-[232px] shrink-0 flex-col border-r border-line bg-surface lg:flex">
         <Link to="/" className="flex h-16 items-center gap-2.5 px-5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-brand text-white shadow-[0_2px_6px_rgba(0,122,255,.28)]">
-            <ShieldCheck size={17} />
-          </span>
+          <img src="/brand/mark.svg" alt="Signal" className="h-8 w-8 rounded-[9px]" />
           <span className="leading-tight">
-            <span className="block text-[14px] font-semibold tracking-[-0.01em] text-ink">VulnAgent</span>
-            <span className="block text-[10.5px] text-ink3">安全漏洞运维</span>
+            <span className="block text-[14px] font-semibold tracking-[-0.01em] text-ink">Signal</span>
+            <span className="block text-[10.5px] text-ink3">漏洞信号台</span>
           </span>
         </Link>
 
@@ -158,7 +161,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex h-16 items-center justify-between gap-4 px-5 lg:px-8">
             <div className="flex min-w-0 items-center gap-2">
               <span className="hidden items-center gap-1 text-[12px] text-ink3 lg:flex">
-                VulnAgent
+                Signal
                 <ChevronRight size={13} />
                 <span className="text-ink2">{meta.crumb}</span>
               </span>

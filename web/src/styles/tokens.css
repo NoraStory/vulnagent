@@ -1,0 +1,38 @@
+:root {
+  color-scheme: light;
+
+  /* 品牌色：墨色 + 信号蓝 + 辅助青 */
+  --color-page: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-subtle: #f2f4f7;
+  --color-line: #e4e7ec;
+  --color-line-strong: #d0d5dd;
+
+  --color-ink: #101828;
+  --color-ink-2: #475467;
+  --color-ink-3: #667085;
+
+  --color-brand: #2a5bd7;
+  --color-brand-strong: #1f48b8;
+  --color-brand-soft: #eaeffc;
+  --color-signal: #0e9f8a;
+  --color-signal-soft: #e6f6f2;
+
+  --color-ok: #12805c;
+  --color-ok-soft: #e7f6ef;
+  --color-warn: #b54708;
+  --color-warn-soft: #fdf1e3;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+
+  --radius-card: 16px;
+  --radius-panel: 12px;
+  --radius-control: 10px;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-float: 0 16px 40px -16px rgba(16, 24, 40, 0.2), 0 4px 10px -6px rgba(16, 24, 40, 0.08);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Consolas, monospace;
+}

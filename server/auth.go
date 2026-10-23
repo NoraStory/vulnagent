@@ -107,6 +107,11 @@ func userFrom(r *http.Request) *User {
 // roleRank 角色权重来自领域层，未知角色为 0
 func roleRank(role string) int { return identity.Role(role).Rank() }
 
+// bcryptCompare 校验口令摘要
+func bcryptCompare(hash, password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
 // withAuth 除登录与健康检查外的接口都要求会话
 func (a *App) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

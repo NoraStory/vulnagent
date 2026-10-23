@@ -117,6 +117,11 @@ func (a *App) osvScanAssets(assetIDs []int64, all bool) (osvResult, error) {
 		total.Created += res.Created
 		total.Updated += res.Updated
 		total.Errors += res.Errors
+		// 每个资产只在此处收敛一次，避免 OSV 与复扫各收敛一遍
+		if _, err := a.reconcileFindingStates(id, "系统"); err != nil {
+			slog.Warn("OSV 后收敛失败", "assetId", id, "err", err)
+			total.Errors++
+		}
 	}
 	return total, nil
 }
@@ -233,9 +238,6 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 				res.Errors++
 			}
 		}
-	}
-	if _, err := a.reconcileFindingStates(assetID, actor); err != nil {
-		return res, err
 	}
 	slog.Info("OSV 匹配完成", "assetId", assetID, "components", res.Components,
 		"queried", res.Queried, "vulns", res.Vulns, "created", res.Created, "updated", res.Updated)

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 
 	"vulnagent/server/internal/application/ports"
@@ -163,6 +164,59 @@ func (r *IntelRepo) LatestPOCUpdate(ctx context.Context) (string, error) {
 	var latest string
 	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(inserted_at), '') FROM cve_poc`).Scan(&latest)
 	return latest, err
+}
+
+// SearchCVEs 按关键词搜索情报
+func (r *IntelRepo) SearchCVEs(ctx context.Context, query string, limit int) ([]ports.CVERow, error) {
+	like := "%" + query + "%"
+	rows, err := r.db.QueryContext(ctx, `SELECT cve_id, title, description, severity, cvss_score, epss,
+		exploit_state, cwe_id, cwe_cn, published_at, updated_at, fixed_version
+		FROM cves WHERE cve_id LIKE ? OR title LIKE ? OR description LIKE ?
+		ORDER BY epss DESC, cvss_score DESC LIMIT ?`, like, like, like, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ports.CVERow, 0, limit)
+	for rows.Next() {
+		var c ports.CVERow
+		if err := rows.Scan(&c.ID, &c.Title, &c.Description, &c.Severity, &c.Score, &c.EPSS,
+			&c.Exploit, &c.CWEID, &c.CWECN, &c.PublishedAt, &c.UpdatedAt, &c.Fixed); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GetCVE 读取单条情报及受影响区间
+func (r *IntelRepo) GetCVE(ctx context.Context, cveID string) (ports.CVERow, []ports.AffectedRow, error) {
+	var c ports.CVERow
+	err := r.db.QueryRowContext(ctx, `SELECT cve_id, title, description, severity, cvss_score, epss,
+		exploit_state, cwe_id, cwe_cn, published_at, updated_at, fixed_version FROM cves WHERE cve_id = ?`, cveID).
+		Scan(&c.ID, &c.Title, &c.Description, &c.Severity, &c.Score, &c.EPSS,
+			&c.Exploit, &c.CWEID, &c.CWECN, &c.PublishedAt, &c.UpdatedAt, &c.Fixed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ports.CVERow{}, nil, ports.ErrNotFound
+	}
+	if err != nil {
+		return ports.CVERow{}, nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT product, version_start_incl, version_end_excl, fixed_version
+		FROM cve_affected WHERE cve_id = ? ORDER BY product`, cveID)
+	if err != nil {
+		return c, nil, err
+	}
+	defer rows.Close()
+	var affected []ports.AffectedRow
+	for rows.Next() {
+		var a ports.AffectedRow
+		if err := rows.Scan(&a.Product, &a.StartIncl, &a.EndExcl, &a.Fixed); err != nil {
+			return c, nil, err
+		}
+		affected = append(affected, a)
+	}
+	return c, affected, rows.Err()
 }
 
 // ProductMapList 按关键词过滤返回映射列表

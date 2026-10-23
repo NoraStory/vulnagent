@@ -258,3 +258,65 @@ export interface SettingsData {
   }>;
   build: { version: string; commit: string; builtAt: string; sbomDigest: string };
 }
+
+// ---------- Agent Harness ----------
+
+export type HarnessRisk = "low" | "medium" | "high";
+
+export interface HarnessToolSpec {
+  name: string;
+  description: string;
+  risk: HarnessRisk;
+  readOnly: boolean;
+  minRole: Role;
+  params: unknown;
+}
+
+export interface HarnessSession {
+  id: string;
+  owner: string;
+  role: Role;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HarnessToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface HarnessMessage {
+  id: number;
+  sessionId: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+  toolCalls: string;
+  toolCallId: string;
+  createdAt: string;
+}
+
+export interface HarnessApproval {
+  id: string;
+  sessionId: string;
+  tool: string;
+  argsHash: string;
+  args: string;
+  callId: string;
+  risk: HarnessRisk;
+  requestedBy: string;
+  status: "pending" | "approved" | "rejected";
+  reason: string;
+  requestedAt: string;
+  expiresAt: string;
+  decidedAt: string;
+  decidedBy: string;
+  consumedAt: string;
+}
+
+export interface HarnessEvent {
+  type: "message" | "tool_call" | "tool_result" | "approval_required" | "done" | "error" | string;
+  data?: any;
+}
+

@@ -48,6 +48,16 @@ type Config struct {
 	OSVURL         string
 	CookieSecure   bool
 	AgentToken     string
+
+	// LLM 相关：未配置凭据时 Harness 自动关闭
+	LLMBaseURL string
+	LLMAPIKey  string
+	LLMModel   string
+}
+
+// HarnessEnabled 模型凭据是否齐备
+func (c Config) HarnessEnabled() bool {
+	return c.LLMBaseURL != "" && c.LLMAPIKey != "" && c.LLMModel != ""
 }
 
 // Load 读取环境变量并填充默认值。缺失项一律回落到默认值，不返回错误，
@@ -72,6 +82,9 @@ func Load() Config {
 		OSVURL:         envOr("VA_OSV_URL", DefaultOSVURL),
 		CookieSecure:   truthy("VA_COOKIE_SECURE"),
 		AgentToken:     strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN")),
+		LLMBaseURL:     strings.TrimSpace(os.Getenv("VA_LLM_BASE_URL")),
+		LLMAPIKey:      strings.TrimSpace(os.Getenv("VA_LLM_API_KEY")),
+		LLMModel:       strings.TrimSpace(os.Getenv("VA_LLM_MODEL")),
 	}
 }
 

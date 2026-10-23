@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"vulnagent/server/internal/application/ports"
 )
@@ -134,6 +135,21 @@ func (r *StatsRepo) Gauges(ctx context.Context) (ports.Gauges, error) {
 		}
 	}
 	return g, nil
+}
+
+// LatestSelfcheck 返回最近一次自检摘要
+func (r *StatsRepo) LatestSelfcheck(ctx context.Context) (ports.SelfcheckSummary, bool, error) {
+	var s ports.SelfcheckSummary
+	err := r.db.QueryRowContext(ctx, `SELECT run_id, status, finished_at, passed, warnings, failed
+		FROM selfcheck_runs ORDER BY finished_at DESC, id DESC LIMIT 1`).
+		Scan(&s.RunID, &s.Status, &s.CheckedAt, &s.Passed, &s.Warnings, &s.Failed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ports.SelfcheckSummary{}, false, nil
+	}
+	if err != nil {
+		return ports.SelfcheckSummary{}, false, err
+	}
+	return s, true, nil
 }
 
 func (r *StatsRepo) priorityCount(ctx context.Context, query string, args ...any) ([]ports.PriorityCount, error) {

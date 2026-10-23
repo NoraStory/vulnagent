@@ -4,6 +4,11 @@ import type {
   AuditItem,
   Finding,
   FindingDetail,
+  HarnessApproval,
+  HarnessEvent,
+  HarnessMessage,
+  HarnessSession,
+  HarnessToolSpec,
   LoginResponse,
   Overview,
   Paged,
@@ -84,6 +89,54 @@ function query(params: Record<string, string | number | undefined>): string {
   });
   const text = search.toString();
   return text ? `?${text}` : "";
+}
+
+// streamSSE 读取 text/event-stream，逐条回调事件
+async function streamSSE(
+  path: string,
+  body: unknown,
+  onEvent: (event: HarnessEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal
+  });
+  if (!response.ok) {
+    throw await toApiError(response, "请求失败");
+  }
+  if (!response.body) {
+    throw new ApiError(500, "no_stream", "当前浏览器不支持流式响应");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let index = buffer.indexOf("\n\n");
+    while (index >= 0) {
+      const chunk = buffer.slice(0, index);
+      buffer = buffer.slice(index + 2);
+      const line = chunk.split("\n").find((item) => item.startsWith("data:"));
+      if (line) {
+        const payload = line.slice(5).trim();
+        if (payload && payload !== "{}") {
+          try {
+            onEvent(JSON.parse(payload) as HarnessEvent);
+          } catch {
+            /* 忽略无法解析的片段 */
+          }
+        }
+      }
+      index = buffer.indexOf("\n\n");
+    }
+  }
 }
 
 export const api = {
@@ -385,6 +438,46 @@ export const api = {
   deleteProductMap(eco: string, name: string): Promise<{ ok: boolean; rematched: number }> {
     return request(`/product-map?eco=${encodeURIComponent(eco)}&name=${encodeURIComponent(name)}`, {
       method: "DELETE"
+    });
+  },
+
+  harnessTools(): Promise<{ enabled: boolean; model: string; tools: HarnessToolSpec[] }> {
+    return request("/agent/tools");
+  },
+
+  harnessSessions(): Promise<{ sessions: HarnessSession[] }> {
+    return request("/agent/sessions");
+  },
+
+  harnessCreateSession(title: string): Promise<{ session: HarnessSession }> {
+    return request("/agent/sessions", { method: "POST", body: JSON.stringify({ title }) });
+  },
+
+  harnessMessages(id: string): Promise<{ session: HarnessSession; messages: HarnessMessage[] }> {
+    return request(`/agent/sessions/${encodeURIComponent(id)}/messages`);
+  },
+
+  harnessChat(
+    id: string,
+    content: string,
+    onEvent: (event: HarnessEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    return streamSSE(`/agent/sessions/${encodeURIComponent(id)}/messages`, { content }, onEvent, signal);
+  },
+
+  harnessResume(id: string, onEvent: (event: HarnessEvent) => void, signal?: AbortSignal): Promise<void> {
+    return streamSSE(`/agent/sessions/${encodeURIComponent(id)}/resume`, {}, onEvent, signal);
+  },
+
+  harnessDecision(
+    approvalId: string,
+    decision: "approve" | "reject",
+    password?: string
+  ): Promise<{ ok: boolean; approval: HarnessApproval; result: unknown }> {
+    return request(`/agent/approvals/${encodeURIComponent(approvalId)}`, {
+      method: "POST",
+      body: JSON.stringify({ decision, password: password ?? "" })
     });
   }
 };

@@ -4,15 +4,15 @@ import "context"
 
 // AuditEntry 一条审计日志
 type AuditEntry struct {
-	ID        int64
-	Actor     string
-	Role      string
-	Action    string
-	Target    string
-	IP        string
-	UA        string
-	Detail    string
-	CreatedAt string
+	ID        int64  `json:"id"`
+	Actor     string `json:"actor"`
+	Role      string `json:"role"`
+	Action    string `json:"action"`
+	Target    string `json:"target"`
+	IP        string `json:"ip"`
+	UA        string `json:"ua"`
+	Detail    string `json:"detail"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // AuditRepository 审计日志只追加不修改

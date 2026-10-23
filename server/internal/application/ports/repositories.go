@@ -23,12 +23,12 @@ type CVEMeta struct {
 
 // ProductMapping 组件名到漏洞库产品名的映射
 type ProductMapping struct {
-	Eco        string
-	Name       string
-	Product    string
-	Confidence float64
-	Source     string
-	UpdatedAt  string
+	Eco        string  `json:"eco"`
+	Name       string  `json:"name"`
+	Product    string  `json:"product"`
+	Confidence float64 `json:"confidence"`
+	Source     string  `json:"source"`
+	UpdatedAt  string  `json:"updatedAt"`
 }
 
 // MatchInput 一次匹配命中的落库输入
@@ -87,6 +87,30 @@ type CVEInput struct {
 	UpdatedAt   string
 }
 
+// CVERow 情报库中的一条漏洞
+type CVERow struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Severity    string  `json:"severity"`
+	Score       float64 `json:"score"`
+	EPSS        float64 `json:"epss"`
+	Exploit     string  `json:"exploit"`
+	CWEID       int     `json:"cweId"`
+	CWECN       string  `json:"cweCn"`
+	PublishedAt string  `json:"publishedAt"`
+	UpdatedAt   string  `json:"updatedAt"`
+	Fixed       string  `json:"fixedVersion"`
+}
+
+// AffectedRow 受影响区间
+type AffectedRow struct {
+	Product   string `json:"product"`
+	StartIncl string `json:"startIncl"`
+	EndExcl   string `json:"endExcl"`
+	Fixed     string `json:"fixedVersion"`
+}
+
 // IntelRepository 漏洞情报读取端口
 type IntelRepository interface {
 	// CVEMeta 返回全部 CVE 的评分元数据，键为 CVE ID
@@ -115,6 +139,10 @@ type IntelRepository interface {
 	LatestCVEUpdate(ctx context.Context) (string, error)
 	// LatestPOCUpdate 返回最新 POC 写入时间，空库时返回空串
 	LatestPOCUpdate(ctx context.Context) (string, error)
+	// SearchCVEs 按关键词搜索情报，最多 limit 条
+	SearchCVEs(ctx context.Context, query string, limit int) ([]CVERow, error)
+	// GetCVE 读取单条情报及受影响区间，不存在时返回 ErrNotFound
+	GetCVE(ctx context.Context, cveID string) (CVERow, []AffectedRow, error)
 }
 
 // FindingRepository 漏洞记录写入与收敛端口

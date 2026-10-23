@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"strings"
 )
@@ -66,21 +65,5 @@ func ensureProductMap(db *sql.DB) (int, error) {
 
 // rematchAllAssets 映射变更后重新匹配所有资产（只新增/更新结论，不删除历史）
 func (a *App) rematchAllAssets() (int, error) {
-	ids, err := a.assetRepo().IDs(context.Background())
-	if err != nil {
-		return 0, err
-	}
-
-	policy := loadPolicy(a.db)
-	rematched := 0
-	for _, id := range ids {
-		if _, _, err := a.matchAssetFindings(policy, id); err != nil {
-			return rematched, err
-		}
-		if _, err := a.reconcileFindingStates(id, "系统"); err != nil {
-			return rematched, err
-		}
-		rematched++
-	}
-	return rematched, nil
+	return a.scanService(loadPolicy(a.db)).RematchAll("系统")
 }

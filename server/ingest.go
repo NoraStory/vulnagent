@@ -1,9 +1,9 @@
 package main
 
 import (
-	"context"
 	"log/slog"
 
+	"vulnagent/server/internal/application/scan"
 	"vulnagent/server/internal/collect"
 	"vulnagent/server/internal/domain/asset"
 )
@@ -20,22 +20,12 @@ type ingestOutcome struct {
 }
 
 // ingestComponents 统一入库路径：Agent 上报与 SSH 兜底采集共用。
-// 流程：upsert 资产 → 整体替换组件 → 版本区间匹配 → 状态收敛。
+// 流程：upsert 资产 → 整体替换组件 → 版本区间匹配 → 状态收敛，实现见 application/scan。
 func (a *App) ingestComponents(hostname, ip, osName, osVersion, source string, components []collect.Component) (ingestOutcome, error) {
-	out := ingestOutcome{}
-	now := fmtT(nowT())
-
 	agentStatus := "none"
 	if source == "agent" {
 		agentStatus = "online"
 	}
-
-	assetID, err := a.assetRepo().UpsertReported(context.Background(), hostname, ip, osName, osVersion, source, agentStatus, now)
-	if err != nil {
-		return out, err
-	}
-	out.AssetID = assetID
-
 	comps := make([]asset.Component, 0, len(components))
 	for _, c := range components {
 		if c.PURL == "" || c.Name == "" || c.Version == "" {
@@ -50,26 +40,37 @@ func (a *App) ingestComponents(hostname, ip, osName, osVersion, source string, c
 			Product: c.Product,
 		})
 	}
-	if err := a.assetRepo().ReplaceComponents(context.Background(), out.AssetID, comps); err != nil {
-		return out, err
-	}
-	out.Components = len(comps)
 
-	out.Created, out.Updated, err = a.matchAssetFindings(loadPolicy(a.db), out.AssetID)
+	res, err := a.scanService(loadPolicy(a.db)).Ingest(scan.IngestInput{
+		Hostname:    hostname,
+		IP:          ip,
+		OSFamily:    osName,
+		OSVersion:   osVersion,
+		Source:      source,
+		AgentStatus: agentStatus,
+		Components:  comps,
+	})
 	if err != nil {
-		return out, err
+		return ingestOutcome{}, err
 	}
-	recon, err := a.reconcileFindingStates(out.AssetID, "系统")
-	if err != nil {
-		slog.Warn("复扫收敛失败", "assetId", out.AssetID, "err", err)
-	} else {
-		out.Verified, out.Closed, out.Reopened = recon.Verified, recon.Closed, recon.Reopened
+	out := ingestOutcome{
+		AssetID:    res.AssetID,
+		Components: res.Components,
+		Created:    res.Created,
+		Updated:    res.Updated,
+		Verified:   res.Verified,
+		Closed:     res.Closed,
+		Reopened:   res.Reopened,
 	}
-	// 上报后异步做一次 OSV 匹配，避免拖慢 Agent 上报
+	// 上报后异步做一次 OSV 精确匹配并收敛，避免拖慢 Agent 上报
 	go func(assetID int64) {
 		if _, err := a.osvScanAsset(assetID, "Agent 上报"); err != nil {
 			slog.Warn("OSV 匹配失败", "assetId", assetID, "err", err)
+			return
 		}
-	}(out.AssetID)
+		if _, err := a.reconcileFindingStates(assetID, "Agent 上报"); err != nil {
+			slog.Warn("OSV 后收敛失败", "assetId", assetID, "err", err)
+		}
+	}(res.AssetID)
 	return out, nil
 }
