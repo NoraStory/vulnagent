@@ -17,28 +17,20 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"vulnagent/server/internal/platform/config"
 )
 
 // ---------- 会话与 Cookie ----------
 
 const cookieName = "va_session"
 
-// sessionIdleFromEnv 会话空闲过期时间，默认 30 分钟（文档口径一致）
-func sessionIdleFromEnv() time.Duration {
-	raw := os.Getenv("VA_SESSION_IDLE")
-	if raw == "" {
-		return 30 * time.Minute
-	}
-	if d, err := time.ParseDuration(raw); err == nil && d >= time.Minute {
-		return d
-	}
-	return 30 * time.Minute
-}
+// sessionIdleFromEnv 会话空闲过期时间，配置见 internal/platform/config
+func sessionIdleFromEnv() time.Duration { return config.Load().SessionIdle }
 
 // cookieSecure 仅在使用 HTTPS 或显式开启时给会话 Cookie 加 Secure
 func cookieSecure(r *http.Request) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("VA_COOKIE_SECURE"))) {
-	case "1", "true", "yes":
+	if config.Load().CookieSecure {
 		return true
 	}
 	return r.TLS != nil

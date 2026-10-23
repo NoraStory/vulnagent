@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
-	"strconv"
 	"time"
+
+	"vulnagent/server/internal/platform/config"
 )
 
 // scanOutcome 单资产复扫结果
@@ -91,39 +91,11 @@ func (a *App) rescanAssets(assetIDs []int64, all bool, actor string) ([]scanOutc
 	return outcomes, nil
 }
 
-// scanIntervalFromEnv 定时复扫间隔，默认 30 分钟，设为 0 关闭
-func scanIntervalFromEnv() time.Duration {
-	raw := os.Getenv("VA_RESCAN_INTERVAL")
-	if raw == "" {
-		return 30 * time.Minute
-	}
-	if raw == "0" || raw == "off" {
-		return 0
-	}
-	if d, err := time.ParseDuration(raw); err == nil && d >= time.Minute {
-		return d
-	}
-	slog.Warn("VA_RESCAN_INTERVAL 无效，使用默认 30m", "value", raw)
-	return 30 * time.Minute
-}
+// scanIntervalFromEnv 定时复扫间隔，配置见 internal/platform/config
+func scanIntervalFromEnv() time.Duration { return config.Load().RescanInterval }
 
-// scanDebounceFromEnv 同一资产的复扫防抖窗口，默认 10 分钟
-func scanDebounceFromEnv() time.Duration {
-	raw := os.Getenv("VA_RESCAN_DEBOUNCE")
-	if raw == "" {
-		return 10 * time.Minute
-	}
-	if raw == "0" || raw == "off" {
-		return 0
-	}
-	if d, err := time.ParseDuration(raw); err == nil && d >= 0 {
-		return d
-	}
-	if secs, err := strconv.Atoi(raw); err == nil {
-		return time.Duration(secs) * time.Second
-	}
-	return 10 * time.Minute
-}
+// scanDebounceFromEnv 同一资产的复扫防抖窗口，配置见 internal/platform/config
+func scanDebounceFromEnv() time.Duration { return config.Load().RescanDebounce }
 
 // startScanScheduler 定时对全部资产做复扫（幂等，可随时关闭）
 func (a *App) startScanScheduler(ctx context.Context) {

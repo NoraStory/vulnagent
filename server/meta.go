@@ -2,18 +2,12 @@ package main
 
 import (
 	"database/sql"
-	"os"
-	"strings"
+
+	"vulnagent/server/internal/platform/config"
 )
 
 // seedDemoEnabled 是否灌入演示数据；生产部署设置 VA_SEED_DEMO=off
-func seedDemoEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("VA_SEED_DEMO"))) {
-	case "off", "0", "false", "no":
-		return false
-	}
-	return true
-}
+func seedDemoEnabled() bool { return config.Load().SeedDemo }
 
 func setMeta(db *sql.DB, key, value string) error {
 	_, err := db.Exec(`INSERT INTO app_meta(key, value, updated_at) VALUES(?,?,?)

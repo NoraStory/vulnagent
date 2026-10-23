@@ -8,10 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/platform/config"
 )
 
 // epssResult EPSS 导入结果
@@ -157,15 +158,8 @@ func (a *App) handleEPSSUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// defaultEPSSURL FIRST 每日全量 EPSS 评分（gzip CSV）
-const defaultEPSSURL = "https://epss.cyentia.com/epss_scores-current.csv.gz"
-
-func epssURLFromEnv() string {
-	if v := strings.TrimSpace(os.Getenv("VA_EPSS_URL")); v != "" {
-		return v
-	}
-	return defaultEPSSURL
-}
+// epssURLFromEnv EPSS 数据源，配置见 internal/platform/config
+func epssURLFromEnv() string { return config.Load().EPSSURL }
 
 // syncEPSSFromRemote 从 FIRST 拉取 EPSS 全量数据并导入
 func (a *App) syncEPSSFromRemote(ctx context.Context) (epssResult, error) {

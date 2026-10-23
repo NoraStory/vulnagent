@@ -14,9 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/platform/config"
 )
 
-const defaultIntelBaseURL = "https://cve.imfht.com"
+// defaultIntelBaseURL 默认情报站，定义见 internal/platform/config
+const defaultIntelBaseURL = config.DefaultIntelBaseURL
 
 // intelItem 漏洞平台 /api/cve/ 返回的单条数据。
 // 兼容 desc/description 两种字段名，以及 cwe_id 为 "CWE-502" 或数字两种形式。
@@ -95,12 +98,7 @@ func newCVEClient(baseURL, apiKey string) *cveClient {
 	}
 }
 
-func intelBaseURLFromEnv() string {
-	if v := strings.TrimSpace(os.Getenv("VULNAGENT_CVE_BASE_URL")); v != "" {
-		return v
-	}
-	return defaultIntelBaseURL
-}
+func intelBaseURLFromEnv() string { return config.Load().IntelBaseURL }
 
 // get 带 429/5xx 重试的 GET
 func (c *cveClient) get(ctx context.Context, path string, params url.Values, out any) error {

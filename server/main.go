@@ -12,13 +12,14 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"vulnagent/server/internal/platform/config"
 )
 
 const (
 	appVersion  = "0.1.0-dev"
 	buildCommit = "local"
 	buildTime   = "2026-10-22T00:00:00+08:00"
-	defaultAddr = ":8787"
 )
 
 // App 控制面服务上下文
@@ -100,12 +101,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	}
 }
 
-func addrFromEnv() string {
-	if v := os.Getenv("VA_ADDR"); v != "" {
-		return v
-	}
-	return defaultAddr
-}
+func addrFromEnv() string { return config.Load().Addr }
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
@@ -113,12 +109,13 @@ func main() {
 }
 
 func runServer() {
-	dataDir := dataDirFromEnv()
+	cfg := config.Load()
+	dataDir := cfg.DataDir
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		slog.Error("创建数据目录失败", "dir", dataDir, "err", err)
 		os.Exit(1)
 	}
-	db, err := openDB(filepath.Join(dataDir, "vulnagent.db"))
+	db, err := openDB(cfg.DBPath)
 	if err != nil {
 		slog.Error("打开数据库失败", "err", err)
 		os.Exit(1)
@@ -146,7 +143,7 @@ func runServer() {
 		slog.Info("演示数据已关闭", "hint", "VA_SEED_DEMO=on 可开启演示数据")
 	}
 
-	webDist, _ := filepath.Abs(filepath.Join("..", "web", "dist"))
+	webDist := cfg.WebDist
 	app := &App{db: db, sessions: newSessionStore(), dataDir: dataDir, webDist: webDist,
 		selfDigest: computeSelfSBOMDigest(), scanDebounce: scanDebounceFromEnv(),
 		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter()}
@@ -171,7 +168,7 @@ func runServer() {
 	app.routes(mux)
 
 	srv := &http.Server{
-		Addr:              addrFromEnv(),
+		Addr:              cfg.Addr,
 		Handler:           withLogging(withSecurity(app.withAuth(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

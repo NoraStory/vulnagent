@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"vulnagent/server/internal/collect"
+	"vulnagent/server/internal/platform/config"
 	"vulnagent/server/internal/sshscan"
 )
 
@@ -179,7 +180,7 @@ func runSyncCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "创建数据目录失败：%v\n", err)
 		os.Exit(1)
 	}
-	db, err := openDB(filepath.Join(dataDir, "vulnagent.db"))
+	db, err := openDB(config.Load().DBPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "打开数据库失败：%v\n", err)
 		os.Exit(1)
@@ -331,8 +332,7 @@ func runOSVScanCommand(args []string) {
 	all := fs.Bool("all", false, "扫描全部资产（默认）")
 	_ = fs.Parse(args)
 
-	dataDir := dataDirFromEnv()
-	db, err := openDB(filepath.Join(dataDir, "vulnagent.db"))
+	db, err := openDB(config.Load().DBPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "打开数据库失败：%v\n", err)
 		os.Exit(1)
@@ -366,7 +366,11 @@ func runBackupCommand(args []string) {
 		os.Exit(2)
 	}
 	dataDir := dataDirFromEnv()
-	db, err := openDB(filepath.Join(dataDir, "vulnagent.db"))
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "创建数据目录失败：%v\n", err)
+		os.Exit(1)
+	}
+	db, err := openDB(config.Load().DBPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "打开数据库失败：%v\n", err)
 		os.Exit(1)

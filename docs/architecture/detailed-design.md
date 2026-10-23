@@ -634,6 +634,9 @@ CREATE TABLE sync_cursors (
 - SQLite 启用 `WAL`、`synchronous=NORMAL`、`mmap_size=256MB`。
 - 批量写入用单事务 + 预编译语句；避免逐条 commit。
 - 匹配阶段只读内存索引，结果批量落库；重算用临时表 + 原子替换，避免读抖动。
+- 迁移：`server/internal/infrastructure/sqlite/migrations/*.sql` 通过 `go:embed` 打包，启动时按文件名顺序执行未应用脚本，执行记录写入 `schema_migrations`；脚本全部使用 `IF NOT EXISTS`，对既有库幂等。
+- 只读连接：Harness 读工具使用 `mode=ro` 的独立连接（`sqlite.OpenReadOnly`），从连接层杜绝写入。
+- 配置：全部环境变量集中在 `server/internal/platform/config`，默认数据目录 `./data`，可用 `VA_DATA_DIR` 覆盖。
 
 ---
 
@@ -790,9 +793,11 @@ go build -o bin/vulnagent.exe .
 
 # 控制面（同时托管已构建的前端）
 .\bin\vulnagent.exe server            # http://127.0.0.1:8787
-# 可选：$env:VA_ADDR=':9000'; $env:VA_DATA_DIR='E:\va-data'
+# 可选：$env:VA_ADDR=':9000'; $env:VA_DATA_DIR='E:\va-data'（默认 ./data）
+# 可选：$env:VA_WEB_DIST='..\web\dist'（默认依次探测 ../web/dist、./web/dist、web/dist）
 # 可选：$env:VA_RESCAN_INTERVAL='30m'; $env:VA_RESCAN_DEBOUNCE='10m'（间隔设 0/off 关闭定时复扫）
 # 可选：$env:VA_SESSION_IDLE='30m'; $env:VA_COOKIE_SECURE='1'（HTTPS 部署时强制 Secure Cookie）
+# 可选：$env:VULNAGENT_CVE_BASE_URL='https://cve.imfht.com'; $env:VA_EPSS_URL='https://epss.cyentia.com/epss_scores-current.csv.gz'
 # 生产模式：不灌演示数据，用 VA_ADMIN_PASSWORD 初始化唯一管理员（首次启动）
 # $env:VA_SEED_DEMO='off'; $env:VA_ADMIN_PASSWORD='请替换为强口令'
 

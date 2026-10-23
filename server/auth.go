@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"vulnagent/server/internal/domain/identity"
+	"vulnagent/server/internal/platform/config"
 )
 
 // User 对外暴露的用户信息
@@ -216,7 +216,7 @@ func ensureBootstrapAdmin(db *sql.DB) error {
 	if admins > 0 {
 		return nil
 	}
-	pwd := strings.TrimSpace(os.Getenv("VA_ADMIN_PASSWORD"))
+	pwd := config.Load().AdminPassword
 	if msg := validatePassword(pwd); msg != "" {
 		return fmt.Errorf("未启用演示数据时必须通过 VA_ADMIN_PASSWORD 设置管理员初始口令（%s）", msg)
 	}
