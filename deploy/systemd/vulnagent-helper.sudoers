@@ -1,0 +1,8 @@
+# VulnAgent 提权 helper 的 sudoers 授权样例
+# 用法：
+#   1. 将 vulnagent 二进制安装到 /usr/local/bin/vulnagent
+#   2. 以 root 执行：visudo -f /etc/sudoers.d/vulnagent
+#   3. 粘贴以下一行（把 vulnagent 换成实际运行 Agent 的账号）
+#
+# 只允许执行 helper 子命令；helper 内部再做动作白名单与路径校验。
+vulnagent ALL=(root) NOPASSWD: /usr/local/bin/vulnagent helper

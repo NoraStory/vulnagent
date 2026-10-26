@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/domain/harness"
@@ -32,6 +33,12 @@ func (a *App) harnessTools() []harness.Tool {
 		a.toolCreateTicket(),
 		a.toolUpsertProductMap(),
 		a.toolRunSelfcheck(),
+		a.toolListHostJobs(),
+		a.toolGetHostJob(),
+		a.toolReadHostFile(),
+		a.toolRunHostCommand(),
+		a.toolWriteHostFile(),
+		a.toolServiceAction(),
 	}
 }
 
@@ -514,6 +521,179 @@ func (a *App) toolUpsertProductMap() harness.Tool {
 			return map[string]any{"ok": true, "rematched": rematched}, nil
 		},
 	}
+}
+
+// ---------- 主机执行工具（Phase 2） ----------
+
+func (a *App) toolListHostJobs() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("list_host_jobs", "查看指定资产最近的主机作业（只读）。", harness.RiskLow, "viewer", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"limit":{"type":"integer","minimum":1,"maximum":100}
+			},"required":["assetId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64 `json:"assetId"`
+				Limit   int   `json:"limit"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			jobs, err := a.jobRepo().ListByAsset(context.Background(), in.AssetID, limitOf(in.Limit, 20, 100))
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"count": len(jobs), "items": jobs}, nil
+		},
+	}
+}
+
+func (a *App) toolGetHostJob() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("get_host_job", "按作业 ID 查询执行状态与输出（只读）。", harness.RiskLow, "viewer", `{
+			"type":"object","properties":{"jobId":{"type":"string"}},"required":["jobId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				JobID string `json:"jobId"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			job, found, err := a.jobRepo().ByID(context.Background(), in.JobID)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, fmt.Errorf("作业不存在：%s", in.JobID)
+			}
+			return map[string]any{"job": job}, nil
+		},
+	}
+}
+
+func (a *App) toolReadHostFile() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("read_host_file", "读取目标主机上的文本文件（只读，需审批）。", harness.RiskMedium, "operator", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"path":{"type":"string"},
+				"maxBytes":{"type":"integer","minimum":1,"maximum":524288}
+			},"required":["assetId","path"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID  int64  `json:"assetId"`
+				Path     string `json:"path"`
+				MaxBytes int    `json:"maxBytes"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			return a.runHostAction(in.AssetID, "read_file", in, "Agent 助手")
+		},
+	}
+}
+
+func (a *App) toolRunHostCommand() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("run_host_command", "在目标主机执行白名单只读命令（高风险，需审批 + 口令再认证）。禁止 shell 拼接。", harness.RiskHigh, "operator", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"argv":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":20},
+				"cwd":{"type":"string"},
+				"timeoutSec":{"type":"integer","minimum":1,"maximum":120}
+			},"required":["assetId","argv"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID    int64    `json:"assetId"`
+				Argv       []string `json:"argv"`
+				Cwd        string   `json:"cwd"`
+				TimeoutSec int      `json:"timeoutSec"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			return a.runHostAction(in.AssetID, "run_command", in, "Agent 助手")
+		},
+	}
+}
+
+func (a *App) toolWriteHostFile() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("write_host_file", "写入目标主机文件（高风险，需审批 + 口令再认证；自动备份原文件）。", harness.RiskHigh, "operator", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"path":{"type":"string"},
+				"content":{"type":"string"},
+				"dryRun":{"type":"boolean","description":"true 时仅预检，不落盘"}
+			},"required":["assetId","path","content"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64  `json:"assetId"`
+				Path    string `json:"path"`
+				Content string `json:"content"`
+				DryRun  bool   `json:"dryRun"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			return a.runHostAction(in.AssetID, "write_file", in, "Agent 助手")
+		},
+	}
+}
+
+func (a *App) toolServiceAction() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("service_action", "启停/重启/查看系统服务（高风险，需审批 + 口令再认证）。", harness.RiskHigh, "operator", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"service":{"type":"string"},
+				"action":{"type":"string","enum":["start","stop","restart","status","enable","disable"]}
+			},"required":["assetId","service","action"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64  `json:"assetId"`
+				Service string `json:"service"`
+				Action  string `json:"action"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			return a.runHostAction(in.AssetID, "service_action", in, "Agent 助手")
+		},
+	}
+}
+
+// runHostAction 排队并等待主机作业，返回作业结果
+func (a *App) runHostAction(assetID int64, action string, params any, actor string) (any, error) {
+	if _, err := a.assetHostname(assetID); err != nil {
+		return nil, fmt.Errorf("资产不存在：%w", err)
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	job, err := a.queueHostJob(assetID, action, raw, actor, "")
+	if err != nil {
+		return nil, err
+	}
+	a.auditAs(actor, "operator", "127.0.0.1", "harness", "host.job.queue", job.ID,
+		fmt.Sprintf("%s @ asset:%d", action, assetID))
+	done, err := a.waitHostJob(job.ID, 20*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	pending := done.Status == "pending" || done.Status == "running"
+	return map[string]any{
+		"ok":       done.Status == "succeeded",
+		"jobId":    done.ID,
+		"status":   done.Status,
+		"pending":  pending,
+		"output":   done.Output,
+		"error":    done.Error,
+		"exitCode": done.ExitCode,
+		"attempts": done.Attempts,
+	}, nil
 }
 
 func (a *App) toolRunSelfcheck() harness.Tool {

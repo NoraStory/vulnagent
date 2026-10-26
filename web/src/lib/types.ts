@@ -275,6 +275,31 @@ export interface AssetTelemetry {
   series: MetricPoint[];
 }
 
+export interface HostJob {
+  id: string;
+  assetId: number;
+  action: string;
+  params: string;
+  risk: string;
+  status: string;
+  requestedBy: string;
+  approvalId?: string;
+  attempts: number;
+  maxAttempts: number;
+  nextRunAt?: string;
+  output?: string;
+  error?: string;
+  exitCode: number;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface AssetJobs {
+  items: HostJob[];
+  total: number;
+}
+
 export interface AssetDetail {
   demo: boolean;
   asset: AssetItem;

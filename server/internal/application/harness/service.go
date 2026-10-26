@@ -43,7 +43,7 @@ func DefaultOptions() Options {
 	return Options{
 		MaxSteps:      4,
 		RatePerMinute: 20,
-		MaxArgsBytes:  8 << 10,
+		MaxArgsBytes:  64 << 10,
 		ApprovalTTL:   10 * time.Minute,
 		ReauthWindow:  5 * time.Minute,
 	}
@@ -360,7 +360,7 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 	}
 	// 闸门 2：参数为合法 JSON 且不超限
 	if len(rawArgs) > s.Opts.MaxArgsBytes {
-		return deny("参数过大，最多 8KB")
+		return deny(fmt.Sprintf("参数过大，最多 %dKB", s.Opts.MaxArgsBytes/1024))
 	}
 	if !json.Valid(rawArgs) {
 		return deny("参数不是合法 JSON")

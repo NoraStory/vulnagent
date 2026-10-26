@@ -112,7 +112,13 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets", a.handleAssets)
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)
 	mux.HandleFunc("GET /api/v1/assets/{id}/telemetry", a.handleAssetTelemetry)
+	mux.HandleFunc("GET /api/v1/assets/{id}/jobs", a.handleAssetJobs)
 	mux.HandleFunc("POST /api/v1/assets/ssh-scan", a.handleSSHScan)
+
+	// Agent 下行作业：Agent 令牌鉴权
+	mux.HandleFunc("GET /api/v1/agent/jobs", a.handleAgentJobs)
+	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/claim", a.handleAgentJobClaim)
+	mux.HandleFunc("POST /api/v1/agent/jobs/{id}/result", a.handleAgentJobResult)
 
 	mux.HandleFunc("GET /api/v1/product-map", a.handleProductMapList)
 	mux.HandleFunc("PUT /api/v1/product-map", a.handleProductMapUpsert)

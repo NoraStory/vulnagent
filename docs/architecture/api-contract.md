@@ -731,7 +731,56 @@ vulnagent_selfcheck_failed 0
 { "ok": true, "assetId": 13, "components": 225, "created": 5, "updated": 0, "matchedAt": "2026-10-22T20:00:01+08:00" }
 ```
 
-行为：按 hostname upsert 资产 → 整体替换组件清单 → 清理已移除组件的未处置漏洞 → 按版本区间重新匹配（已有漏洞保留状态/责任人/工单）。
+行为：按 hostname upsert 资产 → 整体替换组件清单 → 清理已移除组件的未处置漏洞 → 按版本区间重新匹配（已有漏洞保留状态/责任人/工单）。上报体可携带 `telemetry`（见 §6 遥测字段），服务端写入 `host_metrics` 与 `asset_telemetry`。
+
+### GET /agent/jobs?hostname=web-01
+
+返回该主机当前到期、待执行的作业（最多 5 条，按创建时间升序）。
+
+```json
+{
+  "jobs": [
+    {
+      "id": "JOB-7f3a1c9e2b4d5a6c",
+      "assetId": 13,
+      "action": "run_command",
+      "params": "{\"argv\":[\"systemctl\",\"status\",\"nginx\"]}",
+      "risk": "high",
+      "status": "pending",
+      "requestedBy": "李维",
+      "attempts": 0,
+      "maxAttempts": 3,
+      "createdAt": "2026-10-26T20:00:00+08:00"
+    }
+  ]
+}
+```
+
+### POST /agent/jobs/{id}/claim
+
+请求 `{ "hostname": "web-01" }`。原子抢占成功返回 `{ "job": { ... } }`；作业已被取走、主机不匹配或未到重试时间返回 `409 not_available`。
+
+### POST /agent/jobs/{id}/result
+
+```json
+{
+  "hostname": "web-01",
+  "status": "failed",
+  "output": "",
+  "error": "连接超时",
+  "exitCode": -1,
+  "durationMs": 12000,
+  "retryable": true
+}
+```
+
+- `status` 仅接受 `succeeded | failed`。
+- 失败且 `retryable=true` 且未超过最大次数时，服务端按指数退避 + 抖动写入 `next_run_at`，作业回到 `pending`；响应 `retryScheduled: true`。
+- 作业不属于该 hostname 时返回 `403 forbidden`。
+
+### GET /assets/{id}/jobs?limit=50
+
+控制台查看资产作业历史，返回 `{ "items": [ ...同作业字段 ], "total": 3 }`；作业输出与错误会脱敏后展示。
 
 ---
 

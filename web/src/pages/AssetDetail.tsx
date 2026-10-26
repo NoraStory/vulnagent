@@ -10,10 +10,11 @@ import {
   Network,
   Server,
   ShieldAlert,
+  Terminal,
   User
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { AssetDetail, AssetTelemetry, HostTelemetry, MetricPoint } from "../lib/types";
+import type { AssetDetail, AssetJobs, AssetTelemetry, HostTelemetry, MetricPoint } from "../lib/types";
 import {
   Badge,
   Dot,
@@ -34,7 +35,7 @@ import {
 } from "../lib/format";
 import { useToast } from "../lib/toast";
 
-type Tab = "components" | "findings" | "performance" | "hardware" | "services" | "ports";
+type Tab = "components" | "findings" | "performance" | "hardware" | "services" | "ports" | "jobs";
 
 export function AssetDetailPage() {
   const { id } = useParams();
@@ -42,6 +43,8 @@ export function AssetDetailPage() {
   const [data, setData] = useState<AssetDetail | null>(null);
   const [telemetry, setTelemetry] = useState<AssetTelemetry | null>(null);
   const [telemetryError, setTelemetryError] = useState("");
+  const [jobs, setJobs] = useState<AssetJobs | null>(null);
+  const [jobsError, setJobsError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("components");
@@ -72,10 +75,22 @@ export function AssetDetailPage() {
     }
   }, [id]);
 
+  const loadJobs = useCallback(async () => {
+    if (!id) return;
+    try {
+      const result = await api.assetJobs(id);
+      setJobs(result);
+      setJobsError("");
+    } catch (err) {
+      setJobsError(err instanceof Error ? err.message : "作业加载失败");
+    }
+  }, [id]);
+
   useEffect(() => {
     void load();
     void loadTelemetry();
-  }, [load, loadTelemetry]);
+    void loadJobs();
+  }, [load, loadTelemetry, loadJobs]);
 
   if (loading) {
     return (
@@ -108,6 +123,7 @@ export function AssetDetailPage() {
 
   const { asset, components, findings } = data;
   const current = telemetry?.telemetry ?? null;
+  const jobCount = jobs?.total ?? 0;
   const agent = agentMeta[asset.agentStatus] ?? agentMeta.none;
 
   return (
@@ -206,6 +222,12 @@ export function AssetDetailPage() {
             <span className="inline-flex items-center gap-1.5">
               <Network size={12.5} />
               端口 <span className="text-[11px] text-ink3">{current?.ports.length ?? 0}</span>
+            </span>
+          </TabButton>
+          <TabButton active={tab === "jobs"} onClick={() => setTab("jobs")}>
+            <span className="inline-flex items-center gap-1.5">
+              <Terminal size={12.5} />
+              作业 <span className="text-[11px] text-ink3">{jobCount}</span>
             </span>
           </TabButton>
         </div>
@@ -332,6 +354,8 @@ export function AssetDetailPage() {
             </div>
           </>
           )
+        ) : tab === "jobs" ? (
+          <JobsView data={jobs} error={jobsError} onReload={() => void loadJobs()} />
         ) : (
           <TelemetryPanel
             tab={tab}
@@ -671,6 +695,75 @@ function PortsView({ data }: { data: HostTelemetry }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function JobsView({
+  data,
+  error,
+  onReload
+}: {
+  data: AssetJobs | null;
+  error: string;
+  onReload: () => void;
+}) {
+  if (error) {
+    return <Empty title="作业加载失败" description={error} action={<button type="button" className="btn btn-secondary h-8" onClick={onReload}>重试</button>} />;
+  }
+  if (!data || data.items.length === 0) {
+    return (
+      <Empty
+        title="暂无主机作业"
+        description="通过 Agent 助手执行命令、读写文件或操作服务后，这里会记录作业状态与输出。"
+        action={<button type="button" className="btn btn-secondary h-8" onClick={onReload}>刷新</button>}
+      />
+    );
+  }
+  return (
+    <div>
+      <PanelHeader title="主机作业" subtitle={`${data.total} 条 · 含执行输出与重试记录`} />
+      <div className="divide-y divide-line">
+        {data.items.map((job) => {
+          const tone =
+            job.status === "succeeded"
+              ? "bg-[#E8F7EE] text-[#1E7B3C]"
+              : job.status === "failed"
+                ? "bg-[#FFECEA] text-[#C4170E]"
+                : job.status === "running"
+                  ? "bg-[#EAF1FF] text-[#2A5BD7]"
+                  : "bg-subtle text-ink2";
+          return (
+            <div key={job.id} className="px-5 py-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="pill bg-subtle font-mono text-[11px] text-ink2">{job.action}</span>
+                  <span className={`pill ${tone}`}>{job.status}</span>
+                  <span className="font-mono text-[10.5px] text-ink3">{job.id}</span>
+                  {job.attempts > 1 && (
+                    <span className="text-[10.5px] text-ink3">第 {job.attempts}/{job.maxAttempts} 次</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-[10.5px] text-ink3">
+                  <span>{job.requestedBy || "系统"}</span>
+                  <span>{formatTime(job.createdAt)}</span>
+                  {job.exitCode !== 0 && <span>exit={job.exitCode}</span>}
+                </div>
+              </div>
+              {job.error && <p className="mt-2 text-[11.5px] leading-[18px] text-[#C4170E]">{job.error}</p>}
+              <details className="mt-2 group">
+                <summary className="cursor-pointer text-[11px] text-ink3 transition-colors hover:text-ink">
+                  查看参数与输出
+                </summary>
+                <pre className="mt-2 max-h-[240px] overflow-auto rounded-[8px] bg-[#0F172A] px-3 py-2 text-[10.5px] leading-[17px] text-[#D7DEEA]">
+{`params: ${job.params}
+${job.output ? `\n${job.output}` : "\n（无输出）"}`}
+                </pre>
+              </details>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

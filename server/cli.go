@@ -45,6 +45,8 @@ func runCLI() {
 		runUpdateSign(os.Args[2:])
 	case "self-update":
 		runSelfUpdateCommand(os.Args[2:])
+	case "helper":
+		runHelperCommand()
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -61,6 +63,8 @@ func printUsage() {
   vulnagent server                     启动控制面（默认 :8787）
   vulnagent collect [--out sbom.json]  仅采集本机 SBOM，不联网
   vulnagent agent --server <url>       采集并上报到控制面
+  vulnagent agent --server <url> --watch  常驻拉取并执行主机作业
+  vulnagent helper                     提权 helper（由 Agent 通过 sudo/服务调用）
   vulnagent sync --bundle <file>       导入离线情报包
   vulnagent sync --epss-file <csv>     导入 EPSS 评分并重算排序
   vulnagent sync --epss                从 FIRST 在线拉取 EPSS（需外网）
@@ -115,7 +119,22 @@ func runAgentCommand(args []string) {
 	withSelf := fs.Bool("self", true, "附带自身依赖 SBOM")
 	onlyPrint := fs.Bool("print", false, "只打印采集结果，不上报")
 	timeout := fs.Duration("timeout", 60*time.Second, "上报超时时间")
+	watch := fs.Bool("watch", false, "常驻运行并拉取主机作业")
+	interval := fs.Duration("interval", 15*time.Second, "作业轮询间隔（--watch 模式）")
 	_ = fs.Parse(args)
+
+	if *watch && !*onlyPrint {
+		accessToken, err := resolveAgentToken(*token, *tokenFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "读取 Agent 令牌失败：%v\n", err)
+			os.Exit(1)
+		}
+		if err := runAgentWatch(*server, accessToken, *interval, *timeout); err != nil {
+			fmt.Fprintf(os.Stderr, "Agent 常驻运行失败：%v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	report, err := collect.Collect(collect.Options{IncludeSelf: *withSelf})
 	if err != nil {

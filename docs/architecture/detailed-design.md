@@ -699,6 +699,27 @@ CREATE TABLE asset_telemetry (
   services_json TEXT NOT NULL DEFAULT '[]', ports_json TEXT NOT NULL DEFAULT '[]'
 );
 
+-- 主机作业：下行执行、重试与结果
+CREATE TABLE host_jobs (
+  id TEXT PRIMARY KEY, asset_id INTEGER NOT NULL, action TEXT NOT NULL,
+  params TEXT NOT NULL DEFAULT '{}', risk TEXT NOT NULL DEFAULT 'high',
+  status TEXT NOT NULL DEFAULT 'pending', requested_by TEXT NOT NULL DEFAULT '',
+  approval_id TEXT NOT NULL DEFAULT '', idempotency_key TEXT NOT NULL DEFAULT '',
+  attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
+  next_run_at TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '', exit_code INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_host_jobs_asset ON host_jobs(asset_id, created_at DESC);
+CREATE INDEX idx_host_jobs_status ON host_jobs(status, next_run_at);
+CREATE UNIQUE INDEX idx_host_jobs_idem ON host_jobs(idempotency_key) WHERE idempotency_key <> '';
+
+CREATE TABLE host_job_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, attempt INTEGER NOT NULL,
+  status TEXT NOT NULL, output TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT ''
+);
+
 -- 权限
 CREATE TABLE users (
   id         INTEGER PRIMARY KEY,
@@ -867,18 +888,19 @@ harness_handlers.go          SSE 会话接口与审批接口
 
 所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals`，并在 `audit_logs` 留下动作记录；工具输出经脱敏（password/secret/token/api_key/authorization）。
 
-### 7.5.3 工具清单（16 个）
+### 7.5.3 工具清单（22 个）
 
 | 风险 | 工具 | 最小角色 |
 |---|---|---|
-| low | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest | viewer |
+| low | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job | viewer |
 | low | list_audit_logs | admin |
-| medium | rescan_asset | operator |
+| medium | rescan_asset、read_host_file | operator |
 | medium | run_selfcheck | admin |
-| high | update_finding_status、create_ticket | operator |
+| high | update_finding_status、create_ticket、run_host_command、write_host_file、service_action | operator |
 | high | upsert_product_map | admin |
 
-明确不暴露：SSH 扫描、Agent 令牌轮换、账号增删改、风险策略修改、任意 shell/SQL/URL。
+明确不暴露：SSH 扫描、Agent 令牌轮换、账号增删改、风险策略修改、任意 shell 拼接 / 任意 SQL / 任意 URL。
+主机命令只接受 argv 数组与白名单命令；写文件限白名单目录并自动备份；高风险动作必须审批 + 口令再认证。
 
 ### 7.5.4 交互流程
 
@@ -1119,6 +1141,9 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 复扫闭环 | 重新匹配后自动收敛：升级至修复版本 / 不再命中 → verified，组件移除 → closed，并写入事件与审计 |
 | 本地工单 | 控制面自建工单（`VA-YYYY-NNNN`），一个漏洞至多一张、建单幂等；状态与责任人随漏洞处置同步，提供 `GET /api/v1/tickets` 列表与 `ticket.created` webhook |
 | 主机遥测 | Agent 上报 CPU/内存/磁盘/网络/负载/进程性能时序与硬件、服务、监听端口；Linux 走 `/proc`、`/sys`、systemd/ss，Windows 走 PowerShell/CIM；资产详情支持趋势图与设备详情 |
+| 主机作业通道 | Agent pull 拉取作业，领取时原子抢占；服务端指数退避 + 抖动安排重试；作业幂等键 10 分钟内去重；执行结果写 `host_jobs` 与 `host_job_attempts` |
+| 受控主机执行 | `run_host_command`（argv 白名单）、`read_host_file`、`write_host_file`（白名单目录 + 原子写 + 自动备份）、`service_action`；全部走审批，高风险需口令再认证 |
+| 提权 helper | `vulnagent helper` 仅接受白名单动作；Linux 通过 `sudo -n` 调用，Windows 需 Agent 以管理员/SYSTEM 运行 |
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |

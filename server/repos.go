@@ -34,6 +34,8 @@ func (a *App) ticketRepo() *sqlite.TicketRepo { return sqlite.NewTicketRepo(a.db
 
 func (a *App) telemetryRepo() *sqlite.TelemetryRepo { return sqlite.NewTelemetryRepo(a.db) }
 
+func (a *App) jobRepo() *sqlite.JobRepo { return sqlite.NewJobRepo(a.db) }
+
 // readDB 返回 Harness 读工具专用的只读连接；打开失败时回落到主连接
 func (a *App) readDB() *sql.DB {
 	a.roOnce.Do(func() {
