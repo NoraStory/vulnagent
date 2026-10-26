@@ -776,11 +776,15 @@ vulnagent_selfcheck_failed 0
       "requestedBy": "李维",
       "attempts": 0,
       "maxAttempts": 3,
-      "createdAt": "2026-10-26T20:00:00+08:00"
+      "createdAt": "2026-10-26T20:00:00+08:00",
+      "signature": "hmac-sha256-hex"
     }
   ]
 }
 ```
+
+- `signature = HMAC-SHA256(token, job.id + "|" + job.action + "|" + job.params)`；Agent 必须校验后再执行，签名不符直接丢弃。
+- 同一资产存在 `running` 作业时不再派发新作业，避免并发变更。
 
 ### POST /agent/jobs/{id}/claim
 

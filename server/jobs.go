@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,33 @@ import (
 
 	"vulnagent/server/internal/application/ports"
 )
+
+// signedJob 带 HMAC 签名的主机作业信封
+type signedJob struct {
+	ports.HostJob
+	Signature string `json:"signature"`
+}
+
+func (a *App) signJob(job ports.HostJob) signedJob {
+	return signedJob{HostJob: job, Signature: jobSignature(a.jobKey, job)}
+}
+
+func jobSignature(key []byte, job ports.HostJob) string {
+	if len(key) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(job.ID + "|" + job.Action + "|" + job.Params))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// verifyJobSignature 校验作业未被篡改；key 为空时视为未启用签名。
+func verifyJobSignature(key []byte, job ports.HostJob, signature string) bool {
+	if len(key) == 0 {
+		return true
+	}
+	return hmac.Equal([]byte(jobSignature(key, job)), []byte(signature))
+}
 
 // queueHostJob 幂等地创建主机作业，返回作业实体
 func (a *App) queueHostJob(assetID int64, action string, params json.RawMessage, requestedBy, approvalID string) (ports.HostJob, error) {
@@ -123,7 +151,11 @@ func (a *App) handleAgentJobs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询主机作业失败")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
+	signed := make([]signedJob, 0, len(jobs))
+	for _, job := range jobs {
+		signed = append(signed, a.signJob(job))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": signed})
 }
 
 // handleAgentJobClaim 抢占作业
@@ -153,7 +185,7 @@ func (a *App) handleAgentJobClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "not_available", "作业不存在、已被取走或未到执行时间")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+	writeJSON(w, http.StatusOK, map[string]any{"job": a.signJob(job)})
 }
 
 // handleAgentJobResult 接收 Agent 执行结果并按需安排重试

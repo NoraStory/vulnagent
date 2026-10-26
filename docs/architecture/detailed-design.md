@@ -1149,7 +1149,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 复扫闭环 | 重新匹配后自动收敛：升级至修复版本 / 不再命中 → verified，组件移除 → closed，并写入事件与审计 |
 | 本地工单 | 控制面自建工单（`VA-YYYY-NNNN`），一个漏洞至多一张、建单幂等；状态与责任人随漏洞处置同步，提供 `GET /api/v1/tickets` 列表与 `ticket.created` webhook |
 | 主机遥测 | Agent 上报 CPU/内存/磁盘/网络/负载/进程性能时序与硬件、服务、监听端口；Linux 走 `/proc`、`/sys`、systemd/ss，Windows 走 PowerShell/CIM；资产详情支持趋势图与设备详情 |
-| 主机作业通道 | Agent pull 拉取作业，领取时原子抢占；服务端指数退避 + 抖动安排重试；作业幂等键 10 分钟内去重；执行结果写 `host_jobs` 与 `host_job_attempts` |
+| 主机作业通道 | Agent pull 拉取作业，领取时原子抢占；服务端指数退避 + 抖动安排重试；作业幂等键 10 分钟内去重；执行结果写 `host_jobs` 与 `host_job_attempts`；作业带 HMAC 签名，同资产运行中不派发新作业 |
 | 受控主机执行 | `run_host_command`（argv 白名单）、`read_host_file`、`write_host_file`（白名单目录 + 原子写 + 自动备份）、`service_action`；全部走审批，高风险需口令再认证 |
 | 提权 helper | `vulnagent helper` 仅接受白名单动作；Linux 通过 `sudo -n` 调用，Windows 需 Agent 以管理员/SYSTEM 运行 |
 | 上下文记忆 | 会话超过 20 条后自动压缩早期消息为摘要；48KB 字符预算从最新消息回溯保留；长期记忆 `agent_memories` 支持 global/asset 作用域，`remember`/`recall_memory` 工具与对话自动召回 |

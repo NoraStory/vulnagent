@@ -69,6 +69,9 @@ func TestHostJobQueueClaimAndResult(t *testing.T) {
 	if claimed.Status != "running" || claimed.Attempts != 1 {
 		t.Fatalf("抢占后状态异常：%+v", claimed)
 	}
+	if due, _ := app.jobRepo().DueForHost(context.Background(), "ticket-host", fmtNow(), 5); len(due) != 0 {
+		t.Fatalf("存在运行中作业时不应再派发新作业：%+v", due)
+	}
 
 	// 回传成功结果
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/agent/jobs/"+first.ID+"/result",
@@ -138,6 +141,42 @@ func TestAgentJobsRejectInvalidToken(t *testing.T) {
 	app.handleAgentJobs(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("错误令牌应为 401，实际 %d", rec.Code)
+	}
+}
+
+func TestJobSignatureEnvelope(t *testing.T) {
+	app, _, assetID := newTicketTestApp(t)
+	app.jobKey = []byte("signing-secret")
+	setupAgentToken(t, app, "test-agent-token")
+	job, err := app.queueHostJob(assetID, "run_command", json.RawMessage(`{"argv":["whoami"]}`), "李维", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/jobs?hostname=ticket-host", nil)
+	req.Header.Set("Authorization", "Bearer test-agent-token")
+	rec := httptest.NewRecorder()
+	app.handleAgentJobs(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("拉取作业失败：%d", rec.Code)
+	}
+	var payload struct {
+		Jobs []signedJob `json:"jobs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil || len(payload.Jobs) != 1 {
+		t.Fatalf("作业列表异常：%+v err=%v", payload, err)
+	}
+	envelope := payload.Jobs[0]
+	if envelope.ID != job.ID || envelope.Signature == "" {
+		t.Fatalf("签名信封异常：%+v", envelope)
+	}
+	if !verifyJobSignature(app.jobKey, envelope.HostJob, envelope.Signature) {
+		t.Fatal("合法签名应通过校验")
+	}
+	tampered := envelope.HostJob
+	tampered.Params = `{"argv":["rm","-rf","/"]}`
+	if verifyJobSignature(app.jobKey, tampered, envelope.Signature) {
+		t.Fatal("篡改参数后签名应失效")
 	}
 }
 

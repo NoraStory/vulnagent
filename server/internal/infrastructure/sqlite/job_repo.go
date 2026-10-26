@@ -62,6 +62,8 @@ func (r *JobRepo) DueForHost(ctx context.Context, hostname, now string, limit in
 		JOIN assets a ON a.id = host_jobs.asset_id
 		WHERE a.hostname = ? AND host_jobs.status = 'pending'
 		  AND (host_jobs.next_run_at = '' OR host_jobs.next_run_at <= ?)
+		  AND NOT EXISTS (SELECT 1 FROM host_jobs running
+		      WHERE running.asset_id = host_jobs.asset_id AND running.status = 'running')
 		ORDER BY host_jobs.created_at ASC LIMIT ?`, hostname, now, limit)
 	if err != nil {
 		return nil, err

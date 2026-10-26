@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"vulnagent/server/internal/agentexec"
-	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/collect"
 )
 
@@ -82,15 +81,25 @@ func pollHostJobs(ctx context.Context, server, token, hostname, exe string) {
 		fmt.Fprintf(os.Stderr, "拉取作业失败：%v\n", err)
 		return
 	}
-	for _, job := range jobs {
+	for _, envelope := range jobs {
 		if ctx.Err() != nil {
 			return
 		}
-		claimed, err := claimHostJob(ctx, server, token, hostname, job.ID)
+		job := envelope.HostJob
+		if !verifyJobSignature([]byte(token), job, envelope.Signature) {
+			fmt.Fprintf(os.Stderr, "作业 %s 签名校验失败，已丢弃\n", job.ID)
+			continue
+		}
+		claimedEnvelope, err := claimHostJob(ctx, server, token, hostname, job.ID)
 		if err != nil {
 			if err != errJobUnavailable {
 				fmt.Fprintf(os.Stderr, "抢占作业 %s 失败：%v\n", job.ID, err)
 			}
+			continue
+		}
+		claimed := claimedEnvelope.HostJob
+		if !verifyJobSignature([]byte(token), claimed, claimedEnvelope.Signature) {
+			fmt.Fprintf(os.Stderr, "作业 %s 领取响应签名校验失败，已丢弃\n", claimed.ID)
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "执行作业 %s：%s\n", claimed.ID, claimed.Action)
@@ -110,7 +119,7 @@ func pollHostJobs(ctx context.Context, server, token, hostname, exe string) {
 
 var errJobUnavailable = fmt.Errorf("作业不可用")
 
-func listHostJobs(ctx context.Context, server, token, hostname string) ([]ports.HostJob, error) {
+func listHostJobs(ctx context.Context, server, token, hostname string) ([]signedJob, error) {
 	endpoint := trimServer(server) + "/api/v1/agent/jobs?hostname=" + url.QueryEscape(hostname)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -126,7 +135,7 @@ func listHostJobs(ctx context.Context, server, token, hostname string) ([]ports.
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var payload struct {
-		Jobs []ports.HostJob `json:"jobs"`
+		Jobs []signedJob `json:"jobs"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return nil, err
@@ -134,32 +143,32 @@ func listHostJobs(ctx context.Context, server, token, hostname string) ([]ports.
 	return payload.Jobs, nil
 }
 
-func claimHostJob(ctx context.Context, server, token, hostname, jobID string) (ports.HostJob, error) {
+func claimHostJob(ctx context.Context, server, token, hostname, jobID string) (signedJob, error) {
 	body, _ := json.Marshal(map[string]string{"hostname": hostname})
 	endpoint := trimServer(server) + "/api/v1/agent/jobs/" + url.PathEscape(jobID) + "/claim"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return ports.HostJob{}, err
+		return signedJob{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		return ports.HostJob{}, err
+		return signedJob{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusConflict {
-		return ports.HostJob{}, errJobUnavailable
+		return signedJob{}, errJobUnavailable
 	}
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return ports.HostJob{}, fmt.Errorf("HTTP %d：%s", resp.StatusCode, string(data))
+		return signedJob{}, fmt.Errorf("HTTP %d：%s", resp.StatusCode, string(data))
 	}
 	var payload struct {
-		Job ports.HostJob `json:"job"`
+		Job signedJob `json:"job"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return ports.HostJob{}, err
+		return signedJob{}, err
 	}
 	return payload.Job, nil
 }

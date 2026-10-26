@@ -72,6 +72,9 @@ type App struct {
 	roDB    *sql.DB
 	roErr   error
 	harness *harnessapp.Service
+
+	// jobKey 用于主机作业签名（与 Agent 令牌一致）
+	jobKey []byte
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -184,7 +187,8 @@ func runServer() {
 		slog.Error("初始化账号失败", "err", err)
 		os.Exit(1)
 	}
-	if _, err := ensureAgentToken(db, dataDir); err != nil {
+	agentToken, err := ensureAgentToken(db, dataDir)
+	if err != nil {
 		slog.Error("初始化 Agent 令牌失败", "err", err)
 		os.Exit(1)
 	}
@@ -204,7 +208,7 @@ func runServer() {
 	webDist := cfg.WebDist
 	app := &App{db: db, sessions: newSessionStore(), dataDir: dataDir, webDist: webDist,
 		selfDigest: computeSelfSBOMDigest(), scanDebounce: scanDebounceFromEnv(),
-		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter()}
+		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter(), jobKey: []byte(agentToken)}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
 	app.initHarness(cfg)
 	app.cleanupOldJobs()
