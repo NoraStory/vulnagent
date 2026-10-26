@@ -33,6 +33,29 @@ func TestBuildContextCompactsHistory(t *testing.T) {
 	}
 }
 
+func BenchmarkBuildContext(b *testing.B) {
+	svc := &Service{SystemPrompt: "benchmark"}
+	history := make([]harness.Message, 0, 60)
+	for i := 0; i < 60; i++ {
+		history = append(history, harness.Message{Role: "user", Content: strings.Repeat("x", 200)})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = svc.buildContext(context.Background(), history)
+	}
+}
+
+func BenchmarkTrimContext(b *testing.B) {
+	messages := make([]ports.LLMMessage, 0, 100)
+	for i := 0; i < 100; i++ {
+		messages = append(messages, ports.LLMMessage{Role: "user", Content: strings.Repeat("y", 500)})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = trimContext(messages, 48<<10)
+	}
+}
+
 func TestTrimContextKeepsSystemAndRecent(t *testing.T) {
 	messages := []ports.LLMMessage{
 		{Role: "system", Content: "sys"},

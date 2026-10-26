@@ -140,6 +140,29 @@ func TestSnapshotAndRestore(t *testing.T) {
 		Params: json.RawMessage(`{"snapshotId":"../../etc/passwd"}`)}, opts); res.Status != "failed" {
 		t.Fatalf("非法快照 ID 应被拒绝：%+v", res)
 	}
+
+	// 篡改快照内容后必须因哈希不一致拒绝恢复
+	dir := filepath.Join(opts.SnapshotRoot, created.SnapshotID)
+	manifestData, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Files []struct {
+			Stored string `json:"stored"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil || len(manifest.Files) != 1 {
+		t.Fatalf("快照清单异常：%v", err)
+	}
+	if err := os.WriteFile(manifest.Files[0].Stored, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(restoreParams{SnapshotID: created.SnapshotID})
+	if res := Execute(context.Background(), Request{Action: ActionRestoreSnapshot, Params: raw}, opts); res.Status != "failed" ||
+		!strings.Contains(res.Error, "校验失败") {
+		t.Fatalf("篡改快照应被拒绝：%+v", res)
+	}
 }
 
 func TestServiceActionValidation(t *testing.T) {

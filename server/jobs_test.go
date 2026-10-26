@@ -114,6 +114,33 @@ func TestOpsPolicyReadOnlyAndRateLimit(t *testing.T) {
 	}
 }
 
+func TestOpsPolicyAdminOnly(t *testing.T) {
+	app, _, _ := newTicketTestApp(t)
+	for _, role := range []string{"viewer", "operator"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/ops-policy", nil)
+		req = req.WithContext(context.WithValue(req.Context(), ctxKeyUser{}, User{
+			Username: "u", Name: "u", Role: role,
+		}))
+		rec := httptest.NewRecorder()
+		app.handleOpsPolicy(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s 访问运维策略应为 403，实际 %d", role, rec.Code)
+		}
+	}
+}
+
+func TestAgentJobsRejectInvalidToken(t *testing.T) {
+	app, _, _ := newTicketTestApp(t)
+	setupAgentToken(t, app, "good-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/jobs?hostname=ticket-host", nil)
+	req.Header.Set("Authorization", "Bearer bad-token")
+	rec := httptest.NewRecorder()
+	app.handleAgentJobs(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("错误令牌应为 401，实际 %d", rec.Code)
+	}
+}
+
 func TestHostJobRetryScheduling(t *testing.T) {
 	app, _, assetID := newTicketTestApp(t)
 	setupAgentToken(t, app, "test-agent-token")
