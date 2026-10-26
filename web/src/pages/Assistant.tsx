@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowDown,
   Bot,
   Check,
   ChevronDown,
   Loader2,
+  PanelLeft,
   Plus,
   Send,
   ShieldAlert,
@@ -240,8 +242,12 @@ export function AssistantPage() {
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashQuery, setSlashQuery] = useState("");
+  const [atBottom, setAtBottom] = useState(true);
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // stickRef 记录用户是否停留在底部：在底部时新消息自动跟随，上翻阅读时不打断
+  const stickRef = useRef(true);
 
   const active = sessions.find((session) => session.id === activeId);
   const mode = active?.approvalMode ?? pendingMode;
@@ -302,6 +308,12 @@ export function AssistantPage() {
   }, []);
 
   useEffect(() => {
+    // 切换会话时回到干净状态：清空技能菜单、错误与滚动位置
+    setSlashOpen(false);
+    setSlashQuery("");
+    setError("");
+    setAtBottom(true);
+    stickRef.current = true;
     if (!activeId) {
       setItems([]);
       return;
@@ -330,9 +342,25 @@ export function AssistantPage() {
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || !stickRef.current) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [items, busy]);
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    stickRef.current = bottom;
+    setAtBottom(bottom);
+  }
+
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setAtBottom(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }
 
   const handleEvent = useCallback((event: HarnessEvent) => {
     const stamp = Date.now();
@@ -511,6 +539,25 @@ export function AssistantPage() {
     }
   }
 
+  function sessionList(onPick?: () => void) {
+    return sessions.map((session) => (
+      <button
+        key={session.id}
+        type="button"
+        onClick={() => {
+          setActiveId(session.id);
+          onPick?.();
+        }}
+        className={`mb-1 flex w-full flex-col items-start gap-0.5 rounded-[10px] px-2.5 py-2 text-left transition-colors ${
+          session.id === activeId ? "bg-brand-soft text-brand-strong" : "text-ink2 hover:bg-subtle"
+        }`}
+      >
+        <span className="w-full truncate text-[12.5px] font-medium">{session.title}</span>
+        <span className="text-[10.5px] text-ink3">{timeAgo(session.updatedAt)}</span>
+      </button>
+    ));
+  }
+
   function selectSkill(skill: HarnessSkill) {
     setActiveSkillId(skill.id);
     setInput("");
@@ -549,19 +596,7 @@ export function AssistantPage() {
           {sessions.length === 0 && (
             <p className="px-2 py-6 text-center text-[12px] text-ink3">还没有会话，直接提问即可创建</p>
           )}
-          {sessions.map((session) => (
-            <button
-              key={session.id}
-              type="button"
-              onClick={() => setActiveId(session.id)}
-              className={`mb-1 flex w-full flex-col items-start gap-0.5 rounded-[10px] px-2.5 py-2 text-left transition-colors ${
-                session.id === activeId ? "bg-brand-soft text-brand-strong" : "text-ink2 hover:bg-subtle"
-              }`}
-            >
-              <span className="w-full truncate text-[12.5px] font-medium">{session.title}</span>
-              <span className="text-[10.5px] text-ink3">{timeAgo(session.updatedAt)}</span>
-            </button>
-          ))}
+          {sessionList()}
         </div>
         <div className="border-t border-line">
           <details className="group">
@@ -602,10 +637,26 @@ export function AssistantPage() {
               </p>
             </div>
           </div>
-          <span className="pill bg-signal-soft text-signal">{model || "模型"}</span>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="pill hidden bg-signal-soft text-signal sm:inline-flex">{model || "模型"}</span>
+            <button
+              type="button"
+              onClick={() => setMobileSessionsOpen(true)}
+              className="btn btn-secondary h-8 shrink-0 px-2 text-[12px] md:hidden"
+              aria-label="切换会话"
+            >
+              <PanelLeft size={13} />
+              会话
+            </button>
+          </div>
         </header>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="h-full space-y-3 overflow-y-auto px-4 py-4"
+          >
           {items.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-brand-soft text-brand">
@@ -695,6 +746,17 @@ export function AssistantPage() {
               </div>
             );
           })}
+          </div>
+          {!atBottom && items.length > 0 && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink2 shadow-[0_6px_18px_rgba(16,24,40,0.14)] transition-colors hover:text-ink"
+            >
+              <ArrowDown size={12} />
+              回到底部
+            </button>
+          )}
         </div>
 
         {error && (
@@ -719,37 +781,6 @@ export function AssistantPage() {
               >
                 <X size={12} />
               </button>
-            </div>
-          )}
-
-          {slashOpen && slashMatches.length > 0 && (
-            <div className="mb-2 max-h-[220px] overflow-y-auto rounded-[10px] border border-line bg-surface p-1 shadow-[0_8px_24px_rgba(16,24,40,0.10)]">
-              {slashMatches.map((skill, index) => (
-                <button
-                  key={skill.id}
-                  type="button"
-                  onMouseEnter={() => setSlashIndex(index)}
-                  onClick={() => selectSkill(skill)}
-                  className={`flex w-full flex-col items-start gap-0.5 rounded-[8px] px-2.5 py-2 text-left ${
-                    index === slashIndex ? "bg-brand-soft" : "hover:bg-subtle"
-                  }`}
-                >
-                  <span className="flex w-full items-center gap-2">
-                    <span className="mono text-[11.5px] text-brand-strong">/{skill.id}</span>
-                    <span className="truncate text-[11.5px] text-ink2">{skill.displayName}</span>
-                    {skill.platforms?.length > 0 && (
-                      <span className="ml-auto shrink-0 text-[10px] text-ink3">{skill.platforms.join("/")}</span>
-                    )}
-                  </span>
-                  <span className="line-clamp-2 text-[10.5px] leading-[15px] text-ink3">{skill.description}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {slashOpen && slashMatches.length === 0 && (
-            <div className="mb-2 rounded-[10px] border border-line bg-surface px-3 py-2 text-[11.5px] text-ink3">
-              没有匹配的技能，输入 <span className="mono">/</span> 查看全部
             </div>
           )}
 
@@ -838,72 +869,156 @@ export function AssistantPage() {
             </div>
           )}
 
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"
-              rows={2}
-              placeholder={
-                hasPendingApproval
-                  ? "请先处理待审批操作，再继续提问"
-                  : skills.length > 0
-                    ? "输入 / 调用运维技能，Enter 发送，Shift + Enter 换行"
-                    : "描述你的问题，Enter 发送，Shift + Enter 换行"
-              }
-              value={input}
-              onChange={(event) => {
-                const value = event.target.value;
-                setInput(value);
-                if (value.startsWith("/") && !value.includes(" ")) {
-                  setSlashQuery(value.slice(1).toLowerCase());
-                  setSlashOpen(true);
-                  setSlashIndex(0);
-                } else {
-                  setSlashOpen(false);
+          <div className="relative">
+            {slashOpen && slashMatches.length > 0 && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-[240px] overflow-y-auto rounded-[10px] border border-line bg-surface p-1 shadow-[0_12px_32px_rgba(16,24,40,0.16)]">
+                <p className="px-2.5 pb-1 pt-1.5 text-[10.5px] text-ink3">
+                  选择运维技能 · ↑↓ 切换 · Enter 确认 · Esc 关闭
+                </p>
+                {slashMatches.map((skill, index) => (
+                  <button
+                    key={skill.id}
+                    type="button"
+                    onMouseEnter={() => setSlashIndex(index)}
+                    onClick={() => selectSkill(skill)}
+                    className={`flex w-full flex-col items-start gap-0.5 rounded-[8px] px-2.5 py-2 text-left ${
+                      index === slashIndex ? "bg-brand-soft" : "hover:bg-subtle"
+                    }`}
+                  >
+                    <span className="flex w-full items-center gap-2">
+                      <span className="mono text-[11.5px] text-brand-strong">/{skill.id}</span>
+                      <span className="truncate text-[11.5px] text-ink2">{skill.displayName}</span>
+                      {skill.platforms?.length > 0 && (
+                        <span className="ml-auto shrink-0 text-[10px] text-ink3">{skill.platforms.join("/")}</span>
+                      )}
+                    </span>
+                    <span className="line-clamp-2 text-[10.5px] leading-[15px] text-ink3">{skill.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {slashOpen && slashMatches.length === 0 && (
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-2 rounded-[10px] border border-line bg-surface px-3 py-2 text-[11.5px] text-ink3 shadow-[0_12px_32px_rgba(16,24,40,0.16)]">
+                没有匹配的技能，输入 <span className="mono">/</span> 查看全部
+              </div>
+            )}
+
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={inputRef}
+                className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"
+                rows={2}
+                placeholder={
+                  hasPendingApproval
+                    ? "请先处理待审批操作，再继续提问"
+                    : skills.length > 0
+                      ? "输入 / 调用运维技能，Enter 发送，Shift + Enter 换行"
+                      : "描述你的问题，Enter 发送，Shift + Enter 换行"
                 }
-              }}
-              onKeyDown={(event) => {
-                if (slashOpen && slashMatches.length > 0) {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setSlashIndex((index) => (index + 1) % slashMatches.length);
-                    return;
+                value={input}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setInput(value);
+                  if (value.startsWith("/") && !value.includes(" ")) {
+                    setSlashQuery(value.slice(1).toLowerCase());
+                    setSlashOpen(true);
+                    setSlashIndex(0);
+                  } else {
+                    setSlashOpen(false);
                   }
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length);
-                    return;
+                }}
+                onKeyDown={(event) => {
+                  // 中文/日文输入法组词时按 Enter 是上屏，不应触发发送或技能选择
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (slashOpen && slashMatches.length > 0) {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setSlashIndex((index) => (index + 1) % slashMatches.length);
+                      return;
+                    }
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length);
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      selectSkill(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]);
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setSlashOpen(false);
+                      return;
+                    }
                   }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    selectSkill(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]);
-                    return;
-                  }
-                  if (event.key === "Escape") {
+                  if (event.key === "Escape" && slashOpen) {
                     event.preventDefault();
                     setSlashOpen(false);
                     return;
                   }
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send(input);
-                }
-              }}
-              disabled={busy || hasPendingApproval}
-            />
-            <button
-              type="button"
-              className="btn btn-primary h-[42px] w-[42px] shrink-0 px-0"
-              onClick={() => void send(input)}
-              disabled={busy || hasPendingApproval || (!input.trim() && !activeSkillId)}
-              aria-label="发送"
-            >
-              {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            </button>
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void send(input);
+                  }
+                }}
+                disabled={busy || hasPendingApproval}
+              />
+              <button
+                type="button"
+                className="btn btn-primary h-[42px] w-[42px] shrink-0 px-0"
+                onClick={() => void send(input)}
+                disabled={busy || hasPendingApproval || (!input.trim() && !activeSkillId)}
+                aria-label="发送"
+              >
+                {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              </button>
+            </div>
           </div>
         </footer>
       </section>
+
+      {mobileSessionsOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end bg-black/30 md:hidden"
+          onClick={() => setMobileSessionsOpen(false)}
+        >
+          <div
+            className="max-h-[70vh] w-full overflow-y-auto rounded-t-[16px] border-t border-line bg-surface p-3 shadow-float"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="text-[13px] font-semibold text-ink">会话</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-secondary h-8 px-2.5 text-[12px]"
+                  onClick={() => {
+                    setMobileSessionsOpen(false);
+                    void createSession();
+                  }}
+                >
+                  <Plus size={13} />
+                  新建
+                </button>
+                <button
+                  type="button"
+                  className="rounded-[8px] p-1.5 text-ink3 transition-colors hover:bg-subtle hover:text-ink"
+                  onClick={() => setMobileSessionsOpen(false)}
+                  aria-label="关闭会话列表"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+            {sessions.length === 0 && (
+              <p className="px-2 py-6 text-center text-[12px] text-ink3">还没有会话，直接提问即可创建</p>
+            )}
+            {sessionList(() => setMobileSessionsOpen(false))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
