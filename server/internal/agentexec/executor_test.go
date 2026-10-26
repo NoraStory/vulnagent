@@ -14,6 +14,7 @@ func testOptions(root string) Options {
 		ReadRoots:     []string{root},
 		WriteRoots:    []string{root},
 		AllowCommands: []string{"whoami", "echo"},
+		SnapshotRoot:  filepath.Join(root, "snapshots"),
 	}
 }
 
@@ -102,6 +103,42 @@ func TestCommandAllowlistAndSubcommands(t *testing.T) {
 	}
 	if err := validateSubcommand("systemctl", []string{"systemctl", "status", "nginx"}); err != nil {
 		t.Fatalf("systemctl status 应允许：%v", err)
+	}
+}
+
+func TestSnapshotAndRestore(t *testing.T) {
+	root := t.TempDir()
+	opts := testOptions(root)
+	path := filepath.Join(root, "app.conf")
+	if err := os.WriteFile(path, []byte("version=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(snapshotParams{Paths: []string{path}, Note: "变更前"})
+	res := Execute(context.Background(), Request{Action: ActionSnapshot, Params: raw}, opts)
+	if res.Status != "succeeded" || !strings.Contains(res.Output, "snapshotId") {
+		t.Fatalf("创建快照失败：%+v", res)
+	}
+	var created struct {
+		SnapshotID string `json:"snapshotId"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &created); err != nil || created.SnapshotID == "" {
+		t.Fatalf("快照输出不可解析：%s", res.Output)
+	}
+	if err := os.WriteFile(path, []byte("version=2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(restoreParams{SnapshotID: created.SnapshotID})
+	res = Execute(context.Background(), Request{Action: ActionRestoreSnapshot, Params: raw}, opts)
+	if res.Status != "succeeded" {
+		t.Fatalf("恢复快照失败：%+v", res)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "version=1\n" {
+		t.Fatalf("恢复内容不一致：%q", got)
+	}
+	if res := Execute(context.Background(), Request{Action: ActionRestoreSnapshot,
+		Params: json.RawMessage(`{"snapshotId":"../../etc/passwd"}`)}, opts); res.Status != "failed" {
+		t.Fatalf("非法快照 ID 应被拒绝：%+v", res)
 	}
 }
 

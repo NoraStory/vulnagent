@@ -20,10 +20,13 @@ import (
 
 // 动作常量
 const (
-	ActionReadFile      = "read_file"
-	ActionWriteFile     = "write_file"
-	ActionRunCommand    = "run_command"
-	ActionServiceAction = "service_action"
+	ActionReadFile        = "read_file"
+	ActionWriteFile       = "write_file"
+	ActionRunCommand      = "run_command"
+	ActionServiceAction   = "service_action"
+	ActionSnapshot        = "snapshot"
+	ActionRestoreSnapshot = "restore_snapshot"
+	ActionPackageAction   = "package_action"
 )
 
 // Request 一次主机动作请求
@@ -48,6 +51,7 @@ type Options struct {
 	ReadRoots     []string
 	WriteRoots    []string
 	AllowCommands []string
+	SnapshotRoot  string
 	HelperMode    bool
 }
 
@@ -58,18 +62,24 @@ func DefaultOptions() Options {
 			ReadRoots:     []string{`C:\ProgramData`, `C:\Windows\Logs`, `C:\Temp\vulnagent`},
 			WriteRoots:    []string{`C:\ProgramData\VulnAgent`, `C:\Temp\vulnagent`},
 			AllowCommands: []string{"sc", "wevtutil", "netstat", "ipconfig", "systeminfo", "whoami", "hostname", "type", "dir"},
+			SnapshotRoot:  `C:\ProgramData\VulnAgent\snapshots`,
 		}
 	}
 	return Options{
 		ReadRoots:     []string{"/etc", "/var/log", "/proc", "/sys", "/opt", "/srv", "/tmp/vulnagent"},
 		WriteRoots:    []string{"/etc/vulnagent", "/opt/vulnagent", "/var/lib/vulnagent", "/tmp/vulnagent"},
 		AllowCommands: []string{"systemctl", "journalctl", "df", "free", "ss", "netstat", "ip", "uptime", "hostname", "whoami", "ps"},
+		SnapshotRoot:  "/var/lib/vulnagent/snapshots",
 	}
 }
 
 // NeedsPrivilege 判断动作是否需要 root/SYSTEM
 func NeedsPrivilege(action string) bool {
-	return action == ActionWriteFile || action == ActionServiceAction
+	switch action {
+	case ActionWriteFile, ActionServiceAction, ActionSnapshot, ActionRestoreSnapshot, ActionPackageAction:
+		return true
+	}
+	return false
 }
 
 type readFileParams struct {
@@ -120,6 +130,15 @@ func Execute(ctx context.Context, req Request, opts Options) Result {
 		res.Retryable = err != nil && code == -1
 	case ActionServiceAction:
 		out, err := serviceAction(ctx, req.Params)
+		res.Output, res.Error, res.Status = out, errText(err), statusOf(err)
+	case ActionSnapshot:
+		out, err := createSnapshot(req.Params, opts)
+		res.Output, res.Error, res.Status = out, errText(err), statusOf(err)
+	case ActionRestoreSnapshot:
+		out, err := restoreSnapshot(req.Params, opts)
+		res.Output, res.Error, res.Status = out, errText(err), statusOf(err)
+	case ActionPackageAction:
+		out, err := packageAction(ctx, req.Params)
 		res.Output, res.Error, res.Status = out, errText(err), statusOf(err)
 	default:
 		res.Error = "不支持的动作：" + req.Action

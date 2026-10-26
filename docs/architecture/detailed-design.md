@@ -896,19 +896,19 @@ harness_handlers.go          SSE 会话接口与审批接口
 
 所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals`，并在 `audit_logs` 留下动作记录；工具输出经脱敏（password/secret/token/api_key/authorization）。
 
-### 7.5.3 工具清单（22 个）
+### 7.5.3 工具清单（27 个）
 
 | 风险 | 工具 | 最小角色 |
 |---|---|---|
-| low | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job | viewer |
+| low | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job、recall_memory | viewer/operator |
 | low | list_audit_logs | admin |
-| medium | rescan_asset、read_host_file | operator |
+| medium | rescan_asset、read_host_file、create_snapshot、remember | operator |
 | medium | run_selfcheck | admin |
-| high | update_finding_status、create_ticket、run_host_command、write_host_file、service_action | operator |
+| high | update_finding_status、create_ticket、run_host_command、write_host_file、service_action、restore_snapshot、apply_remediation | operator |
 | high | upsert_product_map | admin |
 
 明确不暴露：SSH 扫描、Agent 令牌轮换、账号增删改、风险策略修改、任意 shell 拼接 / 任意 SQL / 任意 URL。
-主机命令只接受 argv 数组与白名单命令；写文件限白名单目录并自动备份；高风险动作必须审批 + 口令再认证。
+主机命令只接受 argv 数组与白名单命令；写文件限白名单目录并自动备份；快照 + 回滚与包升级均需审批，高风险需口令再认证。
 
 ### 7.5.4 交互流程
 
@@ -1154,6 +1154,8 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 提权 helper | `vulnagent helper` 仅接受白名单动作；Linux 通过 `sudo -n` 调用，Windows 需 Agent 以管理员/SYSTEM 运行 |
 | 上下文记忆 | 会话超过 20 条后自动压缩早期消息为摘要；48KB 字符预算从最新消息回溯保留；长期记忆 `agent_memories` 支持 global/asset 作用域，`remember`/`recall_memory` 工具与对话自动召回 |
 | 操作轨迹 | `GET /api/v1/trajectory` 聚合审计、主机作业与工具调用，按时间倒序；控制台「轨迹」页支持按类型过滤 |
+| 快照与回滚 | `snapshot` 动作把文件复制到内容寻址快照目录并写 manifest（SHA-256 校验）；`restore_snapshot` 校验 ID/路径/哈希后原子恢复 |
+| 漏洞自动修复 | `apply_remediation` 按 finding 的修复版本生成包升级作业，支持 dry-run；成功后异步复扫收敛，失败保留输出供回滚 |
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |

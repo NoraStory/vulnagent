@@ -41,6 +41,9 @@ func (a *App) harnessTools() []harness.Tool {
 		a.toolServiceAction(),
 		a.toolRemember(),
 		a.toolRecallMemory(),
+		a.toolCreateSnapshot(),
+		a.toolRestoreSnapshot(),
+		a.toolApplyRemediation(),
 	}
 }
 
@@ -778,6 +781,96 @@ func (a *App) toolRecallMemory() harness.Tool {
 				items = append(items, scoped...)
 			}
 			return map[string]any{"count": len(items), "items": items}, nil
+		},
+	}
+}
+
+// ---------- 快照与修复（Phase 4） ----------
+
+func (a *App) toolCreateSnapshot() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("create_snapshot", "变更前创建文件快照（需审批），返回快照 ID。", harness.RiskMedium, "operator", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"paths":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":50},
+				"note":{"type":"string"}
+			},"required":["assetId","paths"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64    `json:"assetId"`
+				Paths   []string `json:"paths"`
+				Note    string   `json:"note"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			return a.runHostAction(in.AssetID, "snapshot", in, "Agent 助手")
+		},
+	}
+}
+
+func (a *App) toolRestoreSnapshot() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("restore_snapshot", "从快照回滚文件（高风险，需审批 + 口令再认证）。", harness.RiskHigh, "operator", `{
+			"type":"object","properties":{
+				"assetId":{"type":"integer"},
+				"snapshotId":{"type":"string"},
+				"files":{"type":"array","items":{"type":"string"}}
+			},"required":["assetId","snapshotId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID    int64    `json:"assetId"`
+				SnapshotID string   `json:"snapshotId"`
+				Files      []string `json:"files"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			return a.runHostAction(in.AssetID, "restore_snapshot", in, "Agent 助手")
+		},
+	}
+}
+
+func (a *App) toolApplyRemediation() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("apply_remediation", "按漏洞修复版本升级组件包（高风险，需审批 + 口令再认证），成功后自动复扫。", harness.RiskHigh, "operator", `{
+			"type":"object","properties":{
+				"findingId":{"type":"integer"},
+				"dryRun":{"type":"boolean"}
+			},"required":["findingId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				FindingID int64 `json:"findingId"`
+				DryRun    bool  `json:"dryRun"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			cur, err := a.findingRepo().Get(context.Background(), in.FindingID)
+			if err != nil {
+				return nil, fmt.Errorf("漏洞不存在：%w", err)
+			}
+			if strings.TrimSpace(cur.FixedVersion) == "" {
+				return nil, fmt.Errorf("该漏洞暂无官方修复版本，无法自动修复")
+			}
+			params := map[string]any{
+				"package": cur.ComponentName,
+				"action":  "upgrade",
+				"version": cur.FixedVersion,
+				"dryRun":  in.DryRun,
+			}
+			res, err := a.runHostAction(cur.AssetID, "package_action", params, "Agent 助手")
+			if err != nil {
+				return nil, err
+			}
+			if !in.DryRun {
+				if m, ok := res.(map[string]any); ok && m["ok"] == true {
+					go func(assetID int64) {
+						_, _ = a.reconcileFindingStates(assetID, "自动修复后复扫")
+					}(cur.AssetID)
+				}
+			}
+			return res, nil
 		},
 	}
 }
