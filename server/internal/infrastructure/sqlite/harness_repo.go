@@ -205,13 +205,14 @@ func (r *HarnessRepo) HasPendingApproval(ctx context.Context, sessionID, at stri
 	return count > 0, err
 }
 
-// PendingApproval 查找同一会话下匹配工具与参数指纹的待审批记录
-func (r *HarnessRepo) PendingApproval(ctx context.Context, sessionID, tool, argsHash string) (harness.Approval, bool, error) {
+// PendingApproval 查找同一会话下匹配工具与参数指纹的未过期待审批记录
+func (r *HarnessRepo) PendingApproval(ctx context.Context, sessionID, tool, argsHash, at string) (harness.Approval, bool, error) {
 	var a harness.Approval
 	err := r.db.QueryRowContext(ctx, `SELECT id, session_id, tool, args_hash, args, call_id, risk, requested_by, status,
 		reason, requested_at, expires_at, decided_at, decided_by, consumed_at FROM agent_approvals
-		WHERE session_id = ? AND tool = ? AND args_hash = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1`,
-		sessionID, tool, argsHash).
+		WHERE session_id = ? AND tool = ? AND args_hash = ? AND status = 'pending' AND expires_at > ?
+		ORDER BY requested_at DESC LIMIT 1`,
+		sessionID, tool, argsHash, at).
 		Scan(&a.ID, &a.SessionID, &a.Tool, &a.ArgsHash, &a.Args, &a.CallID, &a.Risk, &a.RequestedBy, &a.Status,
 			&a.Reason, &a.RequestedAt, &a.ExpiresAt, &a.DecidedAt, &a.DecidedBy, &a.ConsumedAt)
 	if errors.Is(err, sql.ErrNoRows) {

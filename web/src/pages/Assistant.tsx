@@ -8,6 +8,7 @@ import {
   Loader2,
   PanelLeft,
   Plus,
+  RefreshCw,
   Send,
   ShieldAlert,
   Sparkles,
@@ -44,7 +45,7 @@ type Item =
       key: string;
       kind: "approval";
       approval: HarnessApproval;
-      status: "pending" | "approved" | "rejected";
+      status: "pending" | "approved" | "rejected" | "expired";
       error?: string;
     }
   | { key: string; kind: "error"; content: string };
@@ -267,12 +268,16 @@ const MessageItem = memo(function MessageItem({ item }: { item: PlainItem }) {
         </pre>
         {item.status === "pending" ? (
           <p className="mt-2 text-[11.5px] text-warn">等待你在输入框上方点击「批准并执行」或「拒绝」</p>
+        ) : item.status === "expired" ? (
+          <p className="mt-2 text-[11.5px] text-ink3">
+            审批已过期{item.error ? `：${item.error}` : "，请重新发起操作"}
+          </p>
         ) : (
           <p className="mt-2 text-[11.5px] text-ink2">
             已{item.status === "approved" ? "批准并执行" : "拒绝"} · 审批一次性生效
           </p>
         )}
-        {item.error && (
+        {item.error && item.status !== "expired" && (
           <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-danger">
             <AlertCircle size={12} />
             {item.error}
@@ -301,6 +306,7 @@ export function AssistantPage() {
   const [passwords, setPasswords] = useState<Record<string, string>>({});
   const [pendingMode, setPendingMode] = useState<HarnessApprovalMode>("each");
   const [modeSaving, setModeSaving] = useState(false);
+  const [decidingId, setDecidingId] = useState("");
   const [skills, setSkills] = useState<HarnessSkill[]>([]);
   const [activeSkillId, setActiveSkillId] = useState("");
   const [slashOpen, setSlashOpen] = useState(false);
@@ -331,6 +337,10 @@ export function AssistantPage() {
       item.kind === "approval" && item.status === "pending"
   );
   const hasPendingApproval = Boolean(pendingApproval);
+  const expiredApproval = items.find(
+    (item): item is Extract<Item, { kind: "approval" }> =>
+      item.kind === "approval" && item.status === "expired"
+  );
   // 仅在消息变化时重新分组，保证 Block 引用稳定，配合 memo 让历史消息跳过渲染
   const blocks = useMemo(() => groupItems(items), [items]);
 
@@ -373,6 +383,18 @@ export function AssistantPage() {
     };
   }, []);
 
+  const loadMessages = useCallback(async (sessionId: string) => {
+    const result = await api.harnessMessages(sessionId);
+    const restored: Item[] = (result.pendingApprovals ?? []).map((approval) => ({
+      key: `ap-${approval.id}`,
+      kind: "approval",
+      approval,
+      status: "pending"
+    }));
+    setItems([...toItems(result.messages ?? []), ...restored]);
+    setActiveSkillId(result.activeSkillId ?? "");
+  }, []);
+
   useEffect(() => {
     // 切换会话时回到干净状态：清空技能菜单、错误与滚动位置
     setSlashOpen(false);
@@ -385,26 +407,36 @@ export function AssistantPage() {
       return;
     }
     let mounted = true;
-    api
-      .harnessMessages(activeId)
-      .then((result) => {
-        if (!mounted) return;
-        const restored: Item[] = (result.pendingApprovals ?? []).map((approval) => ({
-          key: `ap-${approval.id}`,
-          kind: "approval",
-          approval,
-          status: "pending"
-        }));
-        setItems([...toItems(result.messages ?? []), ...restored]);
-        setActiveSkillId(result.activeSkillId ?? "");
-      })
-      .catch((err) => {
-        if (mounted) setError(err instanceof ApiError ? err.message : "读取会话失败");
-      });
+    loadMessages(activeId).catch((err) => {
+      if (mounted) setError(err instanceof ApiError ? err.message : "读取会话失败");
+    });
     return () => {
       mounted = false;
     };
-  }, [activeId]);
+  }, [activeId, loadMessages]);
+
+  // 审批 TTL 到点后在本地标记为过期，避免工具栏长期卡在「待确认」而无法继续提问
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setItems((prev) => {
+        let changed = false;
+        const next = prev.map((item) => {
+          if (
+            item.kind === "approval" &&
+            item.status === "pending" &&
+            Date.parse(item.approval.expiresAt) <= now
+          ) {
+            changed = true;
+            return { ...item, status: "expired" as const };
+          }
+          return item;
+        });
+        return changed ? next : prev;
+      });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -426,6 +458,17 @@ export function AssistantPage() {
     stickRef.current = true;
     setAtBottom(true);
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }
+
+  // refreshMessages 主动与后端对齐，用于处理过期审批或其它窗口已处理的情况
+  async function refreshMessages() {
+    if (!activeId || busy) return;
+    try {
+      await loadMessages(activeId);
+      setError("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "刷新会话失败");
+    }
   }
 
   const handleEvent = useCallback((event: HarnessEvent) => {
@@ -559,6 +602,8 @@ export function AssistantPage() {
   }
 
   async function decide(approval: HarnessApproval, decision: "approve" | "reject", key: string) {
+    if (decidingId) return;
+    setDecidingId(approval.id);
     setError("");
     try {
       await api.harnessDecision(approval.id, decision, passwords[approval.id] ?? "");
@@ -573,11 +618,26 @@ export function AssistantPage() {
       await resume();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "审批失败";
+      // 409 表示审批已被处理或过期：标记为过期并及时同步，避免一直卡在待确认
+      const expired =
+        err instanceof ApiError && (err.code === "approval_expired" || err.status === 409);
       setItems((prev) =>
         prev.map((item) =>
-          item.key === key && item.kind === "approval" ? { ...item, error: message } : item
+          item.key === key && item.kind === "approval"
+            ? { ...item, status: expired ? "expired" : item.status, error: message }
+            : item
         )
       );
+      if (expired && activeId) {
+        try {
+          await loadMessages(activeId);
+          setError("审批已失效或已在其他窗口处理，已同步最新会话状态");
+        } catch {
+          setError(message);
+        }
+      }
+    } finally {
+      setDecidingId("");
     }
   }
 
@@ -716,6 +776,16 @@ export function AssistantPage() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span className="pill hidden bg-signal-soft text-signal sm:inline-flex">{model || "模型"}</span>
+            <button
+              type="button"
+              onClick={() => void refreshMessages()}
+              disabled={!activeId || busy}
+              className="btn btn-secondary h-8 w-8 shrink-0 px-0"
+              aria-label="刷新会话"
+              title="刷新会话消息"
+            >
+              <RefreshCw size={13} />
+            </button>
             <button
               type="button"
               onClick={() => setMobileSessionsOpen(true)}
@@ -861,14 +931,20 @@ export function AssistantPage() {
                   type="button"
                   className="btn btn-primary h-8 px-3 text-[12px]"
                   onClick={() => void decide(pendingApproval.approval, "approve", pendingApproval.key)}
+                  disabled={Boolean(decidingId)}
                 >
-                  <Check size={13} />
+                  {decidingId === pendingApproval.approval.id ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <Check size={13} />
+                  )}
                   批准并执行
                 </button>
                 <button
                   type="button"
                   className="btn btn-secondary h-8 px-3 text-[12px]"
                   onClick={() => void decide(pendingApproval.approval, "reject", pendingApproval.key)}
+                  disabled={Boolean(decidingId)}
                 >
                   <X size={13} />
                   拒绝
@@ -883,6 +959,26 @@ export function AssistantPage() {
                   </span>
                 )}
               </div>
+            </div>
+          )}
+
+          {!pendingApproval && expiredApproval && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-[10px] border border-line bg-subtle/70 px-3 py-2 text-[11.5px] text-ink2">
+              <AlertCircle size={13} className="text-ink3" />
+              <span className="font-medium text-ink">审批已过期</span>
+              <span className="mono">{expiredApproval.approval.tool}</span>
+              <span className="min-w-0 flex-1 truncate text-ink3">
+                {expiredApproval.error || "超过有效期未确认，该操作已失效，可重新发起"}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary h-8 px-2.5 text-[12px]"
+                onClick={() => void refreshMessages()}
+                disabled={!activeId || busy}
+              >
+                <RefreshCw size={13} />
+                同步状态
+              </button>
             </div>
           )}
 

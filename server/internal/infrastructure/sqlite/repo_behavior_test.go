@@ -7,6 +7,7 @@ import (
 
 	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/domain/asset"
+	"vulnagent/server/internal/domain/harness"
 )
 
 func newTestDB(t *testing.T) *AssetRepo {
@@ -179,5 +180,45 @@ func TestIdentityRepoAndProductMap(t *testing.T) {
 	}
 	if err := intel.DeleteProductMapping(ctx, "deb", "node-lodash"); err == nil {
 		t.Fatal("重复删除应返回 ErrNotFound")
+	}
+}
+
+func TestHarnessRepoPendingApprovalSkipsExpired(t *testing.T) {
+	assets := newTestDB(t)
+	db := assets.db
+	repo := NewHarnessRepo(db)
+	ctx := context.Background()
+	base := harness.Approval{
+		SessionID: "s-1", Tool: "rescan_asset", ArgsHash: "hash-1", Args: "{}",
+		Risk: "medium", RequestedBy: "alice", Status: "pending",
+		RequestedAt: "2026-10-27T03:00:00+08:00",
+	}
+	expired := base
+	expired.ID = "ap-expired"
+	expired.ExpiresAt = "2026-10-27T02:59:00+08:00"
+	if err := repo.CreateApproval(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	now := "2026-10-27T03:00:00+08:00"
+	if ap, found, err := repo.PendingApproval(ctx, "s-1", "rescan_asset", "hash-1", now); err != nil || found {
+		t.Fatalf("过期审批不应被复用：found=%v ap=%+v err=%v", found, ap, err)
+	}
+	if pending, err := repo.HasPendingApproval(ctx, "s-1", now); err != nil || pending {
+		t.Fatalf("过期审批不应阻塞会话：pending=%v err=%v", pending, err)
+	}
+
+	valid := base
+	valid.ID = "ap-valid"
+	valid.ExpiresAt = "2026-10-27T03:10:00+08:00"
+	if err := repo.CreateApproval(ctx, valid); err != nil {
+		t.Fatal(err)
+	}
+	ap, found, err := repo.PendingApproval(ctx, "s-1", "rescan_asset", "hash-1", now)
+	if err != nil || !found || ap.ID != "ap-valid" {
+		t.Fatalf("应命中未过期审批：found=%v ap=%+v err=%v", found, ap, err)
+	}
+	list, err := repo.PendingApprovals(ctx, "s-1", now)
+	if err != nil || len(list) != 1 || list[0].ID != "ap-valid" {
+		t.Fatalf("待审批列表应只含未过期项：%+v err=%v", list, err)
 	}
 }

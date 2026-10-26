@@ -531,7 +531,7 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 
 	// 闸门 6/7：需要人工时创建审批，审批按参数指纹绑定
 	if tool.Spec.Risk.NeedsApproval() && !auto {
-		if ap, found, _ := s.Repo.PendingApproval(ctx, sess.ID, call.Name, hash); found {
+		if ap, found, _ := s.Repo.PendingApproval(ctx, sess.ID, call.Name, hash, now); found {
 			emit(Event{Type: "approval_required", Data: ap})
 			return "", true, nil
 		}
