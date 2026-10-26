@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertCircle, Loader2, LockKeyhole } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, networkMessage } from "../lib/api";
 
 const demoAccounts = [
   { username: "admin", password: "Admin@12345", role: "管理员" },
@@ -37,8 +37,7 @@ export function LoginPage() {
     try {
       await login(username.trim(), password);
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "无法连接控制面，请确认后端服务已启动（:8787）";
+      const message = err instanceof ApiError ? err.message : networkMessage(err);
       setError(message);
     } finally {
       setSubmitting(false);

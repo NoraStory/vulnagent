@@ -107,7 +107,10 @@ function query(params: Record<string, string | number | undefined>): string {
 export function networkMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   if (/failed to fetch|networkerror|load failed/i.test(raw)) {
-    return "无法连接控制面，请确认服务已启动（默认 :8787）后重试";
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    return origin
+      ? `无法连接控制面（当前页面 ${origin}），请确认服务已启动后重试`
+      : "无法连接控制面，请确认服务已启动后重试";
   }
   return raw || "网络请求失败";
 }
