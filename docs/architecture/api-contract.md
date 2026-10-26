@@ -708,7 +708,9 @@ vulnagent_selfcheck_failed 0
 
 ### GET /agent/sessions/{id}/messages
 
-返回 `{ "session": {…}, "messages": [ { "role": "user|assistant|tool", "content": "…", "toolCalls": "[]", "toolCallId": "" } ] }`。
+返回 `{ "session": {…}, "messages": [ { "role": "user|assistant|tool", "content": "…", "toolCalls": "[]", "toolCallId": "" } ], "pendingApprovals": [ …Approval ] }`。
+
+`pendingApprovals` 为该会话仍在有效期内（10 分钟）的待审批记录，用于刷新页面后恢复审批卡；已过期或已处理的记录不会返回。
 
 ### POST /agent/sessions/{id}/messages
 

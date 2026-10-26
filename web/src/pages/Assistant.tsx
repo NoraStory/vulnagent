@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { timeAgo } from "../lib/format";
+import { Markdown } from "../components/Markdown";
 import type {
   HarnessApproval,
   HarnessEvent,
@@ -144,7 +145,14 @@ export function AssistantPage() {
     api
       .harnessMessages(activeId)
       .then((result) => {
-        if (mounted) setItems(toItems(result.messages ?? []));
+        if (!mounted) return;
+        const restored: Item[] = (result.pendingApprovals ?? []).map((approval) => ({
+          key: `ap-${approval.id}`,
+          kind: "approval",
+          approval,
+          status: "pending"
+        }));
+        setItems([...toItems(result.messages ?? []), ...restored]);
       })
       .catch((err) => {
         if (mounted) setError(err instanceof ApiError ? err.message : "读取会话失败");
@@ -340,6 +348,27 @@ export function AssistantPage() {
             </button>
           ))}
         </div>
+        <div className="border-t border-line">
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 px-3.5 py-2.5 text-[11px] text-ink2">
+              可用工具 {tools.length}
+              <ChevronDown size={12} className="ml-auto text-ink3 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="max-h-64 overflow-y-auto px-2 pb-2">
+              {tools.map((tool) => (
+                <div key={tool.name} className="mb-1 rounded-[8px] border border-line/70 bg-subtle/60 px-2 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="mono truncate text-[11px] text-ink">{tool.name}</span>
+                    <span className={`pill ml-auto ${riskClass[tool.risk] ?? ""}`}>
+                      {riskLabel[tool.risk] ?? tool.risk}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-[15px] text-ink3">{tool.description}</p>
+                </div>
+              ))}
+            </div>
+          </details>
+        </div>
         <div className="border-t border-line px-3.5 py-2.5 text-[10.5px] text-ink3">
           模型 {model || "—"} · 工具 {tools.length} 个
         </div>
@@ -397,7 +426,9 @@ export function AssistantPage() {
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink text-white">
                     <Sparkles size={12} />
                   </span>
-                  <div className="bubble-assistant whitespace-pre-wrap">{item.content}</div>
+                  <div className="bubble-assistant">
+                    <Markdown content={item.content} />
+                  </div>
                 </div>
               );
             }

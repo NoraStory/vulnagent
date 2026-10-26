@@ -127,12 +127,18 @@ func TestWriteToolNeedsOneTimeApproval(t *testing.T) {
 	if executed.Load() != 0 {
 		t.Fatal("审批前不应执行工具")
 	}
+	if pending, err := svc.PendingApprovals(context.Background(), p, sess.ID); err != nil || len(pending) != 1 {
+		t.Fatalf("刷新后应能恢复 1 条待审批，实际 %d err=%v", len(pending), err)
+	}
 	if err := svc.Resume(context.Background(), p, sess.ID, func(Event) {}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("待审批时 Resume 应返回 ErrBusy，实际 %v", err)
 	}
 
 	if _, _, err := svc.Decide(context.Background(), p, approval.ID, "approve", ""); err != nil {
 		t.Fatalf("审批失败：%v", err)
+	}
+	if pending, _ := svc.PendingApprovals(context.Background(), p, sess.ID); len(pending) != 0 {
+		t.Fatalf("审批后不应再有待处理记录：%+v", pending)
 	}
 	if executed.Load() != 1 {
 		t.Fatalf("审批后应执行一次，实际 %d", executed.Load())

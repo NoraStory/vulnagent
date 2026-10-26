@@ -147,6 +147,14 @@ func (s *Service) Session(ctx context.Context, p Principal, sessionID string) (h
 	return s.session(ctx, p, sessionID)
 }
 
+// PendingApprovals 返回会话下仍在有效期内的待审批记录，供刷新页面后恢复审批卡
+func (s *Service) PendingApprovals(ctx context.Context, p Principal, sessionID string) ([]harness.Approval, error) {
+	if _, err := s.session(ctx, p, sessionID); err != nil {
+		return nil, err
+	}
+	return s.Repo.PendingApprovals(ctx, sessionID, clock.FormatNow())
+}
+
 // Messages 读取会话消息
 func (s *Service) Messages(ctx context.Context, p Principal, sessionID string) ([]harness.Message, error) {
 	if _, err := s.session(ctx, p, sessionID); err != nil {
@@ -223,7 +231,7 @@ func (s *Service) Decide(ctx context.Context, p Principal, approvalID, decision,
 		}
 		text := "用户拒绝了该操作：" + ap.Tool
 		s.appendMessage(ctx, ap.SessionID, "tool", text, nil, ap.CallID)
-		emitToolResult(s, ap.SessionID, p.Username, ap.Tool, "rejected", text, "", p.Username, now)
+		s.emitApprovalResult(ap, p.Username, "rejected", text, "", now)
 		return ap, marshalJSON(map[string]any{"status": "rejected"}), nil
 	}
 	if tool.Spec.Risk.NeedsReauth() && !s.reauthOK(p.Username, password) {
@@ -250,7 +258,7 @@ func (s *Service) Decide(ctx context.Context, p Principal, approvalID, decision,
 		text = Redact(jsonString(result))
 	}
 	s.appendMessage(ctx, ap.SessionID, "tool", text, nil, ap.CallID)
-	emitToolResult(s, ap.SessionID, p.Username, ap.Tool, status, text, errorString(runErr), p.Username, now)
+	s.emitApprovalResult(ap, p.Username, status, text, errorString(runErr), now)
 	slog.Info("Harness 审批执行", "tool", ap.Tool, "approval", ap.ID, "actor", p.Username, "status", status)
 	return ap, json.RawMessage(text), runErr
 }
@@ -482,15 +490,16 @@ func toLLMMessage(m harness.Message) ports.LLMMessage {
 	return out
 }
 
-func emitToolResult(s *Service, sessionID, actor, tool, status, result, errMsg, approver, at string) {
+// emitApprovalResult 记录审批执行结果，保留原参数与指纹便于回放
+func (s *Service) emitApprovalResult(ap harness.Approval, actor, status, result, errMsg, at string) {
 	id, err := s.Repo.RecordToolCall(context.Background(), harness.ToolCallRecord{
-		SessionID: sessionID, Tool: tool, Args: "", ArgsHash: "", Risk: "high", Status: status,
-		Actor: actor, Approver: approver, CreatedAt: at,
+		SessionID: ap.SessionID, Tool: ap.Tool, Args: ap.Args, ArgsHash: ap.ArgsHash,
+		Risk: ap.Risk, Status: status, Actor: actor, Approver: actor, CreatedAt: at,
 	})
 	if err != nil || id == 0 {
 		return
 	}
-	_ = s.Repo.FinishToolCall(context.Background(), id, status, result, errMsg, approver, at)
+	_ = s.Repo.FinishToolCall(context.Background(), id, status, result, errMsg, actor, at)
 }
 
 func approvalReason(tool harness.Tool) string {

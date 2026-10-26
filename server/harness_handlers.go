@@ -115,7 +115,13 @@ func (a *App) handleHarnessMessages(w http.ResponseWriter, r *http.Request) {
 		writeHarnessErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": sess, "messages": msgs})
+	approvals, err := a.harness.PendingApprovals(r.Context(), principalOf(u), id)
+	if err != nil {
+		approvals = nil
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session": sess, "messages": msgs, "pendingApprovals": approvals,
+	})
 }
 
 // handleHarnessChat 发送消息并流式返回事件

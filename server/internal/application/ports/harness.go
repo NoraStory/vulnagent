@@ -67,6 +67,8 @@ type HarnessRepository interface {
 	ConsumeApproval(ctx context.Context, id, at string) (bool, error)
 	// PendingApproval 查找同一会话下匹配工具与参数指纹的待审批记录
 	PendingApproval(ctx context.Context, sessionID, tool, argsHash string) (harness.Approval, bool, error)
+	// PendingApprovals 返回会话下全部未过期待审批记录
+	PendingApprovals(ctx context.Context, sessionID, at string) ([]harness.Approval, error)
 	// HasPendingApproval 会话是否存在未过期且未处理的审批
 	HasPendingApproval(ctx context.Context, sessionID, at string) (bool, error)
 }

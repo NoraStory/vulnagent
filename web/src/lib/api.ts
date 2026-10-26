@@ -6,7 +6,7 @@ import type {
   FindingDetail,
   HarnessApproval,
   HarnessEvent,
-  HarnessMessage,
+  HarnessMessagesResponse,
   HarnessSession,
   HarnessToolSpec,
   LoginResponse,
@@ -453,7 +453,7 @@ export const api = {
     return request("/agent/sessions", { method: "POST", body: JSON.stringify({ title }) });
   },
 
-  harnessMessages(id: string): Promise<{ session: HarnessSession; messages: HarnessMessage[] }> {
+  harnessMessages(id: string): Promise<HarnessMessagesResponse> {
     return request(`/agent/sessions/${encodeURIComponent(id)}/messages`);
   },
 

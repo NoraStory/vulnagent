@@ -315,6 +315,12 @@ export interface HarnessApproval {
   consumedAt: string;
 }
 
+export interface HarnessMessagesResponse {
+  session: HarnessSession;
+  messages: HarnessMessage[];
+  pendingApprovals: HarnessApproval[];
+}
+
 export interface HarnessEvent {
   type: "message" | "tool_call" | "tool_result" | "approval_required" | "done" | "error" | string;
   data?: any;

@@ -162,6 +162,27 @@ func (r *HarnessRepo) ConsumeApproval(ctx context.Context, id, at string) (bool,
 	return affected > 0, nil
 }
 
+// PendingApprovals 返回会话下全部未过期待审批记录
+func (r *HarnessRepo) PendingApprovals(ctx context.Context, sessionID, at string) ([]harness.Approval, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, session_id, tool, args_hash, args, call_id, risk, requested_by,
+		status, reason, requested_at, expires_at, decided_at, decided_by, consumed_at FROM agent_approvals
+		WHERE session_id = ? AND status = 'pending' AND expires_at > ? ORDER BY requested_at ASC`, sessionID, at)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]harness.Approval, 0, 2)
+	for rows.Next() {
+		var a harness.Approval
+		if err := rows.Scan(&a.ID, &a.SessionID, &a.Tool, &a.ArgsHash, &a.Args, &a.CallID, &a.Risk,
+			&a.RequestedBy, &a.Status, &a.Reason, &a.RequestedAt, &a.ExpiresAt, &a.DecidedAt, &a.DecidedBy, &a.ConsumedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // HasPendingApproval 会话是否存在未过期且未处理的审批
 func (r *HarnessRepo) HasPendingApproval(ctx context.Context, sessionID, at string) (bool, error) {
 	var count int
