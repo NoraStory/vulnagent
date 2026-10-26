@@ -130,6 +130,9 @@ func TestWriteToolNeedsOneTimeApproval(t *testing.T) {
 	if pending, err := svc.PendingApprovals(context.Background(), p, sess.ID); err != nil || len(pending) != 1 {
 		t.Fatalf("刷新后应能恢复 1 条待审批，实际 %d err=%v", len(pending), err)
 	}
+	if err := svc.Chat(context.Background(), p, sess.ID, "再问一句", func(Event) {}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("待审批期间不应允许继续对话，实际 %v", err)
+	}
 	if err := svc.Resume(context.Background(), p, sess.ID, func(Event) {}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("待审批时 Resume 应返回 ErrBusy，实际 %v", err)
 	}

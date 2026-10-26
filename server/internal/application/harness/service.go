@@ -176,6 +176,12 @@ func (s *Service) Chat(ctx context.Context, p Principal, sessionID, text string,
 	if err != nil {
 		return err
 	}
+	// 存在待审批时禁止继续发消息：否则历史里会留下没有工具结果的 tool_call
+	if pending, err := s.Repo.HasPendingApproval(ctx, sess.ID, clock.FormatNow()); err != nil {
+		return err
+	} else if pending {
+		return ErrBusy
+	}
 	now := clock.FormatNow()
 	if _, err := s.Repo.AppendMessage(ctx, harness.Message{
 		SessionID: sess.ID, Role: "user", Content: text, ToolCalls: "[]", CreatedAt: now,

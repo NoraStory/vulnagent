@@ -12,7 +12,7 @@ import {
   X
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
-import { timeAgo } from "../lib/format";
+import { formatTime, timeAgo } from "../lib/format";
 import { Markdown } from "../components/Markdown";
 import type {
   HarnessApproval,
@@ -102,6 +102,7 @@ export function AssistantPage() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const active = sessions.find((session) => session.id === activeId);
+  const hasPendingApproval = items.some((item) => item.kind === "approval" && item.status === "pending");
 
   useEffect(() => {
     let mounted = true;
@@ -236,7 +237,7 @@ export function AssistantPage() {
 
   async function send(text: string) {
     const content = text.trim();
-    if (!content || busy || !enabled) return;
+    if (!content || busy || !enabled || hasPendingApproval) return;
     setError("");
     setBusy(true);
     setInput("");
@@ -280,9 +281,8 @@ export function AssistantPage() {
             : item
         )
       );
-      if (decision === "approve") {
-        await resume();
-      }
+      // 无论批准还是拒绝，都让模型基于工具结果收尾
+      await resume();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "审批失败";
       setItems((prev) =>
@@ -470,6 +470,9 @@ export function AssistantPage() {
                     </span>
                   </div>
                   <p className="mt-1 text-[12px] text-ink2">{item.approval.reason}</p>
+                  <p className="mt-0.5 text-[10.5px] text-ink3">
+                    有效期至 {formatTime(item.approval.expiresAt)} · 一次性生效，参数变更即失效
+                  </p>
                   <pre className="mono mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface/80 p-2 text-[11px] text-ink2">
                     {item.approval.tool} {item.approval.args}
                   </pre>
@@ -538,7 +541,11 @@ export function AssistantPage() {
             <textarea
               className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"
               rows={2}
-              placeholder="描述你的问题，Enter 发送，Shift + Enter 换行"
+              placeholder={
+                hasPendingApproval
+                  ? "请先处理上方的待审批操作，再继续提问"
+                  : "描述你的问题，Enter 发送，Shift + Enter 换行"
+              }
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -547,13 +554,13 @@ export function AssistantPage() {
                   void send(input);
                 }
               }}
-              disabled={busy}
+              disabled={busy || hasPendingApproval}
             />
             <button
               type="button"
               className="btn btn-primary h-[42px] w-[42px] shrink-0 px-0"
               onClick={() => void send(input)}
-              disabled={busy || !input.trim()}
+              disabled={busy || hasPendingApproval || !input.trim()}
               aria-label="发送"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
