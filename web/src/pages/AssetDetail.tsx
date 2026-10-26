@@ -492,6 +492,35 @@ function PerformanceView({ data, series }: { data: HostTelemetry; series: Metric
         </div>
         <Sparkline series={series} />
       </div>
+      <div className="border-t border-line px-5 py-4">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[12.5px] font-medium text-ink">内存占用 Top 进程</span>
+          <span className="text-[11px] text-ink3">按工作集内存排序，最多 10 个</span>
+        </div>
+        {(data.processes ?? []).length === 0 ? (
+          <p className="text-[12px] text-ink3">本次快照未采集到进程明细，等待 Agent 下次上报。</p>
+        ) : (
+          <div className="space-y-1.5">
+            {(data.processes ?? []).map((proc) => {
+              const percent = metrics.memTotal ? Math.round((proc.memBytes / metrics.memTotal) * 1000) / 10 : 0;
+              const width = metrics.memTotal
+                ? Math.max(2, Math.min(100, (proc.memBytes / metrics.memTotal) * 100))
+                : 0;
+              return (
+                <div key={`${proc.pid}-${proc.name}`} className="flex items-center gap-3">
+                  <span className="mono w-14 shrink-0 text-right text-[10.5px] text-ink3">{proc.pid}</span>
+                  <span className="w-[160px] truncate text-[12px] text-ink">{proc.name}</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-subtle">
+                    <div className="h-full rounded-full bg-[#0E9F8A]" style={{ width: `${width}%` }} />
+                  </div>
+                  <span className="w-[90px] shrink-0 text-right text-[11.5px] text-ink2">{formatBytes(proc.memBytes)}</span>
+                  <span className="w-12 shrink-0 text-right text-[10.5px] text-ink3">{percent}%</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

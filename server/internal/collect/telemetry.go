@@ -69,6 +69,13 @@ type Port struct {
 	PID     int    `json:"pid"`
 }
 
+// Process 进程资源占用（按内存排序的 Top N）
+type Process struct {
+	Name     string `json:"name"`
+	PID      int    `json:"pid"`
+	MemBytes uint64 `json:"memBytes"`
+}
+
 // Telemetry 一次完整遥测
 type Telemetry struct {
 	CollectedAt string    `json:"collectedAt"`
@@ -76,6 +83,7 @@ type Telemetry struct {
 	Hardware    Hardware  `json:"hardware"`
 	Services    []Service `json:"services"`
 	Ports       []Port    `json:"ports"`
+	Processes   []Process `json:"processes"`
 }
 
 func collectTelemetry() (Telemetry, []string) {
@@ -83,6 +91,7 @@ func collectTelemetry() (Telemetry, []string) {
 		CollectedAt: time.Now().Format(time.RFC3339),
 		Services:    []Service{},
 		Ports:       []Port{},
+		Processes:   []Process{},
 		Hardware: Hardware{
 			Disks: []DiskInfo{},
 			NICs:  []NICInfo{},

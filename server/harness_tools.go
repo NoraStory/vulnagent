@@ -175,7 +175,7 @@ func (a *App) toolGetAsset() harness.Tool {
 
 func (a *App) toolHostMetrics() harness.Tool {
 	return harness.Tool{
-		Spec: toolSpec("host_metrics", "读取资产最近上报的主机性能指标：CPU 使用率、负载、内存/交换、磁盘与网络吞吐、运行时长、进程数，并返回最近若干采样点时序。数据来自 Agent 采集上报，sampledAt 过旧说明指标已过期。", harness.RiskLow, "viewer", `{
+		Spec: toolSpec("host_metrics", "读取资产最近上报的主机性能指标：CPU 使用率、负载、内存/交换、磁盘与网络吞吐、运行时长、进程数，以及按内存排序的 Top10 进程（topProcesses），并返回最近若干采样点时序。数据来自 Agent 采集上报，sampledAt 过旧说明指标已过期。", harness.RiskLow, "viewer", `{
 			"type":"object",
 			"properties":{
 				"assetId":{"type":"integer","description":"资产 ID"},
@@ -209,11 +209,12 @@ func (a *App) toolHostMetrics() harness.Tool {
 				return nil, err
 			}
 			return map[string]any{
-				"found":       true,
-				"sampledAt":   latest.CollectedAt,
-				"metrics":     latest.Metrics,
-				"series":      series,
-				"sampleCount": len(series),
+				"found":        true,
+				"sampledAt":    latest.CollectedAt,
+				"metrics":      latest.Metrics,
+				"topProcesses": latest.Processes,
+				"series":       series,
+				"sampleCount":  len(series),
 			}, nil
 		},
 	}
@@ -695,7 +696,7 @@ func (a *App) toolReadHostFile() harness.Tool {
 
 func (a *App) toolRunHostCommand() harness.Tool {
 	return harness.Tool{
-		Spec: toolSpec("run_host_command", "在目标主机执行白名单只读命令（高风险，需审批 + 口令再认证）。命令与终端由你按目标系统自行选择，不要询问用户；白名单之外会被拒绝。禁止 shell 拼接。", harness.RiskHigh, "operator", `{
+		Spec: toolSpec("run_host_command", "在目标主机执行白名单只读命令（高风险，需审批 + 口令再认证）。命令与终端由你按目标系统自行选择，不要询问用户；Windows 可用 tasklist、wmic <别名> get/list、systeminfo、ipconfig、netstat 等，不允许 powershell 任意命令。白名单之外会被拒绝，禁止 shell 拼接。", harness.RiskHigh, "operator", `{
 			"type":"object","properties":{
 				"assetId":{"type":"integer"},
 				"argv":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":20},

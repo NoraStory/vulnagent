@@ -402,7 +402,11 @@ Webhook 请求体：
       "nics": [{ "name": "Ethernet0", "mac": "00:50:56:AA:BB:CC", "speedMbps": 1000 }]
     },
     "services": [{ "name": "W3SVC", "state": "running", "enabled": true, "detail": "Automatic" }],
-    "ports": [{ "proto": "tcp", "addr": "::", "port": 8787, "process": "vulnagent", "pid": 44808 }]
+    "ports": [{ "proto": "tcp", "addr": "::", "port": 8787, "process": "vulnagent", "pid": 44808 }],
+    "processes": [
+      { "name": "chrome", "pid": 4321, "memBytes": 2147483648 },
+      { "name": "svchost", "pid": 4, "memBytes": 104857600 }
+    ]
   },
   "series": [
     { "ts": "2026-10-26T20:02:39+08:00", "cpuPercent": 20, "load1": 0.42,
@@ -413,7 +417,8 @@ Webhook 请求体：
 ```
 
 - `telemetry` 为 `null` 表示该资产尚未上报遥测。
-- 性能采样写入 `host_metrics`，硬件/服务/端口以最新快照整体替换（`asset_telemetry`）。
+- 性能采样写入 `host_metrics`，硬件/服务/端口/进程以最新快照整体替换（`asset_telemetry`）。
+- `processes` 为按工作集内存（Windows WorkingSet64 / Linux VmRSS）排序的 Top10，用于定位内存占用最高的进程。
 - Windows 的 `load1/5/15` 无对应语义，统一返回 0；网卡 `speedMbps` 已从 bit/s 换算并对异常值归零。
 
 ### POST /assets/ssh-scan（operator+）

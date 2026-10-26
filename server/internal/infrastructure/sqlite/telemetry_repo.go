@@ -49,6 +49,14 @@ func (r *TelemetryRepo) Save(ctx context.Context, assetID int64, t ports.HostTel
 	if err != nil {
 		return err
 	}
+	processes := t.Processes
+	if processes == nil {
+		processes = []ports.HostProcess{}
+	}
+	processesJSON, err := json.Marshal(processes)
+	if err != nil {
+		return err
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -67,12 +75,13 @@ func (r *TelemetryRepo) Save(ctx context.Context, assetID int64, t ports.HostTel
 	}
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_telemetry(asset_id, collected_at, metrics_json,
-		hardware_json, services_json, ports_json) VALUES(?,?,?,?,?,?)
+		hardware_json, services_json, ports_json, processes_json) VALUES(?,?,?,?,?,?,?)
 		ON CONFLICT(asset_id) DO UPDATE SET collected_at = excluded.collected_at,
 			metrics_json = excluded.metrics_json, hardware_json = excluded.hardware_json,
-			services_json = excluded.services_json, ports_json = excluded.ports_json`,
+			services_json = excluded.services_json, ports_json = excluded.ports_json,
+			processes_json = excluded.processes_json`,
 		assetID, t.CollectedAt, string(metricsJSON), string(hardwareJSON),
-		string(servicesJSON), string(portsJSON)); err != nil {
+		string(servicesJSON), string(portsJSON), string(processesJSON)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -81,10 +90,10 @@ func (r *TelemetryRepo) Save(ctx context.Context, assetID int64, t ports.HostTel
 // Latest 读取最新遥测快照
 func (r *TelemetryRepo) Latest(ctx context.Context, assetID int64) (ports.HostTelemetry, bool, error) {
 	var t ports.HostTelemetry
-	var metricsJSON, hardwareJSON, servicesJSON, portsJSON string
+	var metricsJSON, hardwareJSON, servicesJSON, portsJSON, processesJSON string
 	err := r.db.QueryRowContext(ctx, `SELECT collected_at, metrics_json, hardware_json, services_json,
-		ports_json FROM asset_telemetry WHERE asset_id = ?`, assetID).
-		Scan(&t.CollectedAt, &metricsJSON, &hardwareJSON, &servicesJSON, &portsJSON)
+		ports_json, processes_json FROM asset_telemetry WHERE asset_id = ?`, assetID).
+		Scan(&t.CollectedAt, &metricsJSON, &hardwareJSON, &servicesJSON, &portsJSON, &processesJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ports.HostTelemetry{}, false, nil
 	}
@@ -103,6 +112,9 @@ func (r *TelemetryRepo) Latest(ctx context.Context, assetID int64) (ports.HostTe
 	if err := json.Unmarshal([]byte(portsJSON), &t.Ports); err != nil {
 		return ports.HostTelemetry{}, false, err
 	}
+	if err := json.Unmarshal([]byte(processesJSON), &t.Processes); err != nil {
+		return ports.HostTelemetry{}, false, err
+	}
 	if t.Hardware.Disks == nil {
 		t.Hardware.Disks = []ports.DiskInfo{}
 	}
@@ -114,6 +126,9 @@ func (r *TelemetryRepo) Latest(ctx context.Context, assetID int64) (ports.HostTe
 	}
 	if t.Ports == nil {
 		t.Ports = []ports.HostPort{}
+	}
+	if t.Processes == nil {
+		t.Processes = []ports.HostProcess{}
 	}
 	return t, true, nil
 }

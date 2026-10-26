@@ -17,10 +17,13 @@ import (
 	"vulnagent/server/internal/collect"
 )
 
-// runAgentWatch 常驻运行：上报一次清单后循环拉取并执行主机作业。
-func runAgentWatch(server, token string, interval, timeout time.Duration) error {
+// runAgentWatch 常驻运行：上报清单与遥测，循环拉取并执行主机作业。
+func runAgentWatch(server, token string, interval, reportInterval, timeout time.Duration) error {
 	if interval < 2*time.Second {
 		interval = 2 * time.Second
+	}
+	if reportInterval > 0 && reportInterval < time.Minute {
+		reportInterval = time.Minute
 	}
 	report, err := collect.Collect(collect.Options{IncludeSelf: true})
 	if err != nil {
@@ -31,20 +34,40 @@ func runAgentWatch(server, token string, interval, timeout time.Duration) error 
 	} else {
 		fmt.Fprintf(os.Stderr, "已上报 %s：%d 个组件\n", report.Hostname, len(report.Components))
 	}
+	hostname := report.Hostname
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	exe, _ := os.Executable()
-	fmt.Fprintf(os.Stderr, "Agent 常驻模式已启动：hostname=%s interval=%s\n", report.Hostname, interval)
+	fmt.Fprintf(os.Stderr, "Agent 常驻模式已启动：hostname=%s interval=%s reportInterval=%s\n",
+		hostname, interval, reportInterval)
+
+	var reportCh <-chan time.Time
+	if reportInterval > 0 {
+		reportTicker := time.NewTicker(reportInterval)
+		defer reportTicker.Stop()
+		reportCh = reportTicker.C
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		pollHostJobs(ctx, server, token, report.Hostname, exe)
+		pollHostJobs(ctx, server, token, hostname, exe)
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "Agent 常驻模式已停止")
 			return nil
+		case <-reportCh:
+			fresh, err := collect.Collect(collect.Options{IncludeSelf: true})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "定时采集失败：%v\n", err)
+				continue
+			}
+			if err := postAgentReport(server, token, fresh, timeout); err != nil {
+				fmt.Fprintf(os.Stderr, "定时上报失败：%v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "已重新上报 %s：%d 个组件\n", fresh.Hostname, len(fresh.Components))
+			}
 		case <-ticker.C:
 		}
 	}

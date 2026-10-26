@@ -16,7 +16,8 @@ func TestParseWindowsTelemetry(t *testing.T) {
 		"disks":[{"device":"\\\\.\\PHYSICALDRIVE0","model":"Virtual Disk","serial":"D-001","size":107374182400}],
 		"nics":[{"name":"Ethernet0","mac":"00:50:56:AA:BB:CC","speed":10000000000},{"name":"Ethernet1","mac":"00:50:56:AA:BB:DD","speed":9223372036854775807}],
 		"services":[{"name":"W3SVC","state":"Running","startType":"Automatic"}],
-		"ports":[{"proto":"tcp","addr":"0.0.0.0","port":443,"pid":4,"process":"svchost"}]
+		"ports":[{"proto":"tcp","addr":"0.0.0.0","port":443,"pid":4,"process":"svchost"}],
+		"processes":[{"name":"chrome","pid":4321,"memBytes":2147483648},{"name":"svchost","pid":4,"memBytes":104857600}]
 	}`)
 
 	got, err := parseWindowsTelemetry(fixture, Telemetry{})
@@ -53,6 +54,10 @@ func TestParseWindowsTelemetry(t *testing.T) {
 	}
 	if len(got.Ports) != 1 || got.Ports[0].Port != 443 || got.Ports[0].PID != 4 || got.Ports[0].Process != "svchost" {
 		t.Fatalf("端口解析异常：%+v", got.Ports)
+	}
+	if len(got.Processes) != 2 || got.Processes[0].Name != "chrome" ||
+		got.Processes[0].PID != 4321 || got.Processes[0].MemBytes != 2147483648 {
+		t.Fatalf("进程内存解析异常：%+v", got.Processes)
 	}
 }
 

@@ -104,6 +104,42 @@ func TestCommandAllowlistAndSubcommands(t *testing.T) {
 	if err := validateSubcommand("systemctl", []string{"systemctl", "status", "nginx"}); err != nil {
 		t.Fatalf("systemctl status 应允许：%v", err)
 	}
+
+	// Windows 只读命令：tasklist 允许本地查询，拒绝远程/凭据参数
+	if err := validateSubcommand("tasklist", []string{"tasklist"}); err != nil {
+		t.Fatalf("tasklist 应允许：%v", err)
+	}
+	if err := validateSubcommand("tasklist", []string{"tasklist", "/FO", "TABLE"}); err != nil {
+		t.Fatalf("tasklist 本地格式参数应允许：%v", err)
+	}
+	if err := validateSubcommand("tasklist", []string{"tasklist", "/S", "10.0.0.9"}); err == nil {
+		t.Fatal("tasklist 不应允许远程主机参数")
+	}
+	if err := validateSubcommand("tasklist", []string{"tasklist", "/U", "admin"}); err == nil {
+		t.Fatal("tasklist 不应允许凭据参数")
+	}
+
+	// wmic 仅允许只读查询
+	if err := validateSubcommand("wmic", []string{"wmic", "OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/value"}); err != nil {
+		t.Fatalf("wmic OS get 应允许：%v", err)
+	}
+	if err := validateSubcommand("wmic", []string{"wmic", "process", "get", "Name,WorkingSetSize"}); err != nil {
+		t.Fatalf("wmic process get 应允许：%v", err)
+	}
+	if err := validateSubcommand("wmic", []string{"wmic", "path", "Win32_OperatingSystem", "get", "FreePhysicalMemory"}); err != nil {
+		t.Fatalf("wmic path ... get 应允许：%v", err)
+	}
+	for _, argv := range [][]string{
+		{"wmic", "process", "call", "create", "notepad.exe"},
+		{"wmic", "process", "delete"},
+		{"wmic", "os", "set", "foo=bar"},
+		{"wmic", "service", "get", "Name"},
+		{"wmic", "os", "get", "Name", "/node:10.0.0.9"},
+	} {
+		if err := validateSubcommand("wmic", argv); err == nil {
+			t.Fatalf("wmic 危险参数不应放行：%v", argv)
+		}
+	}
 }
 
 func TestSnapshotAndRestore(t *testing.T) {

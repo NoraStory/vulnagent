@@ -53,9 +53,14 @@ type winPayload struct {
 		PID     int    `json:"pid"`
 		Process string `json:"process"`
 	} `json:"ports"`
+	Processes []struct {
+		Name     string `json:"name"`
+		PID      int    `json:"pid"`
+		MemBytes int64  `json:"memBytes"`
+	} `json:"processes"`
 }
 
-// winTelemetryScript 只读采集脚本：性能计数器、硬件、服务与监听端口。
+// winTelemetryScript 只读采集脚本：性能计数器、硬件、服务、监听端口与内存占用 Top10 进程。
 const winTelemetryScript = `$ErrorActionPreference='SilentlyContinue';
 $cpu=Get-CimInstance Win32_Processor | Select-Object -First 1;
 $os=Get-CimInstance Win32_OperatingSystem;
@@ -67,6 +72,7 @@ $services=@(Get-Service | Select-Object -First 200 | ForEach-Object { [pscustomo
 $procs=@(Get-Process);
 $procMap=@{};
 foreach($p in $procs){$procMap[[int]$p.Id]=[string]$p.ProcessName};
+$topProcs=@($procs | Sort-Object -Property WorkingSet64 -Descending | Select-Object -First 10 | ForEach-Object { [pscustomobject]@{name=[string]$_.ProcessName;pid=[int]$_.Id;memBytes=[int64]$_.WorkingSet64} });
 $ports=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -First 300 | ForEach-Object { [pscustomobject]@{proto='tcp';addr=[string]$_.LocalAddress;port=[int]$_.LocalPort;pid=[int]$_.OwningProcess;process=[string]$procMap[[int]$_.OwningProcess]} });
 $diskPerf=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction SilentlyContinue;
 $netPerf=@(Get-CimInstance Win32_PerfFormattedData_Tcpip_NetworkInterface -ErrorAction SilentlyContinue);
@@ -79,7 +85,7 @@ manufacturer=[string]$cs.Manufacturer;model=[string]$cs.Model;procCount=[int]$pr
 diskReadBps=[double]$diskPerf.DiskReadBytesPerSec;diskWriteBps=[double]$diskPerf.DiskWriteBytesPerSec;
 netRxBps=[double]($netPerf | Measure-Object -Property BytesReceivedPerSec -Sum).Sum;
 netTxBps=[double]($netPerf | Measure-Object -Property BytesSentPerSec -Sum).Sum;
-disks=$disks;nics=$nics;services=$services;ports=$ports};
+disks=$disks;nics=$nics;services=$services;ports=$ports;processes=$topProcs};
 $out | ConvertTo-Json -Depth 6 -Compress`
 
 // collectWindowsTelemetry 通过 PowerShell/CIM 采集 Windows 主机遥测。
@@ -189,6 +195,19 @@ func parseWindowsTelemetry(data []byte, t Telemetry) (Telemetry, error) {
 			Process: strings.TrimSpace(port.Process),
 			PID:     port.PID,
 		})
+	}
+	for _, proc := range raw.Processes {
+		if proc.PID <= 0 || proc.MemBytes <= 0 {
+			continue
+		}
+		t.Processes = append(t.Processes, Process{
+			Name:     strings.TrimSpace(proc.Name),
+			PID:      proc.PID,
+			MemBytes: uint64(proc.MemBytes),
+		})
+		if len(t.Processes) >= 10 {
+			break
+		}
 	}
 	return t, nil
 }

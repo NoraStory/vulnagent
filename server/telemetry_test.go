@@ -29,6 +29,10 @@ func TestToPortsTelemetry(t *testing.T) {
 		},
 		Services: []collect.Service{{Name: "nginx", State: "active", Enabled: true, Detail: "web"}},
 		Ports:    []collect.Port{{Proto: "tcp", Addr: "0.0.0.0", Port: 80, Process: "nginx", PID: 10}},
+		Processes: []collect.Process{
+			{Name: "nginx", PID: 10, MemBytes: 256 << 20},
+			{Name: "postgres", PID: 20, MemBytes: 1 << 30},
+		},
 	}
 
 	out := toPortsTelemetry(in)
@@ -44,6 +48,9 @@ func TestToPortsTelemetry(t *testing.T) {
 	if len(out.Ports) != 1 || out.Ports[0].Port != 80 || out.Ports[0].PID != 10 {
 		t.Fatalf("端口映射异常：%+v", out.Ports)
 	}
+	if len(out.Processes) != 2 || out.Processes[1].Name != "postgres" || out.Processes[1].MemBytes != 1<<30 {
+		t.Fatalf("进程映射异常：%+v", out.Processes)
+	}
 }
 
 func TestHarnessHostTelemetryTools(t *testing.T) {
@@ -56,8 +63,9 @@ func TestHarnessHostTelemetryTools(t *testing.T) {
 			Disks: []collect.DiskInfo{{Device: "vda", SizeBytes: 100 << 30}},
 			NICs:  []collect.NICInfo{{Name: "eth0", SpeedMbps: 1000}},
 		},
-		Services: []collect.Service{{Name: "sshd", State: "active", Enabled: true}},
-		Ports:    []collect.Port{{Proto: "tcp", Addr: "0.0.0.0", Port: 22, PID: 1}},
+		Services:  []collect.Service{{Name: "sshd", State: "active", Enabled: true}},
+		Ports:     []collect.Port{{Proto: "tcp", Addr: "0.0.0.0", Port: 22, PID: 1}},
+		Processes: []collect.Process{{Name: "chrome", PID: 4321, MemBytes: 2 << 30}, {Name: "sshd", PID: 1, MemBytes: 32 << 20}},
 	})
 	if err := app.telemetryRepo().Save(context.Background(), assetID, snapshot); err != nil {
 		t.Fatalf("写入遥测失败：%v", err)
@@ -94,6 +102,10 @@ func TestHarnessHostTelemetryTools(t *testing.T) {
 	}
 	if payload["sampledAt"] != snapshot.CollectedAt {
 		t.Fatalf("采样时间异常：%v", payload["sampledAt"])
+	}
+	top, ok := payload["topProcesses"].([]ports.HostProcess)
+	if !ok || len(top) != 2 || top[0].Name != "chrome" || top[0].MemBytes != 2<<30 {
+		t.Fatalf("topProcesses 应返回进程内存明细：%+v", payload["topProcesses"])
 	}
 
 	out, err = hardwareTool.Run(json.RawMessage(`{"assetId":` + strconv.FormatInt(assetID, 10) + `}`))

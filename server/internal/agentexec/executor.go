@@ -61,7 +61,7 @@ func DefaultOptions() Options {
 		return Options{
 			ReadRoots:     []string{`C:\ProgramData`, `C:\Windows\Logs`, `C:\Temp\vulnagent`},
 			WriteRoots:    []string{`C:\ProgramData\VulnAgent`, `C:\Temp\vulnagent`},
-			AllowCommands: []string{"sc", "wevtutil", "netstat", "ipconfig", "systeminfo", "whoami", "hostname", "type", "dir"},
+			AllowCommands: []string{"sc", "wevtutil", "netstat", "ipconfig", "systeminfo", "whoami", "hostname", "type", "dir", "tasklist", "wmic"},
 			SnapshotRoot:  `C:\ProgramData\VulnAgent\snapshots`,
 		}
 	}
@@ -338,6 +338,57 @@ func validateSubcommand(base string, argv []string) error {
 			return nil
 		}
 		return fmt.Errorf("wevtutil 子命令不允许：%s", sub)
+	case "tasklist", "tasklist.exe":
+		return validateTasklist(argv)
+	case "wmic", "wmic.exe":
+		return validateWMIC(argv)
+	}
+	return nil
+}
+
+// validateTasklist 仅允许本地只读查询，禁止远程主机与凭据参数。
+func validateTasklist(argv []string) error {
+	for _, raw := range argv[1:] {
+		arg := strings.ToLower(strings.TrimSpace(raw))
+		if strings.HasPrefix(arg, "/s") || strings.HasPrefix(arg, "/u") || strings.HasPrefix(arg, "/p") {
+			return fmt.Errorf("tasklist 不允许远程或凭据参数：%s", raw)
+		}
+	}
+	return nil
+}
+
+// validateWMIC 仅允许 wmic <别名> ... get/list 查询，禁止 call/create/delete/set 等写操作。
+func validateWMIC(argv []string) error {
+	if len(argv) < 3 {
+		return errors.New("wmic 需要别名与 get/list 查询")
+	}
+	alias := strings.ToLower(strings.TrimSpace(argv[1]))
+	switch alias {
+	case "process", "os", "cpu", "logicaldisk", "diskdrive", "computersystem", "bios", "nic", "netstat", "path":
+	default:
+		return fmt.Errorf("wmic 别名不允许：%s", alias)
+	}
+	readVerb := false
+	for _, raw := range argv[1:] {
+		arg := strings.ToLower(strings.TrimSpace(raw))
+		if arg == "" {
+			continue
+		}
+		if strings.HasPrefix(arg, "/") {
+			if arg == "/value" || arg == "/format:list" {
+				continue
+			}
+			return fmt.Errorf("wmic 开关不允许：%s", raw)
+		}
+		switch arg {
+		case "get", "list":
+			readVerb = true
+		case "call", "create", "delete", "set", "terminate", "reset", "format", "assoc":
+			return fmt.Errorf("wmic 仅允许只读查询，禁止：%s", raw)
+		}
+	}
+	if !readVerb {
+		return errors.New("wmic 仅允许 get/list 查询")
 	}
 	return nil
 }

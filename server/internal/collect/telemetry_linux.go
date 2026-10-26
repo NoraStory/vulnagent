@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,7 +63,54 @@ func collectLinuxTelemetry(t Telemetry) (Telemetry, []string) {
 		warnings = append(warnings, warn)
 	}
 	t.Ports = ports
+	t.Processes = readTopProcesses(10)
 	return t, warnings
+}
+
+// readTopProcesses 从 /proc/<pid>/status 读取 VmRSS，返回内存占用最高的进程。
+func readTopProcesses(limit int) []Process {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return []Process{}
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	out := make([]Process, 0, limit*2)
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || !entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "status"))
+		if err != nil {
+			continue
+		}
+		var name string
+		var rss uint64
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "Name:") {
+				name = strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
+				continue
+			}
+			if strings.HasPrefix(line, "VmRSS:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					kb, _ := strconv.ParseUint(fields[1], 10, 64)
+					rss = kb * 1024
+				}
+			}
+		}
+		if rss == 0 {
+			continue
+		}
+		out = append(out, Process{Name: name, PID: pid, MemBytes: rss})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].MemBytes > out[j].MemBytes })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func readCPUTimes() (total, idle uint64) {

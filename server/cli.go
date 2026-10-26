@@ -121,6 +121,7 @@ func runAgentCommand(args []string) {
 	timeout := fs.Duration("timeout", 60*time.Second, "上报超时时间")
 	watch := fs.Bool("watch", false, "常驻运行并拉取主机作业")
 	interval := fs.Duration("interval", 15*time.Second, "作业轮询间隔（--watch 模式）")
+	reportInterval := fs.Duration("report-interval", 5*time.Minute, "遥测/清单重新上报间隔（--watch 模式，0 关闭）")
 	_ = fs.Parse(args)
 
 	if *watch && !*onlyPrint {
@@ -129,7 +130,7 @@ func runAgentCommand(args []string) {
 			fmt.Fprintf(os.Stderr, "读取 Agent 令牌失败：%v\n", err)
 			os.Exit(1)
 		}
-		if err := runAgentWatch(*server, accessToken, *interval, *timeout); err != nil {
+		if err := runAgentWatch(*server, accessToken, *interval, *reportInterval, *timeout); err != nil {
 			fmt.Fprintf(os.Stderr, "Agent 常驻运行失败：%v\n", err)
 			os.Exit(1)
 		}

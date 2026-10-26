@@ -250,12 +250,19 @@ export interface HostPort {
   pid: number;
 }
 
+export interface HostProcess {
+  name: string;
+  pid: number;
+  memBytes: number;
+}
+
 export interface HostTelemetry {
   collectedAt: string;
   metrics: HostMetrics;
   hardware: HostHardware;
   services: HostService[];
   ports: HostPort[];
+  processes: HostProcess[];
 }
 
 export interface MetricPoint {

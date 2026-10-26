@@ -65,6 +65,13 @@ type HostPort struct {
 	PID     int    `json:"pid"`
 }
 
+// HostProcess 进程内存占用（按内存排序的 Top N）
+type HostProcess struct {
+	Name     string `json:"name"`
+	PID      int    `json:"pid"`
+	MemBytes uint64 `json:"memBytes"`
+}
+
 // HostTelemetry 一次完整遥测快照
 type HostTelemetry struct {
 	CollectedAt string        `json:"collectedAt"`
@@ -72,6 +79,7 @@ type HostTelemetry struct {
 	Hardware    HostHardware  `json:"hardware"`
 	Services    []HostService `json:"services"`
 	Ports       []HostPort    `json:"ports"`
+	Processes   []HostProcess `json:"processes"`
 }
 
 // MetricPoint 性能时序点

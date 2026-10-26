@@ -39,8 +39,9 @@ func toPortsTelemetry(in collect.Telemetry) ports.HostTelemetry {
 			Disks:          make([]ports.DiskInfo, 0, len(in.Hardware.Disks)),
 			NICs:           make([]ports.NICInfo, 0, len(in.Hardware.NICs)),
 		},
-		Services: make([]ports.HostService, 0, len(in.Services)),
-		Ports:    make([]ports.HostPort, 0, len(in.Ports)),
+		Services:  make([]ports.HostService, 0, len(in.Services)),
+		Ports:     make([]ports.HostPort, 0, len(in.Ports)),
+		Processes: make([]ports.HostProcess, 0, len(in.Processes)),
 	}
 	for _, disk := range in.Hardware.Disks {
 		out.Hardware.Disks = append(out.Hardware.Disks, ports.DiskInfo{
@@ -60,6 +61,11 @@ func toPortsTelemetry(in collect.Telemetry) ports.HostTelemetry {
 	for _, port := range in.Ports {
 		out.Ports = append(out.Ports, ports.HostPort{
 			Proto: port.Proto, Addr: port.Addr, Port: port.Port, Process: port.Process, PID: port.PID,
+		})
+	}
+	for _, proc := range in.Processes {
+		out.Processes = append(out.Processes, ports.HostProcess{
+			Name: proc.Name, PID: proc.PID, MemBytes: proc.MemBytes,
 		})
 	}
 	return out

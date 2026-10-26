@@ -34,6 +34,10 @@ func sampleTelemetry(at string, cpu float64) ports.HostTelemetry {
 		},
 		Services: []ports.HostService{{Name: "nginx", State: "active", Enabled: true, Detail: "web server"}},
 		Ports:    []ports.HostPort{{Proto: "tcp", Addr: "0.0.0.0", Port: 22, Process: "sshd", PID: 872}},
+		Processes: []ports.HostProcess{
+			{Name: "nginx", PID: 1200, MemBytes: 512 << 20},
+			{Name: "postgres", PID: 1500, MemBytes: 2 << 30},
+		},
 	}
 }
 
@@ -65,11 +69,15 @@ func TestTelemetryRepoSaveAndLatest(t *testing.T) {
 	if len(got.Ports) != 1 || got.Ports[0].Port != 22 || got.Ports[0].PID != 872 {
 		t.Fatalf("端口清单不一致：%+v", got.Ports)
 	}
+	if len(got.Processes) != 2 || got.Processes[1].Name != "postgres" || got.Processes[1].MemBytes != 2<<30 {
+		t.Fatalf("进程内存清单不一致：%+v", got.Processes)
+	}
 
 	// 第二次写入应整体替换快照，而不是叠加
 	want2 := sampleTelemetry("2026-01-01T11:00:00+08:00", 30)
 	want2.Services = []ports.HostService{{Name: "sshd", State: "active", Enabled: true}}
 	want2.Ports = []ports.HostPort{}
+	want2.Processes = []ports.HostProcess{}
 	if err := repo.Save(ctx, 7, want2); err != nil {
 		t.Fatalf("二次写入失败：%v", err)
 	}
@@ -79,6 +87,9 @@ func TestTelemetryRepoSaveAndLatest(t *testing.T) {
 	}
 	if len(got.Ports) != 0 {
 		t.Fatalf("端口应被清空：%+v", got.Ports)
+	}
+	if len(got.Processes) != 0 {
+		t.Fatalf("进程清单应被清空：%+v", got.Processes)
 	}
 }
 

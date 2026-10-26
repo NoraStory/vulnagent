@@ -680,7 +680,7 @@ CREATE TABLE tickets (
 CREATE INDEX idx_tickets_finding ON tickets(finding_id);
 CREATE INDEX idx_tickets_status ON tickets(status, updated_at DESC);
 
--- 主机遥测：性能时序 + 最新硬件/服务/端口快照
+-- 主机遥测：性能时序 + 最新硬件/服务/端口/进程快照
 CREATE TABLE host_metrics (
   id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL, ts TEXT NOT NULL,
   cpu_percent REAL NOT NULL DEFAULT 0, load1 REAL NOT NULL DEFAULT 0,
@@ -696,7 +696,8 @@ CREATE INDEX idx_host_metrics_asset_ts ON host_metrics(asset_id, ts DESC);
 CREATE TABLE asset_telemetry (
   asset_id INTEGER PRIMARY KEY, collected_at TEXT NOT NULL,
   metrics_json TEXT NOT NULL DEFAULT '{}', hardware_json TEXT NOT NULL DEFAULT '{}',
-  services_json TEXT NOT NULL DEFAULT '[]', ports_json TEXT NOT NULL DEFAULT '[]'
+  services_json TEXT NOT NULL DEFAULT '[]', ports_json TEXT NOT NULL DEFAULT '[]',
+  processes_json TEXT NOT NULL DEFAULT '[]'
 );
 
 -- 主机作业：下行执行、重试与结果
@@ -1100,6 +1101,7 @@ go build -o bin/vulnagent.exe .
 
 # 采集并上报（令牌自动读取 ..\data\agent.token）
 .\bin\vulnagent.exe agent --server http://127.0.0.1:8787
+# 常驻 + 每 5 分钟刷新遥测：--watch --interval 5s --report-interval 5m（0 关闭定时上报）
 # 其他主机：复制 data\agent.token 后 --token-file <path>，或设置 VA_AGENT_TOKEN
 
 # 前端开发模式（热更新，/api 代理到 8787）
@@ -1152,7 +1154,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 产品映射 | `(eco, name) → 产品名` 映射，内置常见别名，控制台可增删改，保存后自动重匹配全部资产 |
 | 复扫闭环 | 重新匹配后自动收敛：升级至修复版本 / 不再命中 → verified，组件移除 → closed，并写入事件与审计 |
 | 本地工单 | 控制面自建工单（`VA-YYYY-NNNN`），一个漏洞至多一张、建单幂等；状态与责任人随漏洞处置同步，提供 `GET /api/v1/tickets` 列表与 `ticket.created` webhook |
-| 主机遥测 | Agent 上报 CPU/内存/磁盘/网络/负载/进程性能时序与硬件、服务、监听端口；Linux 走 `/proc`、`/sys`、systemd/ss，Windows 走 PowerShell/CIM；资产详情支持趋势图与设备详情 |
+| 主机遥测 | Agent 上报 CPU/内存/磁盘/网络/负载/进程性能时序与硬件、服务、监听端口、内存 Top10 进程；Linux 走 `/proc`、`/sys`、systemd/ss，Windows 走 PowerShell/CIM；资产详情支持趋势图、设备详情与进程内存排行 |
 | 主机作业通道 | Agent pull 拉取作业，领取时原子抢占；服务端指数退避 + 抖动安排重试；作业幂等键 10 分钟内去重；执行结果写 `host_jobs` 与 `host_job_attempts`；作业带 HMAC 签名，同资产运行中不派发新作业 |
 | 受控主机执行 | `run_host_command`（argv 白名单）、`read_host_file`、`write_host_file`（白名单目录 + 原子写 + 自动备份）、`service_action`；全部走审批，高风险需口令再认证 |
 | 提权 helper | `vulnagent helper` 仅接受白名单动作；Linux 通过 `sudo -n` 调用，Windows 需 Agent 以管理员/SYSTEM 运行 |
