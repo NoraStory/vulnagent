@@ -35,14 +35,19 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers || {})
-    },
-    ...init
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(init.headers || {})
+      },
+      ...init
+    });
+  } catch (err) {
+    throw new ApiError(0, "network_error", networkMessage(err));
+  }
 
   if (!response.ok) {
     let code = "http_error";
@@ -91,6 +96,15 @@ function query(params: Record<string, string | number | undefined>): string {
   return text ? `?${text}` : "";
 }
 
+// networkMessage 把浏览器的 TypeError("Failed to fetch") 翻译成可操作提示
+export function networkMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    return "无法连接控制面，请确认服务已启动（默认 :8787）后重试";
+  }
+  return raw || "网络请求失败";
+}
+
 // streamSSE 读取 text/event-stream，逐条回调事件
 async function streamSSE(
   path: string,
@@ -98,13 +112,21 @@ async function streamSSE(
   onEvent: (event: HarnessEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const response = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-    signal
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+      signal
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(0, "network_error", networkMessage(err));
+  }
   if (!response.ok) {
     throw await toApiError(response, "请求失败");
   }

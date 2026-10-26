@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   XCircle
 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import type { CheckItem, SelfCheckHistoryItem, SelfCheckRun } from "../lib/types";
 import { CheckPill, Empty, Skeleton } from "../components/ui";
 import { checkMeta, formatTime, timeAgo } from "../lib/format";
@@ -36,16 +36,25 @@ export function SelfCheckPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const [latest, list] = await Promise.all([api.latestSelfCheck(), api.selfCheckHistory()]);
-      setRun(latest.run ?? null);
-      setHistory(list.items ?? []);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载失败");
-    } finally {
-      setLoading(false);
+    // 服务重启或网络抖动时自动重试一次，避免直接展示 "Failed to fetch"
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const [latest, list] = await Promise.all([api.latestSelfCheck(), api.selfCheckHistory()]);
+        setRun(latest.run ?? null);
+        setHistory(list.items ?? []);
+        setError("");
+        break;
+      } catch (err) {
+        const transient = err instanceof ApiError && err.code === "network_error";
+        if (transient && attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          continue;
+        }
+        setError(err instanceof Error ? err.message : "加载失败");
+        break;
+      }
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
