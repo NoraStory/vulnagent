@@ -896,11 +896,11 @@ harness_handlers.go          SSE 会话接口与审批接口
 
 所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals`，并在 `audit_logs` 留下动作记录；工具输出经脱敏（password/secret/token/api_key/authorization）。
 
-### 7.5.3 工具清单（27 个）
+### 7.5.3 工具清单（29 个）
 
 | 风险 | 工具 | 最小角色 |
 |---|---|---|
-| low | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job、recall_memory | viewer/operator |
+| low | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job、recall_memory | viewer/operator |
 | low | list_audit_logs | admin |
 | medium | rescan_asset、read_host_file、create_snapshot、remember | operator |
 | medium | run_selfcheck | admin |

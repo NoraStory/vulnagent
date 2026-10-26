@@ -10,6 +10,7 @@ import (
 
 	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/collect"
+	"vulnagent/server/internal/domain/harness"
 )
 
 func TestToPortsTelemetry(t *testing.T) {
@@ -42,6 +43,82 @@ func TestToPortsTelemetry(t *testing.T) {
 	}
 	if len(out.Ports) != 1 || out.Ports[0].Port != 80 || out.Ports[0].PID != 10 {
 		t.Fatalf("端口映射异常：%+v", out.Ports)
+	}
+}
+
+func TestHarnessHostTelemetryTools(t *testing.T) {
+	app, _, assetID := newTicketTestApp(t)
+	snapshot := toPortsTelemetry(collect.Telemetry{
+		CollectedAt: "2026-01-01T10:00:00+08:00",
+		Metrics:     collect.Metrics{CPUPercent: 37.5, MemUsed: 4 << 30, MemTotal: 8 << 30, ProcessCount: 120},
+		Hardware: collect.Hardware{
+			CPUModel: "Test CPU", CPUCores: 4, CPUThreads: 8, MemTotal: 8 << 30,
+			Disks: []collect.DiskInfo{{Device: "vda", SizeBytes: 100 << 30}},
+			NICs:  []collect.NICInfo{{Name: "eth0", SpeedMbps: 1000}},
+		},
+		Services: []collect.Service{{Name: "sshd", State: "active", Enabled: true}},
+		Ports:    []collect.Port{{Proto: "tcp", Addr: "0.0.0.0", Port: 22, PID: 1}},
+	})
+	if err := app.telemetryRepo().Save(context.Background(), assetID, snapshot); err != nil {
+		t.Fatalf("写入遥测失败：%v", err)
+	}
+
+	var metricsTool, hardwareTool harness.Tool
+	for _, tool := range app.harnessTools() {
+		switch tool.Spec.Name {
+		case "host_metrics":
+			metricsTool = tool
+		case "host_hardware":
+			hardwareTool = tool
+		}
+	}
+	if metricsTool.Spec.Name == "" || hardwareTool.Spec.Name == "" {
+		t.Fatal("工具集缺少 host_metrics 或 host_hardware")
+	}
+	if metricsTool.Spec.MinRole != "viewer" || hardwareTool.Spec.MinRole != "viewer" {
+		t.Fatal("遥测读取工具应为低风险只读、对 viewer 开放")
+	}
+
+	raw, _ := json.Marshal(map[string]any{"assetId": assetID, "limit": 5})
+	out, err := metricsTool.Run(raw)
+	if err != nil {
+		t.Fatalf("host_metrics 执行失败：%v", err)
+	}
+	payload, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("host_metrics 返回值类型异常：%T", out)
+	}
+	metrics, ok := payload["metrics"].(ports.HostMetrics)
+	if !ok || metrics.CPUPercent != 37.5 || metrics.ProcessCount != 120 {
+		t.Fatalf("host_metrics 指标异常：%+v", payload["metrics"])
+	}
+	if payload["sampledAt"] != snapshot.CollectedAt {
+		t.Fatalf("采样时间异常：%v", payload["sampledAt"])
+	}
+
+	out, err = hardwareTool.Run(json.RawMessage(`{"assetId":` + strconv.FormatInt(assetID, 10) + `}`))
+	if err != nil {
+		t.Fatalf("host_hardware 执行失败：%v", err)
+	}
+	payload, ok = out.(map[string]any)
+	if !ok {
+		t.Fatalf("host_hardware 返回值类型异常：%T", out)
+	}
+	hardware, ok := payload["hardware"].(ports.HostHardware)
+	if !ok || hardware.CPUModel != "Test CPU" || len(hardware.Disks) != 1 || len(hardware.NICs) != 1 {
+		t.Fatalf("host_hardware 硬件信息异常：%+v", payload["hardware"])
+	}
+	if payload["servicesTotal"] != 1 || payload["portsTotal"] != 1 {
+		t.Fatalf("host_hardware 服务/端口统计异常：%+v", payload)
+	}
+
+	// 未上报遥测的资产应返回 found=false 而不是报错
+	out, err = metricsTool.Run(json.RawMessage(`{"assetId":999999}`))
+	if err != nil {
+		t.Fatalf("未知资产不应报错：%v", err)
+	}
+	if found, _ := out.(map[string]any)["found"].(bool); found {
+		t.Fatal("未知资产不应返回 found=true")
 	}
 }
 

@@ -865,13 +865,17 @@ vulnagent_selfcheck_failed 0
               "readOnly": true, "minRole": "viewer", "params": { "type": "object" } }] }
 ```
 
-工具共 16 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
+工具共 29 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
 
 | 风险 | 工具 |
 |---|---|
-| low（只读，直接执行） | overview_summary、list_assets、get_asset、list_findings、get_finding、search_cves、get_cve、list_product_map、list_audit_logs（admin）、get_sync_status、get_selfcheck_latest |
-| medium（需审批） | rescan_asset、run_selfcheck（admin） |
-| high（需审批 + 口令再认证） | update_finding_status、create_ticket、upsert_product_map（admin） |
+| low（只读，直接执行） | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
+| low（admin） | list_audit_logs |
+| low（operator） | recall_memory |
+| medium（需审批） | rescan_asset、read_host_file、create_snapshot、remember |
+| medium（admin，需审批） | run_selfcheck |
+| high（需审批 + 口令再认证） | update_finding_status、create_ticket、run_host_command、write_host_file、service_action、restore_snapshot、apply_remediation |
+| high（admin，需审批 + 口令再认证） | upsert_product_map |
 
 ### POST /agent/sessions
 

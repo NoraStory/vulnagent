@@ -19,12 +19,23 @@ import type {
   HarnessEvent,
   HarnessMessage,
   HarnessSession,
+  HarnessToolCall,
   HarnessToolSpec
 } from "../lib/types";
 
+type ToolItem = {
+  key: string;
+  kind: "tool";
+  tool: string;
+  ok: boolean;
+  running?: boolean;
+  args?: string;
+  result?: unknown;
+};
+
 type Item =
   | { key: string; kind: "user" | "assistant"; content: string; at?: string }
-  | { key: string; kind: "tool"; tool: string; ok: boolean; running?: boolean; result?: unknown }
+  | ToolItem
   | {
       key: string;
       kind: "approval";
@@ -56,10 +67,32 @@ function parseResult(value: unknown): string {
   }
 }
 
+function parseArgs(value?: string): string {
+  if (!value) return "";
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
 function toItems(messages: HarnessMessage[]): Item[] {
   const items: Item[] = [];
+  const calls = new Map<string, HarnessToolCall>();
   messages.forEach((message) => {
-    if (message.role === "user" || message.role === "assistant") {
+    if (message.role === "assistant") {
+      if (message.toolCalls) {
+        try {
+          const parsed = JSON.parse(message.toolCalls);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((call: HarnessToolCall) => {
+              if (call?.id) calls.set(call.id, call);
+            });
+          }
+        } catch {
+          /* 历史工具调用解析失败时忽略 */
+        }
+      }
       if (!message.content.trim()) return;
       items.push({
         key: `m-${message.id}`,
@@ -70,6 +103,7 @@ function toItems(messages: HarnessMessage[]): Item[] {
       return;
     }
     if (message.role === "tool") {
+      const call = message.toolCallId ? calls.get(message.toolCallId) : undefined;
       let result: unknown = message.content;
       try {
         result = JSON.parse(message.content);
@@ -79,13 +113,105 @@ function toItems(messages: HarnessMessage[]): Item[] {
       items.push({
         key: `m-${message.id}`,
         kind: "tool",
-        tool: "工具结果",
+        tool: call?.name || "工具结果",
+        args: call?.arguments,
         ok: !message.content.startsWith("工具执行失败"),
         result
       });
     }
   });
   return items;
+}
+
+type Block =
+  | { kind: "tools"; key: string; items: ToolItem[] }
+  | { kind: "item"; key: string; item: Exclude<Item, ToolItem> };
+
+// groupItems 把连续的工具调用聚合为一组，其余消息保持独立
+function groupItems(items: Item[]): Block[] {
+  const blocks: Block[] = [];
+  let group: ToolItem[] = [];
+  const flush = () => {
+    if (group.length === 0) return;
+    blocks.push({ kind: "tools", key: `g-${group[0].key}`, items: group });
+    group = [];
+  };
+  items.forEach((item) => {
+    if (item.kind === "tool") {
+      group.push(item);
+      return;
+    }
+    flush();
+    blocks.push({ kind: "item", key: item.key, item });
+  });
+  flush();
+  return blocks;
+}
+
+function ToolStatusIcon({ item }: { item: ToolItem }) {
+  if (item.running) return <Loader2 size={12} className="animate-spin text-brand" />;
+  if (item.ok) return <Check size={12} className="text-ok" />;
+  return <X size={12} className="text-danger" />;
+}
+
+function ToolGroup({ group }: { group: ToolItem[] }) {
+  const running = group.some((item) => item.running);
+  const finished = group.filter((item) => !item.running);
+  const failed = finished.filter((item) => !item.ok).length;
+  return (
+    <details className="animate-fade group rounded-[10px] border border-line bg-subtle/70 px-3 py-2">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-ink2">
+        {running ? (
+          <Loader2 size={12} className="animate-spin text-brand" />
+        ) : failed > 0 ? (
+          <X size={12} className="text-danger" />
+        ) : (
+          <Check size={12} className="text-ok" />
+        )}
+        <span>工具调用 {group.length} 次</span>
+        <span className="text-ink3">
+          {running
+            ? "执行中"
+            : `成功 ${finished.length - failed} · 失败 ${failed}`}
+        </span>
+        <ChevronDown size={12} className="ml-auto text-ink3 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="mt-2 space-y-1.5">
+        {group.map((item) => (
+          <details key={item.key} className="group/tool rounded-[8px] border border-line/70 bg-surface">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-[11px] text-ink2">
+              <ToolStatusIcon item={item} />
+              <span className="mono">{item.tool}</span>
+              <span className="text-ink3">
+                {item.running ? "执行中" : item.ok ? "完成" : "失败"}
+              </span>
+              <ChevronDown size={11} className="ml-auto text-ink3 transition-transform group-open/tool:rotate-180" />
+            </summary>
+            <div className="space-y-1.5 border-t border-line/70 px-2.5 py-2">
+              {item.args && (
+                <div>
+                  <p className="text-[10.5px] text-ink3">参数</p>
+                  <pre className="mono mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-[6px] bg-subtle/70 p-2 text-[11px] text-ink2">
+                    {parseArgs(item.args)}
+                  </pre>
+                </div>
+              )}
+              <div>
+                <p className="text-[10.5px] text-ink3">结果</p>
+                {item.running ? (
+                  <p className="mt-1 text-[11px] text-ink3">执行中…</p>
+                ) : (
+                  <pre className="mono mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-[6px] bg-subtle/70 p-2 text-[11px] text-ink2">
+                    {parseResult(item.result)}
+                  </pre>
+                )}
+              </div>
+            </div>
+          </details>
+        ))}
+      </div>
+    </details>
+  );
 }
 
 export function AssistantPage() {
@@ -99,7 +225,7 @@ export function AssistantPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [passwords, setPasswords] = useState<Record<string, string>>({});
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const active = sessions.find((session) => session.id === activeId);
   const hasPendingApproval = items.some((item) => item.kind === "approval" && item.status === "pending");
@@ -164,7 +290,9 @@ export function AssistantPage() {
   }, [activeId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [items, busy]);
 
   const handleEvent = useCallback((event: HarnessEvent) => {
@@ -183,7 +311,19 @@ export function AssistantPage() {
       const name = data.tool ?? "tool";
       setItems((prev) => [
         ...prev,
-        { key: `t-${stamp}-${name}`, kind: "tool", tool: name, ok: true, running: true }
+        {
+          key: `t-${stamp}-${name}`,
+          kind: "tool",
+          tool: name,
+          args:
+            data.args === undefined || data.args === null
+              ? undefined
+              : typeof data.args === "string"
+                ? data.args
+                : JSON.stringify(data.args),
+          ok: true,
+          running: true
+        }
       ]);
       return;
     }
@@ -321,8 +461,8 @@ export function AssistantPage() {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-140px)] grid-cols-1 gap-4 md:grid-cols-[248px_minmax(0,1fr)]">
-      <aside className="card hidden flex-col overflow-hidden md:flex">
+    <div className="grid h-[calc(100dvh-160px)] min-h-[420px] grid-cols-1 gap-4 md:grid-cols-[248px_minmax(0,1fr)]">
+      <aside className="card hidden min-h-0 flex-col overflow-hidden md:flex">
         <div className="flex items-center justify-between border-b border-line px-3.5 py-3">
           <span className="text-[12px] font-medium text-ink2">会话</span>
           <button type="button" className="btn btn-secondary h-7 px-2 text-[12px]" onClick={() => void createSession()}>
@@ -374,8 +514,8 @@ export function AssistantPage() {
         </div>
       </aside>
 
-      <section className="card flex min-h-[520px] flex-col overflow-hidden">
-        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+      <section className="card flex min-h-0 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-ink text-white">
               <Bot size={15} />
@@ -390,7 +530,7 @@ export function AssistantPage() {
           <span className="pill bg-signal-soft text-signal">{model || "模型"}</span>
         </header>
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
           {items.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-brand-soft text-brand">
@@ -412,7 +552,11 @@ export function AssistantPage() {
             </div>
           )}
 
-          {items.map((item) => {
+          {groupItems(items).map((block) => {
+            if (block.kind === "tools") {
+              return <ToolGroup key={block.key} group={block.items} />;
+            }
+            const item = block.item;
             if (item.kind === "user") {
               return (
                 <div key={item.key} className="animate-rise flex justify-end">
@@ -430,29 +574,6 @@ export function AssistantPage() {
                     <Markdown content={item.content} />
                   </div>
                 </div>
-              );
-            }
-            if (item.kind === "tool") {
-              return (
-                <details key={item.key} className="animate-fade group rounded-[10px] border border-line bg-subtle/70 px-3 py-2">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-ink2">
-                    {item.running ? (
-                      <Loader2 size={12} className="animate-spin text-brand" />
-                    ) : item.ok ? (
-                      <Check size={12} className="text-ok" />
-                    ) : (
-                      <X size={12} className="text-danger" />
-                    )}
-                    <span className="mono">{item.tool}</span>
-                    <span className="text-ink3">{item.running ? "执行中" : item.ok ? "完成" : "失败"}</span>
-                    <ChevronDown size={12} className="ml-auto text-ink3 transition-transform group-open:rotate-180" />
-                  </summary>
-                  {!item.running && (
-                    <pre className="mono mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface p-2 text-[11px] text-ink2">
-                      {parseResult(item.result)}
-                    </pre>
-                  )}
-                </details>
               );
             }
             if (item.kind === "approval") {
@@ -526,17 +647,16 @@ export function AssistantPage() {
               </div>
             );
           })}
-          <div ref={bottomRef} />
         </div>
 
         {error && (
-          <div className="mx-4 mb-2 flex items-start gap-1.5 rounded-[8px] bg-dangerSoft px-2.5 py-1.5 text-[11.5px] text-danger">
+          <div className="mx-4 mb-2 flex shrink-0 items-start gap-1.5 rounded-[8px] bg-dangerSoft px-2.5 py-1.5 text-[11.5px] text-danger">
             <AlertCircle size={12} className="mt-0.5 shrink-0" />
             {error}
           </div>
         )}
 
-        <footer className="border-t border-line px-4 py-3">
+        <footer className="shrink-0 border-t border-line px-4 py-3">
           <div className="flex items-end gap-2">
             <textarea
               className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"

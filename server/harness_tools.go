@@ -20,6 +20,8 @@ func (a *App) harnessTools() []harness.Tool {
 		a.toolOverviewSummary(),
 		a.toolListAssets(),
 		a.toolGetAsset(),
+		a.toolHostMetrics(),
+		a.toolHostHardware(),
 		a.toolListFindings(),
 		a.toolGetFinding(),
 		a.toolSearchCVEs(),
@@ -167,6 +169,98 @@ func (a *App) toolGetAsset() harness.Tool {
 				comps = comps[:100]
 			}
 			return map[string]any{"asset": item, "components": comps, "findings": findings}, nil
+		},
+	}
+}
+
+func (a *App) toolHostMetrics() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("host_metrics", "读取资产最近上报的主机性能指标：CPU 使用率、负载、内存/交换、磁盘与网络吞吐、运行时长、进程数，并返回最近若干采样点时序。数据来自 Agent 采集上报，sampledAt 过旧说明指标已过期。", harness.RiskLow, "viewer", `{
+			"type":"object",
+			"properties":{
+				"assetId":{"type":"integer","description":"资产 ID"},
+				"limit":{"type":"integer","minimum":1,"maximum":120,"description":"返回的时序采样点数量，默认 24"}
+			},
+			"required":["assetId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64 `json:"assetId"`
+				Limit   int   `json:"limit"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			if in.AssetID <= 0 {
+				return nil, fmt.Errorf("assetId 必须为正整数")
+			}
+			ctx := context.Background()
+			latest, found, err := a.readTelemetry().Latest(ctx, in.AssetID)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return map[string]any{
+					"found": false,
+					"note":  "该资产尚未上报遥测数据：可能 Agent 未运行、版本过旧或刚接入。",
+				}, nil
+			}
+			series, err := a.readTelemetry().Series(ctx, in.AssetID, limitOf(in.Limit, 24, 120))
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"found":       true,
+				"sampledAt":   latest.CollectedAt,
+				"metrics":     latest.Metrics,
+				"series":      series,
+				"sampleCount": len(series),
+			}, nil
+		},
+	}
+}
+
+func (a *App) toolHostHardware() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("host_hardware", "读取资产的硬件与运行环境快照：CPU 型号/核数、内存、内核、虚拟化、序列号、物理磁盘与网卡，以及系统服务与监听端口（各最多 100 条）。", harness.RiskLow, "viewer", `{
+			"type":"object",
+			"properties":{"assetId":{"type":"integer","description":"资产 ID"}},
+			"required":["assetId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64 `json:"assetId"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			if in.AssetID <= 0 {
+				return nil, fmt.Errorf("assetId 必须为正整数")
+			}
+			latest, found, err := a.readTelemetry().Latest(context.Background(), in.AssetID)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return map[string]any{
+					"found": false,
+					"note":  "该资产尚未上报遥测数据：可能 Agent 未运行、版本过旧或刚接入。",
+				}, nil
+			}
+			services, portsList := latest.Services, latest.Ports
+			if len(services) > 100 {
+				services = services[:100]
+			}
+			if len(portsList) > 100 {
+				portsList = portsList[:100]
+			}
+			return map[string]any{
+				"found":         true,
+				"sampledAt":     latest.CollectedAt,
+				"hardware":      latest.Hardware,
+				"services":      services,
+				"servicesTotal": len(latest.Services),
+				"ports":         portsList,
+				"portsTotal":    len(latest.Ports),
+			}, nil
 		},
 	}
 }
@@ -897,3 +991,5 @@ func (a *App) readFindings() *sqlite.FindingRepo { return sqlite.NewFindingRepo(
 func (a *App) readIntel() *sqlite.IntelRepo { return sqlite.NewIntelRepo(a.readDB()) }
 
 func (a *App) readAudit() *sqlite.AuditRepo { return sqlite.NewAuditRepo(a.readDB()) }
+
+func (a *App) readTelemetry() *sqlite.TelemetryRepo { return sqlite.NewTelemetryRepo(a.readDB()) }
