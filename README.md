@@ -14,6 +14,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white" />
   <img alt="SQLite" src="https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white" />
   <img alt="Single Binary" src="https://img.shields.io/badge/Deploy-single%20binary-0E9F8A" />
+  <img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-2A5BD7" />
 </p>
 
 <p align="center">
@@ -296,9 +297,16 @@ npm run build
 
 ---
 
+## 许可证
+
+本项目基于 [GNU General Public License v3.0](LICENSE) 发布，完整条款见 [LICENSE](LICENSE)。
+
+Copyright (C) 2026 Signal 项目贡献者。你可以在遵守 GPL-3.0 条款的前提下使用、修改与再分发本项目；分发衍生作品时需同样以 GPL-3.0 开放源代码。
+
+---
+
 ## 已知边界
 
 - 当前为单节点部署，SQLite（WAL）承载全部数据；多节点与集中式存储尚未实现。
 - 漏洞情报依赖外部公开源，离线环境需通过 `vulnagent sync --bundle` 导入。
 - Agent 助手需要可访问的 OpenAI 兼容模型服务；不可用时其余功能不受影响。
-- 仓库暂未附带开源许可证，如需对外分发请先补充 LICENSE。
