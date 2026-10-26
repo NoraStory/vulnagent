@@ -24,6 +24,8 @@ const (
 	DefaultRescanInterval = 30 * time.Minute
 	// DefaultRescanDebounce 同一资产复扫的最小间隔
 	DefaultRescanDebounce = 10 * time.Minute
+	// DefaultSyncInterval CVE/POC 情报定时同步间隔
+	DefaultSyncInterval = 12 * time.Hour
 	// DefaultIntelBaseURL 免费 CVE 情报站
 	DefaultIntelBaseURL = "https://cve.imfht.com"
 	// DefaultEPSSURL FIRST 每日全量 EPSS 评分（gzip CSV）
@@ -43,6 +45,7 @@ type Config struct {
 	SessionIdle    time.Duration
 	RescanInterval time.Duration
 	RescanDebounce time.Duration
+	SyncInterval   time.Duration
 	IntelBaseURL   string
 	EPSSURL        string
 	OSVURL         string
@@ -77,6 +80,7 @@ func Load() Config {
 		SessionIdle:    durationOr("VA_SESSION_IDLE", DefaultSessionIdle, time.Minute),
 		RescanInterval: rescanInterval(),
 		RescanDebounce: rescanDebounce(),
+		SyncInterval:   syncInterval(),
 		IntelBaseURL:   envOr("VULNAGENT_CVE_BASE_URL", DefaultIntelBaseURL),
 		EPSSURL:        envOr("VA_EPSS_URL", DefaultEPSSURL),
 		OSVURL:         envOr("VA_OSV_URL", DefaultOSVURL),
@@ -156,6 +160,22 @@ func rescanDebounce() time.Duration {
 		return time.Duration(secs) * time.Second
 	}
 	return DefaultRescanDebounce
+}
+
+// syncInterval 支持 "0"/"off" 关闭，默认每 12 小时同步一次 CVE/POC
+func syncInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("VA_SYNC_INTERVAL"))
+	if raw == "" {
+		return DefaultSyncInterval
+	}
+	if raw == "0" || strings.EqualFold(raw, "off") {
+		return 0
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d >= time.Minute {
+		return d
+	}
+	slog.Warn("VA_SYNC_INTERVAL 无效，使用默认 12h", "value", raw)
+	return DefaultSyncInterval
 }
 
 // webDist 依次尝试环境变量与常见相对路径，返回第一个存在的目录；

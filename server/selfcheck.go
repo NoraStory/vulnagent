@@ -107,19 +107,27 @@ func (a *App) runSelfcheck(triggeredBy string) (selfcheckRun, error) {
 
 	// ---- 情报同步 ----
 	t0 = time.Now()
-	lagCVE := syncLagHours(a.db, "cve")
+	warnAfter, failAfter := intelFreshnessThresholds()
+	lagCVE, cveStatus, cveErr := syncCursorInfo(a.db, "cve")
 	switch {
-	case lagCVE > 48:
+	case cveStatus == "fail":
+		detail := fmt.Sprintf("最近一次 CVE 同步失败（%.1f 小时前）", lagCVE)
+		if strings.TrimSpace(cveErr) != "" {
+			detail += "：" + cveErr
+		}
+		add("intel.cve_lag", "情报同步", "CVE 情报新鲜度", "fail", detail,
+			"检查情报源连通性与 API Key；离线环境请导入情报包", time.Since(t0))
+	case lagCVE > failAfter:
 		add("intel.cve_lag", "情报同步", "CVE 情报新鲜度", "fail",
-			fmt.Sprintf("CVE 情报已滞后 %.1f 小时（阈值 48 小时）", lagCVE),
+			fmt.Sprintf("CVE 情报已滞后 %.1f 小时（阈值 %.0f 小时）", lagCVE, failAfter),
 			"检查同步任务调度与情报源连通性，必要时导入离线包", time.Since(t0))
-	case lagCVE > 6:
+	case lagCVE > warnAfter:
 		add("intel.cve_lag", "情报同步", "CVE 情报新鲜度", "warn",
-			fmt.Sprintf("CVE 情报已滞后 %.1f 小时（阈值 6 小时）", lagCVE),
+			fmt.Sprintf("CVE 情报已滞后 %.1f 小时（阈值 %.0f 小时）", lagCVE, warnAfter),
 			"确认增量同步任务是否正常执行", time.Since(t0))
 	default:
 		add("intel.cve_lag", "情报同步", "CVE 情报新鲜度", "pass",
-			fmt.Sprintf("最后同步于 %.1f 小时前（阈值 6 小时）", lagCVE), "", time.Since(t0))
+			fmt.Sprintf("最后同步于 %.1f 小时前（阈值 %.0f 小时）", lagCVE, warnAfter), "", time.Since(t0))
 	}
 
 	t0 = time.Now()
@@ -376,11 +384,18 @@ func firstErr(errs ...error) error {
 }
 
 func syncLagHours(db *sql.DB, source string) float64 {
-	var last string
-	if err := db.QueryRow(`SELECT last_run_at FROM sync_cursors WHERE source = ?`, source).Scan(&last); err != nil {
-		return 9999
+	lag, _, _ := syncCursorInfo(db, source)
+	return lag
+}
+
+// syncCursorInfo 读取同步游标的时间、状态与错误，供自检判断
+func syncCursorInfo(db *sql.DB, source string) (float64, string, string) {
+	var last, status, errMsg string
+	if err := db.QueryRow(`SELECT last_run_at, status, error FROM sync_cursors WHERE source = ?`, source).
+		Scan(&last, &status, &errMsg); err != nil {
+		return 9999, "never", ""
 	}
-	return hoursSince(last)
+	return hoursSince(last), status, errMsg
 }
 
 func (a *App) handleSelfcheckRun(w http.ResponseWriter, r *http.Request) {

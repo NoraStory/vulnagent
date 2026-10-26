@@ -233,6 +233,7 @@ func runServer() {
 	scanCtx, stopScans := context.WithCancel(context.Background())
 	defer stopScans()
 	app.startScanScheduler(scanCtx)
+	app.startIntelSyncScheduler(scanCtx)
 
 	mux := http.NewServeMux()
 	app.routes(mux)

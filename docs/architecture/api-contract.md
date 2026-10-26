@@ -560,6 +560,8 @@ Webhook 请求体：
 `status`：`pass | warn | fail | skip`。检查分组固定为：
 `数据库`、`情报同步`、`采集链路`、`平台自身`、`权限与审计`。
 
+其中 `intel.cve_lag`（CVE 情报新鲜度）按同步周期计算阈值：默认 12h 周期下，滞后 >18h 记 `warn`、>24h 记 `fail`；最近一次同步 `status=fail` 时直接 `fail` 并展示错误原因。`VA_SYNC_INTERVAL=off` 时阈值放宽为 >24h / >48h。
+
 ### GET /selfcheck/latest
 
 返回最近一次 run 对象；从未运行时：`{ "demo": true, "run": null }`；有记录时：`{ "demo": true, "run": { ...run } }`。
@@ -651,6 +653,8 @@ Webhook 请求体：
 |---|---|---|
 | 400 | `no_api_key` | 未配置 `VULNAGENT_CVE_API_KEY`，改用 `vulnagent sync --bundle` 导入离线包 |
 | 502 | `sync_failed` | 情报平台不可达或返回错误，`error.message` 给出原因 |
+
+控制面启动后会常驻定时同步：默认每 12 小时（`VA_SYNC_INTERVAL`，设为 `0/off` 关闭）增量同步 `cve` 与 `poc`；启动时若距上次同步已超过一个周期，会先补一次。同步成功/失败都会写审计，失败额外派发 `sync.failed` webhook。
 
 ### POST /sync/epss（admin，`Content-Type: text/csv`）
 

@@ -155,7 +155,7 @@
 - **客户端**：公开接口直接调用；如配置了 `X-API-Key` 则附带；429/5xx 指数退避重试 3 次；单次超时 20s。
 - **游标**：平台增量游标存于 `app_meta.cve_cursor`（首次回退 `MAX(updated_at)`），翻页遇到不新于游标的数据即停止；中断可续。
 - **分值**：平台只给 `cvss_vector`，由本地 `cvss.go` 按 CVSS 3.1 规范计算基础分与严重级（含 roundup）。
-- **频率**：增量建议每 30 min；POC 每 60 min；EPSS 每日一次（离线包可导入）。
+- **频率**：控制面常驻定时同步，默认每 12 小时（`VA_SYNC_INTERVAL`，`0/off` 关闭）同步 CVE 与 POC；启动时若距上次超过一个周期会先补一次。也可用 `POST /api/v1/sync/{cve|poc}` 手动触发。EPSS 每日一次（离线包可导入）。
 - **离线模式**：`vulnagent sync --bundle cve-bundle.json`，包内为 `{source:"cve", items:[...]}`，与在线同步走同一套 upsert；示例见 `docs/architecture/examples/cve-bundle.json`。
 - **首次全量**：建议走离线包（百万级 CVE 全量走 API 不现实），之后只做增量。
 
@@ -1178,7 +1178,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 分组 | 检查项 id | 判定 |
 |---|---|---|
 | 数据库 | `db.integrity` / `db.volume` / `db.latency` | quick_check、表与行数、实测读写耗时（>200ms 警告） |
-| 情报同步 | `intel.cve_lag` / `intel.epss_coverage` / `intel.poc_feed` | 滞后 >6h 警告、>48h 失败；EPSS 覆盖 <80% 警告 |
+| 情报同步 | `intel.cve_lag` / `intel.epss_coverage` / `intel.poc_feed` | CVE 阈值随同步周期联动（12h 周期下 >18h 警告、>24h 失败）；最近一次同步失败直接判失败并展示原因；EPSS 覆盖 <80% 警告 |
 | 采集链路 | `collect.agent_online` / `collect.stale_agents` / `collect.last_report` | 在线率 <80% 警告、<50% 失败；离线 >24h 警告 |
 | 平台自身 | `self.sbom_findings` / `self.build_info` / `self.disk` / `self.intel_api` | 自身 P0/P1 >0 失败；情报接口 6s 探测不可达告警 |
 | 权限与审计 | `auth.default_password` / `auth.rbac` / `audit.enabled` | 初始口令未改警告；仅 admin 角色告警；审计可写 |

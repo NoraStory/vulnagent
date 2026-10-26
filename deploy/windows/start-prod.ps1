@@ -11,6 +11,8 @@ if (-not (Test-Path $exe)) {
 $env:VA_DATA_DIR = Join-Path $root 'data-prod'
 $env:VA_SEED_DEMO = 'off'
 $env:VA_ADDR = ':8787'
+# 情报定时同步：默认每 12 小时（设 0/off 关闭）
+$env:VA_SYNC_INTERVAL = '12h'
 # 经反向代理终止 TLS 后取消下一行注释
 # $env:VA_COOKIE_SECURE = '1'
 # CVE 情报密钥建议放系统环境变量，避免写进脚本
