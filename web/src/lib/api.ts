@@ -11,6 +11,7 @@ import type {
   HarnessEvent,
   HarnessMessagesResponse,
   HarnessSession,
+  HarnessSkill,
   HarnessToolSpec,
   LoginResponse,
   OpsPolicy,
@@ -493,6 +494,10 @@ export const api = {
     return request("/agent/tools");
   },
 
+  harnessSkills(): Promise<{ skills: HarnessSkill[] }> {
+    return request("/agent/skills");
+  },
+
   harnessSessions(): Promise<{ sessions: HarnessSession[] }> {
     return request("/agent/sessions");
   },
@@ -524,10 +529,16 @@ export const api = {
   harnessChat(
     id: string,
     content: string,
+    skillId: string | undefined,
     onEvent: (event: HarnessEvent) => void,
     signal?: AbortSignal
   ): Promise<void> {
-    return streamSSE(`/agent/sessions/${encodeURIComponent(id)}/messages`, { content }, onEvent, signal);
+    return streamSSE(
+      `/agent/sessions/${encodeURIComponent(id)}/messages`,
+      { content, skillId: skillId ?? "" },
+      onEvent,
+      signal
+    );
   },
 
   harnessResume(id: string, onEvent: (event: HarnessEvent) => void, signal?: AbortSignal): Promise<void> {

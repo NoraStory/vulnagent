@@ -27,3 +27,6 @@ web/dist/
 .tmp-*/
 .gomodcache/
 release-keys/
+
+# 技能解压目录（由 skill/*.zip 启动时自动生成）
+skills/

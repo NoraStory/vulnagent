@@ -41,7 +41,7 @@ type Options struct {
 // DefaultOptions 默认闸门参数
 func DefaultOptions() Options {
 	return Options{
-		MaxSteps:      4,
+		MaxSteps:      6,
 		RatePerMinute: 20,
 		MaxArgsBytes:  64 << 10,
 		ApprovalTTL:   10 * time.Minute,
@@ -189,6 +189,11 @@ func (s *Service) Messages(ctx context.Context, p Principal, sessionID string) (
 
 // Chat 处理一条用户消息，事件通过 emit 同步推送
 func (s *Service) Chat(ctx context.Context, p Principal, sessionID, text string, emit func(Event)) error {
+	return s.ChatWithSkill(ctx, p, sessionID, text, "", "", emit)
+}
+
+// ChatWithSkill 在指定技能上下文下处理用户消息；skillContext 为空表示通用模式。
+func (s *Service) ChatWithSkill(ctx context.Context, p Principal, sessionID, text, skillID, skillContext string, emit func(Event)) error {
 	if !s.Available() {
 		return errors.New("模型未配置")
 	}
@@ -206,6 +211,7 @@ func (s *Service) Chat(ctx context.Context, p Principal, sessionID, text string,
 	} else if pending {
 		return ErrBusy
 	}
+	s.ensureSkillMarker(ctx, sess.ID, strings.TrimSpace(skillID), skillContext)
 	now := clock.FormatNow()
 	if _, err := s.Repo.AppendMessage(ctx, harness.Message{
 		SessionID: sess.ID, Role: "user", Content: text, ToolCalls: "[]", CreatedAt: now,
@@ -215,6 +221,38 @@ func (s *Service) Chat(ctx context.Context, p Principal, sessionID, text string,
 	_ = s.Repo.TouchSession(ctx, sess.ID, now)
 	emit(Event{Type: "message", Data: map[string]any{"role": "user", "content": text}})
 	return s.runLoop(ctx, p, sess, emit)
+}
+
+// ensureSkillMarker 在技能切换时写入一条系统消息，避免重复注入。
+func (s *Service) ensureSkillMarker(ctx context.Context, sessionID, skillID, skillContext string) {
+	history, err := s.Repo.Messages(ctx, sessionID, 50)
+	if err != nil {
+		return
+	}
+	current := lastSkillMarker(history)
+	switch {
+	case skillContext != "" && current != skillID:
+		s.appendMessage(ctx, sessionID, "system", skillContext, nil, "")
+	case skillContext == "" && current != "":
+		s.appendMessage(ctx, sessionID, "system", "[skill] 已退出技能模式，恢复通用助手。", nil, "")
+	}
+}
+
+// lastSkillMarker 返回最近一条技能系统消息中的技能 ID，无则返回空。
+func lastSkillMarker(history []harness.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		message := history[i]
+		if message.Role != "system" || !strings.HasPrefix(message.Content, "[skill]") {
+			continue
+		}
+		for _, line := range strings.Split(message.Content, "\n") {
+			if strings.HasPrefix(line, "[skill] id=") {
+				return strings.TrimSpace(strings.TrimPrefix(line, "[skill] id="))
+			}
+		}
+		return ""
+	}
+	return ""
 }
 
 // Resume 在审批处理完成后继续对话

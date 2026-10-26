@@ -140,6 +140,9 @@ func Execute(ctx context.Context, req Request, opts Options) Result {
 	case ActionPackageAction:
 		out, err := packageAction(ctx, req.Params)
 		res.Output, res.Error, res.Status = out, errText(err), statusOf(err)
+	case ActionDiagnose:
+		out, err := diagnose(ctx, req.Params, opts)
+		res.Output, res.Error, res.Status = out, errText(err), statusOf(err)
 	default:
 		res.Error = "不支持的动作：" + req.Action
 	}

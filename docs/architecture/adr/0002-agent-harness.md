@@ -33,8 +33,8 @@
 
 ## 落地情况（2026-10-24）
 
-- 工具 16 个：11 个只读、2 个 medium、3 个 high（详见 `docs/architecture/detailed-design.md` 7.5.3）。
-- 九道闸门全部实现于 `server/internal/application/harness/service.go`：静态工具表、参数 ≤ 8KB、角色裁剪、20 次/分钟、风险分级、参数指纹、一次性消费 + 10 分钟 TTL、5 分钟口令再认证窗口、每轮 4 步上限。
+- 工具 32 个：只读/诊断、写操作分级，技能文档与主机语义诊断已接入（详见 `docs/architecture/detailed-design.md` 7.5.3）。
+- 九道闸门全部实现于 `server/internal/application/harness/service.go`：静态工具表、参数 ≤ 64KB、角色裁剪、20 次/分钟、风险分级、参数指纹、一次性消费 + 10 分钟 TTL、5 分钟口令再认证窗口、每轮 6 步上限。
 - 数据表：`agent_sessions`、`agent_messages`、`agent_tool_calls`、`agent_approvals`（`0002_harness.sql`）。
 - 模型：`internal/infrastructure/llm/openai`，环境变量 `VA_LLM_BASE_URL` / `VA_LLM_API_KEY` / `VA_LLM_MODEL`。
 - 前端：助手页 `/assistant`，SSE 流式渲染消息、工具调用与审批卡。

@@ -60,6 +60,14 @@ func (a *App) handleHarnessTools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleHarnessSkills 列出已加载的运维技能
+func (a *App) handleHarnessSkills(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireRole(w, r, "viewer"); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"skills": a.skills.List()})
+}
+
 // handleHarnessSessions 列出当前账号的会话
 func (a *App) handleHarnessSessions(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireRole(w, r, "viewer")
@@ -172,6 +180,7 @@ func (a *App) handleHarnessChat(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Content string `json:"content"`
+		SkillID string `json:"skillId"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -181,6 +190,16 @@ func (a *App) handleHarnessChat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "消息不能为空")
 		return
 	}
+	skillID := strings.TrimSpace(req.SkillID)
+	skillContext := ""
+	if skillID != "" {
+		ctxText, found := a.skills.Context(skillID)
+		if !found {
+			writeErr(w, http.StatusBadRequest, "bad_request", "未知技能："+skillID)
+			return
+		}
+		skillContext = ctxText
+	}
 	id := r.PathValue("id")
 	if _, err := a.harness.Session(r.Context(), principalOf(u), id); err != nil {
 		writeHarnessErr(w, err)
@@ -188,7 +207,7 @@ func (a *App) handleHarnessChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stream := newSSEStream(w)
-	err := a.harness.Chat(r.Context(), principalOf(u), id, req.Content, stream.emit)
+	err := a.harness.ChatWithSkill(r.Context(), principalOf(u), id, req.Content, skillID, skillContext, stream.emit)
 	if err != nil {
 		stream.emit(harnessapp.Event{Type: "error", Data: map[string]any{"message": err.Error()}})
 	}

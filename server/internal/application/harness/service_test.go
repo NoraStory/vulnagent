@@ -312,6 +312,51 @@ func TestFullModeSkipsApproval(t *testing.T) {
 	}
 }
 
+func TestSkillContextInjectedOnceAndCleared(t *testing.T) {
+	llm := &fakeLLM{responses: []ports.LLMResponse{
+		{Content: "ok1"}, {Content: "ok2"}, {Content: "ok3"},
+	}}
+	svc, repo := newTestService(t, llm, []harness.Tool{readTool("echo")})
+	p := Principal{Username: "alice", Role: "viewer"}
+	sess, err := svc.CreateSession(context.Background(), p, "技能会话")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctxText := "[skill] id=demo\n技能说明"
+	for i := 0; i < 2; i++ {
+		if err := svc.ChatWithSkill(context.Background(), p, sess.ID, "问题", "demo", ctxText, func(Event) {}); err != nil {
+			t.Fatalf("技能对话失败：%v", err)
+		}
+	}
+	messages, err := repo.Messages(context.Background(), sess.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := 0
+	for _, message := range messages {
+		if message.Role == "system" && strings.Contains(message.Content, "[skill] id=demo") {
+			injected++
+		}
+	}
+	if injected != 1 {
+		t.Fatalf("同一技能不应重复注入上下文，实际 %d 次", injected)
+	}
+
+	if err := svc.Chat(context.Background(), p, sess.ID, "退出技能", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	messages, _ = repo.Messages(context.Background(), sess.ID, 100)
+	last := ""
+	for _, message := range messages {
+		if message.Role == "system" && strings.HasPrefix(message.Content, "[skill]") {
+			last = message.Content
+		}
+	}
+	if !strings.Contains(last, "已退出技能模式") {
+		t.Fatalf("退出技能后应写入退出标记，实际 %q", last)
+	}
+}
+
 func TestSmartModeAIJudge(t *testing.T) {
 	t.Run("放行", func(t *testing.T) {
 		var executed atomic.Int32

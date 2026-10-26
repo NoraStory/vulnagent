@@ -893,15 +893,16 @@ harness_handlers.go          SSE 会话接口与审批接口
 6. **风险分级与会话权限**：medium/high 默认必须人工审批；会话可切换 `each`（每次审批）、`smart`（模型判断，失败即转人工）、`full`（直接执行，`approver=auto:full` 留痕）三种模式，切换写 `agent.session.mode` 审计。
 7. **参数指纹**：审批绑定 `SHA-256(排序后的参数 JSON)`，参数任何变化即失效。
 8. **一次性消费 + TTL**：审批 10 分钟过期，`approved` 后立即消费，重复处理返回 409。
-9. **再认证与限流**：high 风险需 5 分钟内口令再认证；每会话 20 次/分钟、每轮最多 4 步。
+9. **再认证与限流**：high 风险需 5 分钟内口令再认证；每会话 20 次/分钟、每轮最多 6 步。
 
 所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals`，并在 `audit_logs` 留下动作记录；工具输出经脱敏（password/secret/token/api_key/authorization）。
 
-### 7.5.3 工具清单（29 个）
+### 7.5.3 工具清单（32 个）
 
 | 风险 | 工具 | 最小角色 |
 |---|---|---|
-| low | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job、recall_memory | viewer/operator |
+| low | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job | viewer |
+| low | host_diagnose、recall_memory | operator |
 | low | list_audit_logs | admin |
 | medium | rescan_asset、read_host_file、create_snapshot、remember | operator |
 | medium | run_selfcheck | admin |
@@ -911,7 +912,16 @@ harness_handlers.go          SSE 会话接口与审批接口
 明确不暴露：SSH 扫描、Agent 令牌轮换、账号增删改、风险策略修改、任意 shell 拼接 / 任意 SQL / 任意 URL。
 主机命令只接受 argv 数组与白名单命令；写文件限白名单目录并自动备份；快照 + 回滚与包升级均需审批，高风险需口令再认证。
 
-### 7.5.4 交互流程
+### 7.5.4 运维技能（输入框 `/` 命令）
+
+- **来源**：`skill/*.zip` 在启动时解压到 `skills/`（已存在则跳过），解析每个 `SKILL.md` 的 YAML front matter（name/display_name/description/version/platforms）；`VA_SKILL_DIR` 可指定技能目录。
+- **调用**：前端 `GET /api/v1/agent/skills` 获取列表；输入框键入 `/` 弹出技能菜单（↑↓ 选择、Enter 确认、Esc 关闭），选中后显示技能 chip；消息请求携带 `skillId`。
+- **上下文**：服务端在会话中写入一条 `[skill] id=…` 系统消息（同一技能只注入一次），告知模型技能目录与渐进加载规则；退出技能时写入退出标记。系统消息随历史保留，刷新/继续对话不丢失。
+- **文档工具**：`list_skill_files`（列文件）与 `read_skill_file`（读文件，默认 `SKILL.md`，≤256KB）只读、限定技能目录内相对路径，拒绝绝对路径与 `..`。
+- **主机诊断**：`host_diagnose` 提供固定只读目录（磁盘、内存/OOM、网络连通/延迟、服务、日志、时间同步、软件包、安全基线、Windows Update、启动项、事件日志、已装程序、会话、计划任务、SMB、DNS、防火墙、证书、IIS、存储池、备份、Docker/K8s、崩溃恢复等），命令由 Agent 内置映射生成，不接受任意 shell；`target` 仅允许主机名/IP/设备名。
+- **安全边界**：技能文档只读；诊断命令固定目录；删除/清理/修复等变更仍通过 `service_action`、`write_host_file`、`apply_remediation` 等工具走审批，技能不会绕过闸门。
+
+### 7.5.5 交互流程
 
 1. `POST /agent/sessions` 建会话（可带 `approvalMode`）；`POST /agent/sessions/{id}/messages` 以 SSE 流式返回 `message / tool_call / tool_result / approval_required / done`。
 2. 输入框上方可切换 `each / smart / full` 权限；切换调用 `PATCH /agent/sessions/{id}`。
@@ -919,14 +929,14 @@ harness_handlers.go          SSE 会话接口与审批接口
 4. `POST /agent/approvals/{id}` 批准或拒绝；批准后立即执行并写入工具结果消息。
 5. `POST /agent/sessions/{id}/resume` 继续本轮，让模型汇总执行结果。
 
-### 7.5.5 数据表
+### 7.5.6 数据表
 
 `agent_sessions`（含 `approval_mode`）、`agent_messages`（含 `tool_call_id`）、`agent_tool_calls`（参数指纹、风险、状态、审批人/自动放行人）、`agent_approvals`（指纹、TTL、一次性消费）。迁移见 `sqlite/migrations/0002_harness.sql` 与 `0008_session_mode.sql`。
 
-### 7.5.6 验收
+### 7.5.7 验收
 
-- 单元测试覆盖：参数指纹稳定性、只读循环、写操作审批、一次性消费、越权拒绝、高风险再认证、会话隔离、三种审批模式（含 AI 判断放行/转人工与解析兜底）。
-- 真实联调：火山方舟（OpenAI 兼容）完成「查询 → 工具调用 → 结论」与「改状态 → 审批 → 口令 → 执行 → 汇总」两条链路。
+- 单元测试覆盖：参数指纹稳定性、只读循环、写操作审批、一次性消费、越权拒绝、高风险再认证、会话隔离、三种审批模式（含 AI 判断放行/转人工与解析兜底）、技能上下文注入/退出与文档路径越界。
+- 真实联调：火山方舟（OpenAI 兼容）完成「查询 → 工具调用 → 结论」与「改状态 → 审批 → 口令 → 执行 → 汇总」两条链路；技能模式完成「/ 选择技能 → 读取 SKILL.md → host_diagnose → 结论」。
 
 ---
 

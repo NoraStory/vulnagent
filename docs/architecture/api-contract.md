@@ -874,17 +874,32 @@ vulnagent_selfcheck_failed 0
               "readOnly": true, "minRole": "viewer", "params": { "type": "object" } }] }
 ```
 
-工具共 29 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
+工具共 32 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
 
 | 风险 | 工具 |
 |---|---|
-| low（只读，直接执行） | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
+| low（只读，直接执行） | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
+| low（operator） | host_diagnose、recall_memory |
 | low（admin） | list_audit_logs |
-| low（operator） | recall_memory |
 | medium（需审批） | rescan_asset、read_host_file、create_snapshot、remember |
 | medium（admin，需审批） | run_selfcheck |
 | high（需审批 + 口令再认证） | update_finding_status、create_ticket、run_host_command、write_host_file、service_action、restore_snapshot、apply_remediation |
 | high（admin，需审批 + 口令再认证） | upsert_product_map |
+
+### GET /agent/skills
+
+返回从 `skills/` 加载的运维技能（启动时自动解压 `skill/*.zip`）：
+
+```json
+{ "skills": [
+  { "id": "tencentos-expert", "displayName": "TencentOS Server 全栈运维诊断",
+    "description": "…", "version": "2.1.0", "platforms": ["linux"] },
+  { "id": "winskill", "displayName": "Windows 服务器运维工具箱",
+    "description": "…", "version": "3.4.0", "platforms": ["windows"] }
+] }
+```
+
+前端在输入框键入 `/` 时展示该列表；选中后下一条消息携带 `skillId`。服务端在会话中注入一条 `[skill]` 系统消息（同一技能只注入一次），模型通过 `list_skill_files` / `read_skill_file` 按需加载 `SKILL.md`、`guides/` 与 `references/`，再调用 `host_diagnose`、`host_metrics` 等工具执行诊断。退出技能后自动写入退出标记。
 
 ### POST /agent/sessions
 
@@ -912,7 +927,7 @@ vulnagent_selfcheck_failed 0
 
 ### POST /agent/sessions/{id}/messages
 
-请求 `{ "content": "…" }`，响应为 `text/event-stream`，每行 `data: <json>`：
+请求 `{ "content": "…", "skillId": "tencentos-expert" }`（`skillId` 可省略；未知技能返回 `400 bad_request`），响应为 `text/event-stream`，每行 `data: <json>`：
 
 | type | data | 说明 |
 |---|---|---|
@@ -936,4 +951,4 @@ vulnagent_selfcheck_failed 0
 - high 风险必须携带当前账号口令（或 5 分钟内的再认证记录），否则返回 `401 reauth_required`。
 - 批准后立即执行工具并写入工具结果消息，前端再调用 `resume` 让模型汇总。
 
-九道执行闸门：静态工具表 → 参数 JSON ≤ 8KB → 角色最小权限 → 每会话 20 次/分钟 → 风险分级 → 参数指纹绑定 → 一次性消费 + TTL → 高风险口令再认证 → 每轮最多 4 步。所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals` 并记审计。
+九道执行闸门：静态工具表 → 参数 JSON ≤ 64KB → 角色最小权限 → 每会话 20 次/分钟 → 风险分级 → 参数指纹绑定 → 一次性消费 + TTL → 高风险口令再认证 → 每轮最多 6 步。所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals` 并记审计。

@@ -420,6 +420,14 @@ export interface HarnessToolSpec {
 
 export type HarnessApprovalMode = "each" | "smart" | "full";
 
+export interface HarnessSkill {
+  id: string;
+  displayName: string;
+  description: string;
+  version: string;
+  platforms: string[];
+}
+
 export interface HarnessSession {
   id: string;
   owner: string;

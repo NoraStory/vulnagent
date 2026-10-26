@@ -20,6 +20,7 @@ import type {
   HarnessEvent,
   HarnessMessage,
   HarnessSession,
+  HarnessSkill,
   HarnessToolCall,
   HarnessToolSpec
 } from "../lib/types";
@@ -234,11 +235,21 @@ export function AssistantPage() {
   const [error, setError] = useState("");
   const [passwords, setPasswords] = useState<Record<string, string>>({});
   const [pendingMode, setPendingMode] = useState<HarnessApprovalMode>("each");
+  const [skills, setSkills] = useState<HarnessSkill[]>([]);
+  const [activeSkillId, setActiveSkillId] = useState("");
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashQuery, setSlashQuery] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const active = sessions.find((session) => session.id === activeId);
   const mode = active?.approvalMode ?? pendingMode;
   const modeHint = approvalModes.find((item) => item.value === mode)?.hint ?? "";
+  const activeSkill = skills.find((item) => item.id === activeSkillId);
+  const slashMatches = slashOpen
+    ? skills.filter((item) => `${item.id} ${item.displayName}`.toLowerCase().includes(slashQuery))
+    : [];
   const pendingApproval = items.find(
     (item): item is Extract<Item, { kind: "approval" }> =>
       item.kind === "approval" && item.status === "pending"
@@ -254,6 +265,12 @@ export function AssistantPage() {
         setEnabled(result.enabled);
         setModel(result.model);
         setTools(result.tools ?? []);
+      })
+      .catch(() => undefined);
+    api
+      .harnessSkills()
+      .then((result) => {
+        if (mounted) setSkills(result.skills ?? []);
       })
       .catch(() => undefined);
     return () => {
@@ -391,15 +408,30 @@ export function AssistantPage() {
   }
 
   async function send(text: string) {
-    const content = text.trim();
-    if (!content || busy || !enabled || hasPendingApproval) return;
+    const raw = text.trim();
+    if ((!raw && !activeSkillId) || busy || !enabled || hasPendingApproval) return;
+    let content = raw;
+    let skillId = activeSkillId;
+    if (raw.startsWith("/")) {
+      const [head, ...rest] = raw.split(/\s+/);
+      const id = head.slice(1);
+      if (skills.some((item) => item.id === id)) {
+        skillId = id;
+        content = rest.join(" ").trim();
+      }
+    }
+    if (!content) {
+      content = "请按技能指引开始：先说明你能做的诊断项，然后等待我描述具体问题。";
+    }
+    if (skillId && skillId !== activeSkillId) setActiveSkillId(skillId);
     setError("");
     setBusy(true);
     setInput("");
+    setSlashOpen(false);
     try {
       const sessionId = await ensureSession(content);
       setItems((prev) => [...prev, { key: `u-${Date.now()}`, kind: "user", content }]);
-      await api.harnessChat(sessionId, content, handleEvent);
+      await api.harnessChat(sessionId, content, skillId || undefined, handleEvent);
       const refreshed = await api.harnessSessions();
       setSessions(refreshed.sessions ?? []);
     } catch (err) {
@@ -470,6 +502,14 @@ export function AssistantPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "切换权限失败");
     }
+  }
+
+  function selectSkill(skill: HarnessSkill) {
+    setActiveSkillId(skill.id);
+    setInput("");
+    setSlashOpen(false);
+    setSlashQuery("");
+    requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   if (!enabled) {
@@ -658,6 +698,48 @@ export function AssistantPage() {
         )}
 
         <footer className="shrink-0 border-t border-line px-4 py-3">
+          {activeSkill && (
+            <div className="mb-2 flex items-center gap-2 rounded-[8px] border border-line bg-subtle/60 px-2.5 py-1.5 text-[11.5px] text-ink2">
+              <Sparkles size={12} className="text-brand" />
+              <span>技能</span>
+              <span className="mono text-ink">/{activeSkill.id}</span>
+              <span className="min-w-0 flex-1 truncate text-ink3">{activeSkill.displayName}</span>
+              <button
+                type="button"
+                className="rounded p-0.5 text-ink3 transition-colors hover:text-ink"
+                onClick={() => setActiveSkillId("")}
+                aria-label="退出技能"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          {slashOpen && slashMatches.length > 0 && (
+            <div className="mb-2 max-h-[220px] overflow-y-auto rounded-[10px] border border-line bg-surface p-1 shadow-[0_8px_24px_rgba(16,24,40,0.10)]">
+              {slashMatches.map((skill, index) => (
+                <button
+                  key={skill.id}
+                  type="button"
+                  onMouseEnter={() => setSlashIndex(index)}
+                  onClick={() => selectSkill(skill)}
+                  className={`flex w-full flex-col items-start gap-0.5 rounded-[8px] px-2.5 py-2 text-left ${
+                    index === slashIndex ? "bg-brand-soft" : "hover:bg-subtle"
+                  }`}
+                >
+                  <span className="flex w-full items-center gap-2">
+                    <span className="mono text-[11.5px] text-brand-strong">/{skill.id}</span>
+                    <span className="truncate text-[11.5px] text-ink2">{skill.displayName}</span>
+                    {skill.platforms?.length > 0 && (
+                      <span className="ml-auto shrink-0 text-[10px] text-ink3">{skill.platforms.join("/")}</span>
+                    )}
+                  </span>
+                  <span className="line-clamp-2 text-[10.5px] leading-[15px] text-ink3">{skill.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="text-[11px] text-ink3">权限</span>
             <div className="flex rounded-[8px] border border-line bg-subtle/70 p-0.5">
@@ -745,16 +827,51 @@ export function AssistantPage() {
 
           <div className="flex items-end gap-2">
             <textarea
+              ref={inputRef}
               className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"
               rows={2}
               placeholder={
                 hasPendingApproval
                   ? "请先处理待审批操作，再继续提问"
-                  : "描述你的问题，Enter 发送，Shift + Enter 换行"
+                  : skills.length > 0
+                    ? "输入 / 调用运维技能，Enter 发送，Shift + Enter 换行"
+                    : "描述你的问题，Enter 发送，Shift + Enter 换行"
               }
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                setInput(value);
+                if (value.startsWith("/") && !value.includes(" ")) {
+                  setSlashQuery(value.slice(1).toLowerCase());
+                  setSlashOpen(true);
+                  setSlashIndex(0);
+                } else {
+                  setSlashOpen(false);
+                }
+              }}
               onKeyDown={(event) => {
+                if (slashOpen && slashMatches.length > 0) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setSlashIndex((index) => (index + 1) % slashMatches.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length);
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    selectSkill(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setSlashOpen(false);
+                    return;
+                  }
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void send(input);
@@ -766,7 +883,7 @@ export function AssistantPage() {
               type="button"
               className="btn btn-primary h-[42px] w-[42px] shrink-0 px-0"
               onClick={() => void send(input)}
-              disabled={busy || hasPendingApproval || !input.trim()}
+              disabled={busy || hasPendingApproval || (!input.trim() && !activeSkillId)}
               aria-label="发送"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

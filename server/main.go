@@ -75,6 +75,9 @@ type App struct {
 
 	// jobKey 用于主机作业签名（与 Agent 令牌一致）
 	jobKey []byte
+
+	// skills 运维技能注册表（从 skill/*.zip 解压到 skills/）
+	skills *SkillRegistry
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -87,6 +90,7 @@ func (a *App) routes(mux *http.ServeMux) {
 
 	// Agent Harness：会话、流式对话与人工审批
 	mux.HandleFunc("GET /api/v1/agent/tools", a.handleHarnessTools)
+	mux.HandleFunc("GET /api/v1/agent/skills", a.handleHarnessSkills)
 	mux.HandleFunc("GET /api/v1/agent/sessions", a.handleHarnessSessions)
 	mux.HandleFunc("POST /api/v1/agent/sessions", a.handleHarnessCreateSession)
 	mux.HandleFunc("PATCH /api/v1/agent/sessions/{id}", a.handleHarnessUpdateSession)
@@ -211,6 +215,8 @@ func runServer() {
 		selfDigest: computeSelfSBOMDigest(), scanDebounce: scanDebounceFromEnv(),
 		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter(), jobKey: []byte(agentToken)}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
+	app.skills = loadSkills()
+	slog.Info("运维技能已加载", "count", len(app.skills.List()), "dir", app.skills.root)
 	app.initHarness(cfg)
 	app.cleanupOldJobs()
 	defer func() {

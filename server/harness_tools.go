@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"vulnagent/server/internal/agentexec"
 	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/domain/harness"
 	"vulnagent/server/internal/domain/vuln"
@@ -22,6 +23,9 @@ func (a *App) harnessTools() []harness.Tool {
 		a.toolGetAsset(),
 		a.toolHostMetrics(),
 		a.toolHostHardware(),
+		a.toolListSkillFiles(),
+		a.toolReadSkillFile(),
+		a.toolHostDiagnose(),
 		a.toolListFindings(),
 		a.toolGetFinding(),
 		a.toolSearchCVEs(),
@@ -262,6 +266,99 @@ func (a *App) toolHostHardware() harness.Tool {
 				"ports":         portsList,
 				"portsTotal":    len(latest.Ports),
 			}, nil
+		},
+	}
+}
+
+// ---------- 技能文档与语义诊断 ----------
+
+func (a *App) toolListSkillFiles() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("list_skill_files", "列出运维技能目录下的文件（相对路径与大小），用于按需加载技能文档。", harness.RiskLow, "viewer", `{
+			"type":"object","properties":{
+				"skillId":{"type":"string","description":"技能 ID，例如 tencentos-expert 或 winskill"},
+				"prefix":{"type":"string","description":"可选，仅列出该前缀下的文件，例如 guides/ 或 references/disk/"}
+			},"required":["skillId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				SkillID string `json:"skillId"`
+				Prefix  string `json:"prefix"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			files, err := a.skills.Files(in.SkillID, in.Prefix)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"count": len(files), "files": files}, nil
+		},
+	}
+}
+
+func (a *App) toolReadSkillFile() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("read_skill_file", "读取运维技能目录内的文档（默认 SKILL.md，单文件最多 256KB），按技能指引渐进加载。", harness.RiskLow, "viewer", `{
+			"type":"object","properties":{
+				"skillId":{"type":"string"},
+				"path":{"type":"string","description":"技能目录内的相对路径，例如 SKILL.md、guides/workflow.md"}
+			},"required":["skillId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				SkillID string `json:"skillId"`
+				Path    string `json:"path"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			content, truncated, _, err := a.skills.ReadFile(in.SkillID, in.Path, 256<<10)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"skillId":   in.SkillID,
+				"path":      in.Path,
+				"content":   content,
+				"truncated": truncated,
+			}, nil
+		},
+	}
+}
+
+func (a *App) toolHostDiagnose() harness.Tool {
+	queries := agentexec.DiagnoseQueries()
+	enum, _ := json.Marshal(queries)
+	params := fmt.Sprintf(`{
+		"type":"object","properties":{
+			"assetId":{"type":"integer","description":"资产 ID"},
+			"query":{"type":"string","enum":%s,"description":"诊断项"},
+			"target":{"type":"string","description":"可选目标：主机名/IP（net_ping/net_latency/dns_nic）或磁盘设备（disk_health）"},
+			"limit":{"type":"integer","minimum":1,"maximum":500}
+		},"required":["assetId","query"],"additionalProperties":false}`, enum)
+	return harness.Tool{
+		Spec: toolSpec("host_diagnose", "对目标主机执行只读语义诊断（磁盘、内存/OOM、网络、服务、日志、时间同步、软件包、安全基线、更新、启动项、事件日志、已装程序、会话、计划任务、共享、DNS、防火墙、证书、IIS、存储池、备份、容器等）。命令由 Agent 内置目录固定，不接受任意 shell。", harness.RiskLow, "operator", params),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				AssetID int64  `json:"assetId"`
+				Query   string `json:"query"`
+				Target  string `json:"target"`
+				Limit   int    `json:"limit"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			if in.AssetID <= 0 {
+				return nil, fmt.Errorf("assetId 必须为正整数")
+			}
+			if !agentexec.SupportedDiagnoseQuery(in.Query) {
+				return nil, fmt.Errorf("不支持的诊断项：%s", in.Query)
+			}
+			params := map[string]any{
+				"query":  strings.ToLower(strings.TrimSpace(in.Query)),
+				"target": strings.TrimSpace(in.Target),
+				"limit":  in.Limit,
+			}
+			return a.runHostActionWithWait(in.AssetID, "diagnose", params, "Agent 助手", 45*time.Second)
 		},
 	}
 }
@@ -766,6 +863,11 @@ func (a *App) toolServiceAction() harness.Tool {
 
 // runHostAction 排队并等待主机作业，返回作业结果
 func (a *App) runHostAction(assetID int64, action string, params any, actor string) (any, error) {
+	return a.runHostActionWithWait(assetID, action, params, actor, 20*time.Second)
+}
+
+// runHostActionWithWait 排队并等待主机作业，wait 控制最长等待时间
+func (a *App) runHostActionWithWait(assetID int64, action string, params any, actor string, wait time.Duration) (any, error) {
 	if _, err := a.assetHostname(assetID); err != nil {
 		return nil, fmt.Errorf("资产不存在：%w", err)
 	}
@@ -779,7 +881,7 @@ func (a *App) runHostAction(assetID int64, action string, params any, actor stri
 	}
 	a.auditAs(actor, "operator", "127.0.0.1", "harness", "host.job.queue", job.ID,
 		fmt.Sprintf("%s @ asset:%d", action, assetID))
-	done, err := a.waitHostJob(job.ID, 20*time.Second)
+	done, err := a.waitHostJob(job.ID, wait)
 	if err != nil {
 		return nil, err
 	}
