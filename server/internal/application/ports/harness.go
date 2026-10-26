@@ -53,6 +53,8 @@ type HarnessRepository interface {
 	GetSession(ctx context.Context, id string) (harness.Session, error)
 	ListSessions(ctx context.Context, owner string, limit int) ([]harness.Session, error)
 	TouchSession(ctx context.Context, id, at string) error
+	// UpdateSessionApprovalMode 更新会话审批模式
+	UpdateSessionApprovalMode(ctx context.Context, id string, mode harness.ApprovalMode, at string) error
 
 	AppendMessage(ctx context.Context, m harness.Message) (int64, error)
 	Messages(ctx context.Context, sessionID string, limit int) ([]harness.Message, error)

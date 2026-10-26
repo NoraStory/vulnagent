@@ -7,6 +7,7 @@ import type {
   Finding,
   FindingDetail,
   HarnessApproval,
+  HarnessApprovalMode,
   HarnessEvent,
   HarnessMessagesResponse,
   HarnessSession,
@@ -496,8 +497,24 @@ export const api = {
     return request("/agent/sessions");
   },
 
-  harnessCreateSession(title: string): Promise<{ session: HarnessSession }> {
-    return request("/agent/sessions", { method: "POST", body: JSON.stringify({ title }) });
+  harnessCreateSession(
+    title: string,
+    approvalMode?: HarnessApprovalMode
+  ): Promise<{ session: HarnessSession }> {
+    return request("/agent/sessions", {
+      method: "POST",
+      body: JSON.stringify({ title, approvalMode: approvalMode ?? "" })
+    });
+  },
+
+  harnessUpdateSession(
+    id: string,
+    approvalMode: HarnessApprovalMode
+  ): Promise<{ session: HarnessSession }> {
+    return request(`/agent/sessions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ approvalMode })
+    });
   },
 
   harnessMessages(id: string): Promise<HarnessMessagesResponse> {

@@ -876,7 +876,7 @@ internal/application/harness 注册表、对话循环、九道闸门、审批、
 internal/application/ports   LLM 与 HarnessRepository 端口
 internal/infrastructure/llm/openai  OpenAI 兼容 Chat Completions（含 tools）
 internal/infrastructure/sqlite/harness_repo.go  四张表的仓储
-harness_tools.go             16 个工具的绑定（读工具走 mode=ro 连接）
+harness_tools.go             29 个工具的绑定（读工具走 mode=ro 连接）
 harness_handlers.go          SSE 会话接口与审批接口
 ```
 
@@ -886,10 +886,10 @@ harness_handlers.go          SSE 会话接口与审批接口
 
 1. **身份不可由模型决定**：主体只来自服务端会话，模型输出不能携带用户名/角色。
 2. **静态工具表**：工具编译期注册，未知工具直接拒绝。
-3. **参数校验**：必须是合法 JSON 对象且 ≤ 8KB。
+3. **参数校验**：必须是合法 JSON 对象且 ≤ 64KB。
 4. **最小权限**：按角色裁剪工具，服务端再次校验，越权直接返回拒绝结果。
 5. **只读连接**：读工具使用 `sqlite.OpenReadOnly`（`mode=ro`），从连接层杜绝写入。
-6. **风险分级**：medium/high 写操作必须创建审批，审批未通过不执行。
+6. **风险分级与会话权限**：medium/high 默认必须人工审批；会话可切换 `each`（每次审批）、`smart`（模型判断，失败即转人工）、`full`（直接执行，`approver=auto:full` 留痕）三种模式，切换写 `agent.session.mode` 审计。
 7. **参数指纹**：审批绑定 `SHA-256(排序后的参数 JSON)`，参数任何变化即失效。
 8. **一次性消费 + TTL**：审批 10 分钟过期，`approved` 后立即消费，重复处理返回 409。
 9. **再认证与限流**：high 风险需 5 分钟内口令再认证；每会话 20 次/分钟、每轮最多 4 步。
@@ -912,18 +912,19 @@ harness_handlers.go          SSE 会话接口与审批接口
 
 ### 7.5.4 交互流程
 
-1. `POST /agent/sessions` 建会话；`POST /agent/sessions/{id}/messages` 以 SSE 流式返回 `message / tool_call / tool_result / approval_required / done`。
-2. 遇到写操作：本轮暂停并返回审批卡片；前端展示工具、风险、参数与影响。
-3. `POST /agent/approvals/{id}` 批准或拒绝；high 风险需带口令。批准后立即执行并写入工具结果消息。
-4. `POST /agent/sessions/{id}/resume` 继续本轮，让模型汇总执行结果。
+1. `POST /agent/sessions` 建会话（可带 `approvalMode`）；`POST /agent/sessions/{id}/messages` 以 SSE 流式返回 `message / tool_call / tool_result / approval_required / done`。
+2. 输入框上方可切换 `each / smart / full` 权限；切换调用 `PATCH /agent/sessions/{id}`。
+3. 遇到需要人工的写操作：本轮暂停，输入框上方固定展示「批准并执行 / 拒绝」按钮（high 需口令），模型不得用文字索要确认。
+4. `POST /agent/approvals/{id}` 批准或拒绝；批准后立即执行并写入工具结果消息。
+5. `POST /agent/sessions/{id}/resume` 继续本轮，让模型汇总执行结果。
 
 ### 7.5.5 数据表
 
-`agent_sessions`、`agent_messages`（含 `tool_call_id`）、`agent_tool_calls`（参数指纹、风险、状态、审批人）、`agent_approvals`（指纹、TTL、一次性消费）。迁移见 `sqlite/migrations/0002_harness.sql`。
+`agent_sessions`（含 `approval_mode`）、`agent_messages`（含 `tool_call_id`）、`agent_tool_calls`（参数指纹、风险、状态、审批人/自动放行人）、`agent_approvals`（指纹、TTL、一次性消费）。迁移见 `sqlite/migrations/0002_harness.sql` 与 `0008_session_mode.sql`。
 
 ### 7.5.6 验收
 
-- 单元测试覆盖：参数指纹稳定性、只读循环、写操作审批、一次性消费、越权拒绝、高风险再认证、会话隔离。
+- 单元测试覆盖：参数指纹稳定性、只读循环、写操作审批、一次性消费、越权拒绝、高风险再认证、会话隔离、三种审批模式（含 AI 判断放行/转人工与解析兜底）。
 - 真实联调：火山方舟（OpenAI 兼容）完成「查询 → 工具调用 → 结论」与「改状态 → 审批 → 口令 → 执行 → 汇总」两条链路。
 
 ---

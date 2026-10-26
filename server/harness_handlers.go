@@ -19,10 +19,12 @@ func harnessSystemPrompt() string {
 工作规则：
 1. 只能通过已注册工具获取数据，不要臆造 CVE、资产、漏洞或统计数字。
 2. 回答必须引用真实 ID（如 CVE-2024-3094、finding 123、asset 7），并说明数据来源（工具名）。
-3. 涉及写操作（复扫、改状态、建工单、改映射、自检）时，先解释影响，再调用工具；系统会要求人工审批，不要假设审批已通过。
-4. 不要输出任何口令、令牌、密钥；不要尝试读取系统文件或执行命令。
-5. 涉及主机性能、硬件、服务或端口时，先用 host_metrics / host_hardware 读取 Agent 上报的遥测；若未上报或 sampledAt 过旧，必须明确说明数据缺失或已过期，不要用存活心跳推断性能。
-6. 用简体中文、结构化短段落回答，先给结论，再给依据与建议。`
+3. 涉及写操作时直接调用工具，不要用文字征求确认，不要输出「请回复确认」一类话术；系统会在输入框上方展示批准/拒绝按钮，由用户决定。
+4. 需要执行命令时由你自行选择合适的命令与终端，不要询问用户用哪个工具或终端；Windows 优先使用 host_metrics、host_hardware 等专用只读工具，其次才是白名单命令（如 systeminfo、ipconfig、netstat）。白名单不支持时说明限制并改用其他工具，不要请求扩大权限。
+5. 会话权限由用户在界面切换（每次审批 / 智能审批 / 完全操作），你无法修改，也不要假设当前处于哪种模式。
+6. 不要输出任何口令、令牌、密钥；不要尝试读取系统文件或执行破坏性命令。
+7. 涉及主机性能、硬件、服务或端口时，先用 host_metrics / host_hardware 读取 Agent 上报的遥测；若未上报或 sampledAt 过旧，必须明确说明数据缺失或已过期，不要用存活心跳推断性能。
+8. 用简体中文、结构化短段落回答，先给结论，再给依据与建议。`
 }
 
 func principalOf(u *User) harnessapp.Principal {
@@ -85,15 +87,49 @@ func (a *App) handleHarnessCreateSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req struct {
-		Title string `json:"title"`
+		Title        string `json:"title"`
+		ApprovalMode string `json:"approvalMode"`
 	}
 	_ = readJSON(r, &req)
-	sess, err := a.harness.CreateSession(r.Context(), principalOf(u), req.Title)
+	if req.ApprovalMode != "" && !harness.ValidApprovalMode(req.ApprovalMode) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "approvalMode 必须为 each、smart 或 full")
+		return
+	}
+	sess, err := a.harness.CreateSessionWithMode(r.Context(), principalOf(u), req.Title, req.ApprovalMode)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "创建会话失败")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"session": sess})
+}
+
+// handleHarnessUpdateSession 切换会话审批模式
+func (a *App) handleHarnessUpdateSession(w http.ResponseWriter, r *http.Request) {
+	u, ok := requireRole(w, r, "viewer")
+	if !ok {
+		return
+	}
+	if !a.requireHarness(w) {
+		return
+	}
+	var req struct {
+		ApprovalMode string `json:"approvalMode"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+		return
+	}
+	if !harness.ValidApprovalMode(req.ApprovalMode) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "approvalMode 必须为 each、smart 或 full")
+		return
+	}
+	sess, err := a.harness.SetApprovalMode(r.Context(), principalOf(u), r.PathValue("id"), req.ApprovalMode)
+	if err != nil {
+		writeHarnessErr(w, err)
+		return
+	}
+	a.audit(r, "agent.session.mode", sess.ID, "审批模式切换为 "+string(sess.ApprovalMode))
+	writeJSON(w, http.StatusOK, map[string]any{"session": sess})
 }
 
 // handleHarnessMessages 读取会话消息

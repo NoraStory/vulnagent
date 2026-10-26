@@ -21,17 +21,18 @@ var _ ports.HarnessRepository = (*HarnessRepo)(nil)
 
 // CreateSession 新建会话
 func (r *HarnessRepo) CreateSession(ctx context.Context, s harness.Session) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO agent_sessions(id, owner, role, title, created_at, updated_at)
-		VALUES(?,?,?,?,?,?)`, s.ID, s.Owner, s.Role, s.Title, s.CreatedAt, s.UpdatedAt)
+	mode := harness.NormalizeApprovalMode(string(s.ApprovalMode))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO agent_sessions(id, owner, role, title, approval_mode, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?)`, s.ID, s.Owner, s.Role, s.Title, string(mode), s.CreatedAt, s.UpdatedAt)
 	return err
 }
 
 // GetSession 读取会话
 func (r *HarnessRepo) GetSession(ctx context.Context, id string) (harness.Session, error) {
 	var s harness.Session
-	err := r.db.QueryRowContext(ctx, `SELECT id, owner, role, title, created_at, updated_at
+	err := r.db.QueryRowContext(ctx, `SELECT id, owner, role, title, approval_mode, created_at, updated_at
 		FROM agent_sessions WHERE id = ?`, id).
-		Scan(&s.ID, &s.Owner, &s.Role, &s.Title, &s.CreatedAt, &s.UpdatedAt)
+		Scan(&s.ID, &s.Owner, &s.Role, &s.Title, &s.ApprovalMode, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return harness.Session{}, ports.ErrNotFound
 	}
@@ -40,7 +41,7 @@ func (r *HarnessRepo) GetSession(ctx context.Context, id string) (harness.Sessio
 
 // ListSessions 按最近更新时间列出某账号的会话
 func (r *HarnessRepo) ListSessions(ctx context.Context, owner string, limit int) ([]harness.Session, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, owner, role, title, created_at, updated_at
+	rows, err := r.db.QueryContext(ctx, `SELECT id, owner, role, title, approval_mode, created_at, updated_at
 		FROM agent_sessions WHERE owner = ? ORDER BY updated_at DESC LIMIT ?`, owner, limit)
 	if err != nil {
 		return nil, err
@@ -49,12 +50,25 @@ func (r *HarnessRepo) ListSessions(ctx context.Context, owner string, limit int)
 	out := make([]harness.Session, 0, limit)
 	for rows.Next() {
 		var s harness.Session
-		if err := rows.Scan(&s.ID, &s.Owner, &s.Role, &s.Title, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Owner, &s.Role, &s.Title, &s.ApprovalMode, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// UpdateSessionApprovalMode 更新会话审批模式
+func (r *HarnessRepo) UpdateSessionApprovalMode(ctx context.Context, id string, mode harness.ApprovalMode, at string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE agent_sessions SET approval_mode = ?, updated_at = ? WHERE id = ?`,
+		string(harness.NormalizeApprovalMode(string(mode))), at, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ports.ErrNotFound
+	}
+	return nil
 }
 
 // TouchSession 刷新会话更新时间

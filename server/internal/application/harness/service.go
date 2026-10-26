@@ -117,24 +117,47 @@ func (s *Service) Tools(role string) []harness.ToolSpec {
 	return out
 }
 
-// CreateSession 新建会话
+// CreateSession 新建会话（默认每次审批）
 func (s *Service) CreateSession(ctx context.Context, p Principal, title string) (harness.Session, error) {
+	return s.CreateSessionWithMode(ctx, p, title, string(harness.ApprovalEach))
+}
+
+// CreateSessionWithMode 按指定审批模式新建会话
+func (s *Service) CreateSessionWithMode(ctx context.Context, p Principal, title, mode string) (harness.Session, error) {
 	now := clock.FormatNow()
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "未命名会话"
 	}
 	sess := harness.Session{
-		ID:        randomID(),
-		Owner:     p.Username,
-		Role:      p.Role,
-		Title:     title,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           randomID(),
+		Owner:        p.Username,
+		Role:         p.Role,
+		Title:        title,
+		ApprovalMode: harness.NormalizeApprovalMode(mode),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := s.Repo.CreateSession(ctx, sess); err != nil {
 		return harness.Session{}, err
 	}
+	return sess, nil
+}
+
+// SetApprovalMode 切换会话审批模式
+func (s *Service) SetApprovalMode(ctx context.Context, p Principal, sessionID, mode string) (harness.Session, error) {
+	sess, err := s.session(ctx, p, sessionID)
+	if err != nil {
+		return harness.Session{}, err
+	}
+	normalized := harness.NormalizeApprovalMode(mode)
+	now := clock.FormatNow()
+	if err := s.Repo.UpdateSessionApprovalMode(ctx, sessionID, normalized, now); err != nil {
+		return harness.Session{}, err
+	}
+	sess.ApprovalMode = normalized
+	sess.UpdatedAt = now
+	slog.Info("Harness 审批模式切换", "session", sessionID, "mode", normalized, "actor", p.Username)
 	return sess, nil
 }
 
@@ -456,13 +479,24 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 	now := clock.FormatNow()
 	hash := harness.ArgsHash(rawArgs)
 
-	// 闸门 5/6/7：写操作必须审批，审批按参数指纹绑定
+	// 闸门 5：按会话审批模式决定写操作是否放行
+	auto := false
+	autoNote := ""
 	if tool.Spec.Risk.NeedsApproval() {
+		auto, autoNote = s.autoDecision(ctx, sess, tool, rawArgs)
+	}
+
+	// 闸门 6/7：需要人工时创建审批，审批按参数指纹绑定
+	if tool.Spec.Risk.NeedsApproval() && !auto {
 		if ap, found, _ := s.Repo.PendingApproval(ctx, sess.ID, call.Name, hash); found {
 			emit(Event{Type: "approval_required", Data: ap})
 			return "", true, nil
 		}
 		expires := clock.Format(time.Now().Add(s.Opts.ApprovalTTL))
+		reason := approvalReason(tool)
+		if autoNote != "" {
+			reason = autoNote + "；" + reason
+		}
 		ap := harness.Approval{
 			ID:          randomID(),
 			SessionID:   sess.ID,
@@ -473,7 +507,7 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 			Risk:        string(tool.Spec.Risk),
 			RequestedBy: p.Username,
 			Status:      "pending",
-			Reason:      approvalReason(tool),
+			Reason:      reason,
 			RequestedAt: now,
 			ExpiresAt:   expires,
 		}
@@ -488,7 +522,11 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 		return "", true, nil
 	}
 
-	// 只读或低风险：直接执行
+	// 执行：只读、或按会话模式自动放行；自动放行在工具调用记录中标注 approver
+	approver := ""
+	if auto {
+		approver = "auto:" + string(sess.ApprovalMode)
+	}
 	callID, _ := s.Repo.RecordToolCall(ctx, harness.ToolCallRecord{
 		SessionID: sess.ID, Tool: call.Name, Args: string(rawArgs), ArgsHash: hash,
 		Risk: string(tool.Spec.Risk), Status: "running", Actor: p.Username, CreatedAt: now,
@@ -503,7 +541,7 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 		text = Redact(jsonString(result))
 	}
 	if callID > 0 {
-		_ = s.Repo.FinishToolCall(ctx, callID, status, text, errText, "", clock.FormatNow())
+		_ = s.Repo.FinishToolCall(ctx, callID, status, text, errText, approver, clock.FormatNow())
 	}
 	emit(Event{Type: "tool_result", Data: map[string]any{
 		"tool": call.Name, "ok": runErr == nil, "result": json.RawMessage(text),
@@ -512,6 +550,73 @@ func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session,
 		return text, false, runErr
 	}
 	return text, false, nil
+}
+
+// smartJudgePrompt 智能模式下的自动放行判定提示
+const smartJudgePrompt = `你是 VulnAgent 的主机操作审批判定器。根据工具与参数，判断是否可以自动执行（无需人工点击确认）。
+仅在以下条件同时满足时放行：
+1) 操作范围明确限定在单个资产、单个文件或单条记录；
+2) 只读、可回滚或影响可忽略；
+3) 与用户当前诉求直接相关，参数完整无歧义；
+4) 不会中断服务，不会覆盖或删除关键配置，不会批量变更。
+必须拒绝并转人工：停止或禁用服务、删除或覆盖关键文件、回滚快照、批量或跨资产操作、生产核心组件升级、参数含糊或可能误伤。
+只输出 JSON，不要输出其他内容，例如 {"approve":true,"reason":"单文件只读，可自动执行"}。`
+
+// autoDecision 按会话审批模式判断是否跳过人工审批
+func (s *Service) autoDecision(ctx context.Context, sess harness.Session, tool harness.Tool, args json.RawMessage) (bool, string) {
+	switch sess.ApprovalMode {
+	case harness.ApprovalFull:
+		return true, ""
+	case harness.ApprovalSmart:
+		return s.aiJudge(ctx, tool, args)
+	default:
+		return false, ""
+	}
+}
+
+// aiJudge 由模型判断该次写操作能否自动执行；失败一律转人工
+func (s *Service) aiJudge(ctx context.Context, tool harness.Tool, args json.RawMessage) (bool, string) {
+	if s.LLM == nil {
+		return false, "AI 判断不可用，转人工审批"
+	}
+	resp, err := s.LLM.Chat(ctx, ports.LLMRequest{Messages: []ports.LLMMessage{
+		{Role: "system", Content: smartJudgePrompt},
+		{Role: "user", Content: fmt.Sprintf("工具：%s\n风险：%s\n说明：%s\n参数：%s",
+			tool.Spec.Name, tool.Spec.Risk, tool.Spec.Description, string(args))},
+	}})
+	if err != nil {
+		slog.Warn("AI 审批判断失败", "tool", tool.Spec.Name, "err", err)
+		return false, "AI 判断失败，转人工审批"
+	}
+	approve, reason := parseJudge(resp.Content)
+	if reason == "" {
+		if approve {
+			reason = "AI 判断可自动执行"
+		} else {
+			reason = "AI 判断需人工确认"
+		}
+	}
+	slog.Info("AI 审批判断", "tool", tool.Spec.Name, "approve", approve, "reason", reason)
+	return approve, reason
+}
+
+// parseJudge 解析判定结果，解析失败按拒绝处理
+func parseJudge(content string) (bool, string) {
+	text := strings.TrimSpace(content)
+	text = strings.Trim(text, "`")
+	if i := strings.Index(text, "{"); i >= 0 {
+		if j := strings.LastIndex(text, "}"); j > i {
+			text = text[i : j+1]
+		}
+	}
+	var v struct {
+		Approve bool   `json:"approve"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		return false, "AI 判断结果无法解析，转人工审批"
+	}
+	return v.Approve, strings.TrimSpace(v.Reason)
 }
 
 func (s *Service) appendMessage(ctx context.Context, sessionID, role, content string, calls []ports.LLMToolCall, toolCallID string) {

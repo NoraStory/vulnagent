@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -237,4 +238,148 @@ func TestSessionOwnership(t *testing.T) {
 	if err := svc.Chat(context.Background(), bob, sess.ID, "hi", func(Event) {}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("他人会话不应可对话，实际 %v", err)
 	}
+}
+
+// writeToolFor 构造一个可计数的写工具
+func writeToolFor(name string, risk harness.Risk, executed *atomic.Int32) harness.Tool {
+	return harness.Tool{
+		Spec: harness.ToolSpec{
+			Name: name, Description: "写操作", Risk: risk, MinRole: "operator",
+			Params: json.RawMessage(`{"type":"object","properties":{}}`),
+		},
+		Run: func(json.RawMessage) (any, error) {
+			executed.Add(1)
+			return map[string]any{"ok": true}, nil
+		},
+	}
+}
+
+func TestFullModeSkipsApproval(t *testing.T) {
+	var executed atomic.Int32
+	llm := &fakeLLM{responses: []ports.LLMResponse{
+		{ToolCalls: []ports.LLMToolCall{{ID: "c1", Name: "danger", Arguments: `{"x":1}`}}},
+		{Content: "已执行"},
+	}}
+	svc, _ := newTestService(t, llm, []harness.Tool{writeToolFor("danger", harness.RiskHigh, &executed)})
+	p := Principal{Username: "alice", Role: "operator"}
+
+	sess, err := svc.CreateSessionWithMode(context.Background(), p, "完全操作", "full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ApprovalMode != harness.ApprovalFull {
+		t.Fatalf("会话模式应为 full，实际 %s", sess.ApprovalMode)
+	}
+	got, err := svc.Session(context.Background(), p, sess.ID)
+	if err != nil || got.ApprovalMode != harness.ApprovalFull {
+		t.Fatalf("模式未持久化：%+v err=%v", got, err)
+	}
+
+	var approvalSeen bool
+	if err := svc.Chat(context.Background(), p, sess.ID, "直接执行", func(ev Event) {
+		if ev.Type == "approval_required" {
+			approvalSeen = true
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if approvalSeen {
+		t.Fatal("完全操作模式不应产生审批")
+	}
+	if executed.Load() != 1 {
+		t.Fatalf("完全操作模式应直接执行一次，实际 %d", executed.Load())
+	}
+
+	// 切回每次审批后应重新产生审批
+	if _, err := svc.SetApprovalMode(context.Background(), p, sess.ID, "each"); err != nil {
+		t.Fatal(err)
+	}
+	llm.idx = 0
+	llm.responses = []ports.LLMResponse{
+		{ToolCalls: []ports.LLMToolCall{{ID: "c2", Name: "danger", Arguments: `{"x":2}`}}},
+		{Content: "待审批"},
+	}
+	approvalSeen = false
+	if err := svc.Chat(context.Background(), p, sess.ID, "再执行一次", func(ev Event) {
+		if ev.Type == "approval_required" {
+			approvalSeen = true
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !approvalSeen || executed.Load() != 1 {
+		t.Fatalf("切回每次审批后应暂停并等待审批：approval=%v executed=%d", approvalSeen, executed.Load())
+	}
+}
+
+func TestSmartModeAIJudge(t *testing.T) {
+	t.Run("放行", func(t *testing.T) {
+		var executed atomic.Int32
+		llm := &fakeLLM{responses: []ports.LLMResponse{
+			{ToolCalls: []ports.LLMToolCall{{ID: "c1", Name: "snap", Arguments: `{"assetId":1}`}}},
+			{Content: "{\"approve\":true,\"reason\":\"单资产可回滚操作\"}"},
+			{Content: "已自动执行"},
+		}}
+		svc, _ := newTestService(t, llm, []harness.Tool{writeToolFor("snap", harness.RiskMedium, &executed)})
+		p := Principal{Username: "alice", Role: "operator"}
+		sess, err := svc.CreateSessionWithMode(context.Background(), p, "智能", "smart")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var approvalSeen bool
+		if err := svc.Chat(context.Background(), p, sess.ID, "创建快照", func(ev Event) {
+			if ev.Type == "approval_required" {
+				approvalSeen = true
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if approvalSeen || executed.Load() != 1 {
+			t.Fatalf("AI 放行后应自动执行：approval=%v executed=%d", approvalSeen, executed.Load())
+		}
+		if len(llm.requests) < 2 || llm.requests[1].Messages[0].Content != smartJudgePrompt {
+			t.Fatal("应先调用 AI 审批判断，再执行工具")
+		}
+	})
+
+	t.Run("转人工", func(t *testing.T) {
+		var executed atomic.Int32
+		llm := &fakeLLM{responses: []ports.LLMResponse{
+			{ToolCalls: []ports.LLMToolCall{{ID: "c1", Name: "svc", Arguments: `{"action":"stop"}`}}},
+			{Content: "{\"approve\":false,\"reason\":\"停止服务会影响业务\"}"},
+		}}
+		svc, _ := newTestService(t, llm, []harness.Tool{writeToolFor("svc", harness.RiskHigh, &executed)})
+		p := Principal{Username: "alice", Role: "operator"}
+		sess, err := svc.CreateSessionWithMode(context.Background(), p, "智能", "smart")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var approval harness.Approval
+		if err := svc.Chat(context.Background(), p, sess.ID, "停服务", func(ev Event) {
+			if ev.Type == "approval_required" {
+				approval = ev.Data.(harness.Approval)
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if approval.ID == "" {
+			t.Fatal("AI 拒绝放行时应转人工审批")
+		}
+		if !strings.Contains(approval.Reason, "停止服务会影响业务") {
+			t.Fatalf("审批理由应包含 AI 判断：%s", approval.Reason)
+		}
+		if executed.Load() != 0 {
+			t.Fatal("转人工时不应执行")
+		}
+	})
+
+	t.Run("解析兜底", func(t *testing.T) {
+		approve, reason := parseJudge("```json\n{\"approve\":true,\"reason\":\"ok\"}\n```")
+		if !approve || reason != "ok" {
+			t.Fatalf("代码块包裹应能解析：%v %q", approve, reason)
+		}
+		if approve, _ := parseJudge("无法判断"); approve {
+			t.Fatal("无法解析时应按拒绝处理")
+		}
+	})
 }

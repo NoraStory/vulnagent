@@ -16,6 +16,7 @@ import { formatTime, timeAgo } from "../lib/format";
 import { Markdown } from "../components/Markdown";
 import type {
   HarnessApproval,
+  HarnessApprovalMode,
   HarnessEvent,
   HarnessMessage,
   HarnessSession,
@@ -57,6 +58,13 @@ const riskClass: Record<string, string> = {
   medium: "bg-warnSoft text-warn",
   high: "bg-dangerSoft text-danger"
 };
+
+// 会话权限：每次审批 / AI 判断 / 完全操作
+const approvalModes: { value: HarnessApprovalMode; label: string; hint: string }[] = [
+  { value: "each", label: "每次审批", hint: "所有写操作都需要你点确认" },
+  { value: "smart", label: "智能审批", hint: "由 AI 判断是否需要你确认，拿不准就转人工" },
+  { value: "full", label: "完全操作", hint: "写操作自动执行，全部留痕" }
+];
 
 function parseResult(value: unknown): string {
   if (typeof value === "string") return value;
@@ -225,10 +233,17 @@ export function AssistantPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [passwords, setPasswords] = useState<Record<string, string>>({});
+  const [pendingMode, setPendingMode] = useState<HarnessApprovalMode>("each");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const active = sessions.find((session) => session.id === activeId);
-  const hasPendingApproval = items.some((item) => item.kind === "approval" && item.status === "pending");
+  const mode = active?.approvalMode ?? pendingMode;
+  const modeHint = approvalModes.find((item) => item.value === mode)?.hint ?? "";
+  const pendingApproval = items.find(
+    (item): item is Extract<Item, { kind: "approval" }> =>
+      item.kind === "approval" && item.status === "pending"
+  );
+  const hasPendingApproval = Boolean(pendingApproval);
 
   useEffect(() => {
     let mounted = true;
@@ -369,7 +384,7 @@ export function AssistantPage() {
   async function ensureSession(text: string): Promise<string> {
     if (activeId) return activeId;
     const title = text.length > 18 ? `${text.slice(0, 18)}…` : text;
-    const { session } = await api.harnessCreateSession(title);
+    const { session } = await api.harnessCreateSession(title, pendingMode);
     setSessions((prev) => [session, ...prev]);
     setActiveId(session.id);
     return session.id;
@@ -435,12 +450,25 @@ export function AssistantPage() {
 
   async function createSession() {
     try {
-      const { session } = await api.harnessCreateSession("排查会话");
+      const { session } = await api.harnessCreateSession("排查会话", pendingMode);
       setSessions((prev) => [session, ...prev]);
       setActiveId(session.id);
       setItems([]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "创建会话失败");
+    }
+  }
+
+  async function changeMode(next: HarnessApprovalMode) {
+    if (next === mode) return;
+    setPendingMode(next);
+    setError("");
+    if (!activeId) return;
+    try {
+      const { session } = await api.harnessUpdateSession(activeId, next);
+      setSessions((prev) => prev.map((item) => (item.id === session.id ? session : item)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "切换权限失败");
     }
   }
 
@@ -522,8 +550,8 @@ export function AssistantPage() {
             </span>
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold text-ink">{active?.title ?? "新会话"}</p>
-              <p className="text-[10.5px] text-ink3">
-                只读工具直接执行 · 写操作需审批 · 高风险需口令再认证
+              <p className="truncate text-[10.5px] text-ink3">
+                只读工具直接执行 · {modeHint || "写操作按权限模式处理"}
               </p>
             </div>
           </div>
@@ -577,7 +605,6 @@ export function AssistantPage() {
               );
             }
             if (item.kind === "approval") {
-              const high = item.approval.risk === "high";
               return (
                 <div
                   key={item.key}
@@ -598,35 +625,9 @@ export function AssistantPage() {
                     {item.approval.tool} {item.approval.args}
                   </pre>
                   {item.status === "pending" ? (
-                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                      {high && (
-                        <input
-                          className="input h-8 w-[220px]"
-                          type="password"
-                          placeholder="输入当前账号口令再认证"
-                          value={passwords[item.approval.id] ?? ""}
-                          onChange={(event) =>
-                            setPasswords((prev) => ({ ...prev, [item.approval.id]: event.target.value }))
-                          }
-                        />
-                      )}
-                      <button
-                        type="button"
-                        className="btn btn-primary h-8 px-3 text-[12px]"
-                        onClick={() => void decide(item.approval, "approve", item.key)}
-                      >
-                        <Check size={13} />
-                        批准并执行
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary h-8 px-3 text-[12px]"
-                        onClick={() => void decide(item.approval, "reject", item.key)}
-                      >
-                        <X size={13} />
-                        拒绝
-                      </button>
-                    </div>
+                    <p className="mt-2 text-[11.5px] text-warn">
+                      等待你在输入框上方点击「批准并执行」或「拒绝」
+                    </p>
                   ) : (
                     <p className="mt-2 text-[11.5px] text-ink2">
                       已{item.status === "approved" ? "批准并执行" : "拒绝"} · 审批一次性生效
@@ -657,13 +658,98 @@ export function AssistantPage() {
         )}
 
         <footer className="shrink-0 border-t border-line px-4 py-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-ink3">权限</span>
+            <div className="flex rounded-[8px] border border-line bg-subtle/70 p-0.5">
+              {approvalModes.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  title={option.hint}
+                  onClick={() => void changeMode(option.value)}
+                  className={`rounded-[6px] px-2.5 py-1 text-[11px] transition-colors ${
+                    mode === option.value
+                      ? option.value === "full"
+                        ? "bg-dangerSoft font-medium text-danger"
+                        : option.value === "smart"
+                          ? "bg-warnSoft font-medium text-warn"
+                          : "bg-surface font-medium text-ink shadow-sm"
+                      : "text-ink2 hover:text-ink"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10.5px] text-ink3">{modeHint}</span>
+          </div>
+
+          {mode === "full" && (
+            <p className="mb-2 flex items-start gap-1.5 rounded-[8px] bg-dangerSoft px-2.5 py-1.5 text-[11px] text-danger">
+              <ShieldAlert size={12} className="mt-0.5 shrink-0" />
+              完全操作：写操作不再弹审批，直接执行；全部记录在工具调用与操作轨迹中，请确认你了解风险。
+            </p>
+          )}
+
+          {pendingApproval && (
+            <div className="mb-2 rounded-[10px] border border-[#F5D9B8] bg-warnSoft/70 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-ink2">
+                <ShieldAlert size={13} className="text-warn" />
+                <span className="font-medium text-ink">待确认</span>
+                <span className="mono">{pendingApproval.approval.tool}</span>
+                <span className={`pill ${riskClass[pendingApproval.approval.risk] ?? ""}`}>
+                  {riskLabel[pendingApproval.approval.risk] ?? pendingApproval.approval.risk}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-ink3">{pendingApproval.approval.reason}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {pendingApproval.approval.risk === "high" && (
+                  <input
+                    className="input h-8 w-[220px]"
+                    type="password"
+                    placeholder="输入当前账号口令再认证"
+                    value={passwords[pendingApproval.approval.id] ?? ""}
+                    onChange={(event) =>
+                      setPasswords((prev) => ({ ...prev, [pendingApproval.approval.id]: event.target.value }))
+                    }
+                  />
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary h-8 px-3 text-[12px]"
+                  onClick={() => void decide(pendingApproval.approval, "approve", pendingApproval.key)}
+                >
+                  <Check size={13} />
+                  批准并执行
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary h-8 px-3 text-[12px]"
+                  onClick={() => void decide(pendingApproval.approval, "reject", pendingApproval.key)}
+                >
+                  <X size={13} />
+                  拒绝
+                </button>
+                <span className="text-[10.5px] text-ink3">
+                  有效期至 {formatTime(pendingApproval.approval.expiresAt)}
+                </span>
+                {pendingApproval.error && (
+                  <span className="flex items-center gap-1 text-[11px] text-danger">
+                    <AlertCircle size={12} />
+                    {pendingApproval.error}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
             <textarea
               className="input min-h-[42px] flex-1 resize-none py-2.5 leading-[19px]"
               rows={2}
               placeholder={
                 hasPendingApproval
-                  ? "请先处理上方的待审批操作，再继续提问"
+                  ? "请先处理待审批操作，再继续提问"
                   : "描述你的问题，Enter 发送，Shift + Enter 换行"
               }
               value={input}

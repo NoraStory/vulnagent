@@ -695,7 +695,7 @@ func (a *App) toolReadHostFile() harness.Tool {
 
 func (a *App) toolRunHostCommand() harness.Tool {
 	return harness.Tool{
-		Spec: toolSpec("run_host_command", "在目标主机执行白名单只读命令（高风险，需审批 + 口令再认证）。禁止 shell 拼接。", harness.RiskHigh, "operator", `{
+		Spec: toolSpec("run_host_command", "在目标主机执行白名单只读命令（高风险，需审批 + 口令再认证）。命令与终端由你按目标系统自行选择，不要询问用户；白名单之外会被拒绝。禁止 shell 拼接。", harness.RiskHigh, "operator", `{
 			"type":"object","properties":{
 				"assetId":{"type":"integer"},
 				"argv":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":20},

@@ -53,14 +53,48 @@ type Tool struct {
 	Run  func(args json.RawMessage) (any, error)
 }
 
+// ApprovalMode 会话级审批模式
+type ApprovalMode string
+
+const (
+	// ApprovalEach 每次写操作都需人工审批（默认）
+	ApprovalEach ApprovalMode = "each"
+	// ApprovalSmart 由模型判断是否需要人工审批
+	ApprovalSmart ApprovalMode = "smart"
+	// ApprovalFull 完全操作：写操作自动执行并留痕
+	ApprovalFull ApprovalMode = "full"
+)
+
+// NormalizeApprovalMode 归一化审批模式，非法值回落到每次审批
+func NormalizeApprovalMode(mode string) ApprovalMode {
+	switch ApprovalMode(strings.TrimSpace(mode)) {
+	case ApprovalSmart:
+		return ApprovalSmart
+	case ApprovalFull:
+		return ApprovalFull
+	default:
+		return ApprovalEach
+	}
+}
+
+// ValidApprovalMode 是否为已知审批模式
+func ValidApprovalMode(mode string) bool {
+	switch ApprovalMode(strings.TrimSpace(mode)) {
+	case ApprovalEach, ApprovalSmart, ApprovalFull:
+		return true
+	}
+	return false
+}
+
 // Session Agent 会话
 type Session struct {
-	ID        string `json:"id"`
-	Owner     string `json:"owner"`
-	Role      string `json:"role"`
-	Title     string `json:"title"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID           string       `json:"id"`
+	Owner        string       `json:"owner"`
+	Role         string       `json:"role"`
+	Title        string       `json:"title"`
+	ApprovalMode ApprovalMode `json:"approvalMode"`
+	CreatedAt    string       `json:"createdAt"`
+	UpdatedAt    string       `json:"updatedAt"`
 }
 
 // Message 会话消息

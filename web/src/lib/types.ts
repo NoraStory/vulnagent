@@ -411,11 +411,14 @@ export interface HarnessToolSpec {
   params: unknown;
 }
 
+export type HarnessApprovalMode = "each" | "smart" | "full";
+
 export interface HarnessSession {
   id: string;
   owner: string;
   role: Role;
   title: string;
+  approvalMode: HarnessApprovalMode;
   createdAt: string;
   updatedAt: string;
 }

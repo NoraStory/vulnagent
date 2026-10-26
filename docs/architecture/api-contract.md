@@ -879,7 +879,17 @@ vulnagent_selfcheck_failed 0
 
 ### POST /agent/sessions
 
-请求 `{ "title": "排查 P0" }`，返回 `{ "session": { "id": "…", "owner": "admin", … } }`。会话按账号隔离，他人会话一律 403。
+请求 `{ "title": "排查 P0", "approvalMode": "each" }`，返回 `{ "session": { "id": "…", "owner": "admin", "approvalMode": "each", … } }`。会话按账号隔离，他人会话一律 403。
+
+`approvalMode` 为会话级权限，缺省 `each`：
+
+| 值 | 名称 | 行为 |
+|---|---|---|
+| `each` | 每次审批 | 所有 medium/high 工具都必须人工点击批准；high 还需口令再认证 |
+| `smart` | 智能审批 | 由模型判断能否自动执行；拿不准、判断失败或解析失败一律转人工审批 |
+| `full` | 完全操作 | medium/high 工具直接执行，不再弹审批；工具调用记录 `approver=auto:full`，审批模式切换写审计 |
+
+切换模式：`PATCH /agent/sessions/{id}`，请求 `{ "approvalMode": "smart" }`，返回 `{ "session": {…} }`；仅会话属主可改，变更写 `agent.session.mode` 审计。
 
 ### GET /agent/sessions
 

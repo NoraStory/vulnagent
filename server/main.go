@@ -89,6 +89,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/agent/tools", a.handleHarnessTools)
 	mux.HandleFunc("GET /api/v1/agent/sessions", a.handleHarnessSessions)
 	mux.HandleFunc("POST /api/v1/agent/sessions", a.handleHarnessCreateSession)
+	mux.HandleFunc("PATCH /api/v1/agent/sessions/{id}", a.handleHarnessUpdateSession)
 	mux.HandleFunc("GET /api/v1/agent/sessions/{id}/messages", a.handleHarnessMessages)
 	mux.HandleFunc("POST /api/v1/agent/sessions/{id}/messages", a.handleHarnessChat)
 	mux.HandleFunc("POST /api/v1/agent/sessions/{id}/resume", a.handleHarnessResume)
