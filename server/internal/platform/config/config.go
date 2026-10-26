@@ -3,11 +3,13 @@
 package config
 
 import (
+	"bufio"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -65,7 +67,9 @@ func (c Config) HarnessEnabled() bool {
 
 // Load 读取环境变量并填充默认值。缺失项一律回落到默认值，不返回错误，
 // 避免任何一项拼写错误导致服务无法启动。
+// 首次调用时会尝试加载 .env（已存在的环境变量优先，不被覆盖）。
 func Load() Config {
+	envOnce.Do(loadEnvFile)
 	dataDir := strings.TrimSpace(os.Getenv("VA_DATA_DIR"))
 	if dataDir == "" {
 		dataDir = DefaultDataDir
@@ -89,6 +93,60 @@ func Load() Config {
 		LLMBaseURL:     strings.TrimSpace(os.Getenv("VA_LLM_BASE_URL")),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("VA_LLM_API_KEY")),
 		LLMModel:       strings.TrimSpace(os.Getenv("VA_LLM_MODEL")),
+	}
+}
+
+var envOnce sync.Once
+
+// loadEnvFile 读取 .env 并注入缺失的环境变量。
+// 查找顺序：VA_ENV_FILE 指定的文件 → 当前目录 .env → 上级目录 .env。
+// 已存在的环境变量不会被覆盖，便于命令行临时改配置。
+func loadEnvFile() {
+	var candidates []string
+	if path := strings.TrimSpace(os.Getenv("VA_ENV_FILE")); path != "" {
+		candidates = []string{path}
+	} else {
+		candidates = []string{".env", filepath.Join("..", ".env")}
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		applyEnvFile(string(data))
+		return
+	}
+}
+
+// applyEnvFile 解析 KEY=VALUE 行，支持 # 注释、export 前缀与单双引号。
+func applyEnvFile(content string) {
+	content = strings.TrimPrefix(content, "\ufeff")
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') ||
+				(value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		_ = os.Setenv(key, value)
 	}
 }
 

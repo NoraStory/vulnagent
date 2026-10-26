@@ -1085,10 +1085,13 @@ go build -o bin/vulnagent.exe .
 # 可选：$env:VA_ADDR=':9000'; $env:VA_DATA_DIR='E:\va-data'（默认 ./data）
 # 可选：$env:VA_WEB_DIST='..\web\dist'（默认依次探测 ../web/dist、./web/dist、web/dist）
 # 可选：$env:VA_RESCAN_INTERVAL='30m'; $env:VA_RESCAN_DEBOUNCE='10m'（间隔设 0/off 关闭定时复扫）
+# 可选：$env:VA_SYNC_INTERVAL='12h'（CVE/POC 定时同步，设 0/off 关闭）
 # 可选：$env:VA_SESSION_IDLE='30m'; $env:VA_COOKIE_SECURE='1'（HTTPS 部署时强制 Secure Cookie）
 # 可选：$env:VULNAGENT_CVE_BASE_URL='https://cve.imfht.com'; $env:VA_EPSS_URL='https://epss.cyentia.com/epss_scores-current.csv.gz'
 # Agent 助手（三项齐备才启用，建议用系统环境变量而非脚本）
 # $env:VA_LLM_BASE_URL='https://ark.cn-beijing.volces.com/api/v3'; $env:VA_LLM_API_KEY='...'; $env:VA_LLM_MODEL='deepseek-v4-1-flash-261017'
+# 也可在运行目录或项目根目录放 .env（KEY=VALUE）；启动时自动加载，已存在的环境变量优先
+# 查找顺序：VA_ENV_FILE 指定路径 → ./.env → ../.env；.env 已在 .gitignore 中，不会入库
 # 生产模式：不灌演示数据，用 VA_ADMIN_PASSWORD 初始化唯一管理员（首次启动）
 # $env:VA_SEED_DEMO='off'; $env:VA_ADMIN_PASSWORD='请替换为强口令'
 

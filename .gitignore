@@ -7,6 +7,11 @@ data-*/
 *.db-shm
 *.token
 
+# 本地环境变量（含模型 Key，禁止入库）
+.env
+.env.local
+.env.*.local
+
 # 构建产物
 server/bin/
 web/node_modules/
