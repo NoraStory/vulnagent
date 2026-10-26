@@ -166,6 +166,7 @@ func (a *App) handleHarnessMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session": sess, "messages": msgs, "pendingApprovals": approvals,
+		"activeSkillId": harnessapp.ActiveSkill(msgs),
 	})
 }
 

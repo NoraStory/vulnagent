@@ -476,6 +476,7 @@ export interface HarnessMessagesResponse {
   session: HarnessSession;
   messages: HarnessMessage[];
   pendingApprovals: HarnessApproval[];
+  activeSkillId?: string;
 }
 
 export interface HarnessEvent {

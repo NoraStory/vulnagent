@@ -238,6 +238,11 @@ func (s *Service) ensureSkillMarker(ctx context.Context, sessionID, skillID, ski
 	}
 }
 
+// ActiveSkill 返回会话当前生效的技能 ID，无则返回空。
+func ActiveSkill(messages []harness.Message) string {
+	return lastSkillMarker(messages)
+}
+
 // lastSkillMarker 返回最近一条技能系统消息中的技能 ID，无则返回空。
 func lastSkillMarker(history []harness.Message) string {
 	for i := len(history) - 1; i >= 0; i-- {

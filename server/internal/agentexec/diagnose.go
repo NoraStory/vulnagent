@@ -216,18 +216,18 @@ func runLinuxDiagnose(ctx context.Context, p diagnoseParams, opts Options) (stri
 	}
 	parts := make([]string, 0, len(commands))
 	for _, args := range commands {
-		if p.Query == "packages" && p.Limit > 0 {
-			// 大表按行截断在下方统一处理
-		}
 		out, err := runDiagCmd(ctx, args[0], args[1:]...)
 		title := strings.Join(args, " ")
+		if p.Query == "packages" {
+			out = limitLines(out, 200)
+		}
 		if err != nil {
 			parts = append(parts, fmt.Sprintf("## %s (失败: %v)\n%s", title, err, out))
 			continue
 		}
 		parts = append(parts, "## "+title+"\n"+out)
 	}
-	return strings.Join(parts, "\n"), nil
+	return truncate(strings.Join(parts, "\n"), 32<<10), nil
 }
 
 func runWindowsDiagnose(ctx context.Context, p diagnoseParams, opts Options) (string, error) {
@@ -261,7 +261,11 @@ Get-LocalUser -ErrorAction SilentlyContinue | Select-Object Name,Enabled,LastLog
 	if !ok {
 		return "", fmt.Errorf("%s 在当前平台不支持", p.Query)
 	}
-	return runPowerShell(ctx, script)
+	out, err := runPowerShell(ctx, script)
+	if p.Query == "packages" || p.Query == "installed_programs" {
+		out = limitLines(out, 200)
+	}
+	return out, err
 }
 
 func runPowerShell(ctx context.Context, script string) (string, error) {
@@ -277,7 +281,7 @@ func runPowerShell(ctx context.Context, script string) (string, error) {
 	defer cancel()
 	out, err := exec.CommandContext(cctx, shell, "-NoProfile", "-NonInteractive",
 		"-ExecutionPolicy", "Bypass", "-Command", script).CombinedOutput()
-	text := truncate(string(out), 96<<10)
+	text := truncate(string(out), 32<<10)
 	if err != nil {
 		return text, fmt.Errorf("诊断命令失败：%w", err)
 	}
@@ -291,11 +295,20 @@ func runDiagCmd(ctx context.Context, name string, args ...string) (string, error
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, name, args...).CombinedOutput()
-	text := truncate(string(out), 64<<10)
+	text := truncate(string(out), 16<<10)
 	if err != nil {
 		return text, fmt.Errorf("%s 执行失败：%w", name, err)
 	}
 	return text, nil
+}
+
+// limitLines 限制输出行数，避免进程/软件包清单过大
+func limitLines(out string, max int) string {
+	lines := strings.Split(out, "\n")
+	if len(lines) <= max {
+		return out
+	}
+	return strings.Join(lines[:max], "\n") + fmt.Sprintf("\n…（仅显示前 %d 行，共 %d 行）", max, len(lines))
 }
 
 func filterLines(out string, keywords []string) string {

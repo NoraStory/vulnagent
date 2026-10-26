@@ -899,7 +899,7 @@ vulnagent_selfcheck_failed 0
 ] }
 ```
 
-前端在输入框键入 `/` 时展示该列表；选中后下一条消息携带 `skillId`。服务端在会话中注入一条 `[skill]` 系统消息（同一技能只注入一次），模型通过 `list_skill_files` / `read_skill_file` 按需加载 `SKILL.md`、`guides/` 与 `references/`，再调用 `host_diagnose`、`host_metrics` 等工具执行诊断。退出技能后自动写入退出标记。
+前端在输入框键入 `/` 时展示该列表；选中后下一条消息携带 `skillId`。服务端在会话中注入一条 `[skill]` 系统消息（同一技能只注入一次），模型通过 `list_skill_files` / `read_skill_file`（支持 `startLine` / `maxLines`，单次 ≤400 行/64KB）按需加载 `SKILL.md`、`guides/` 与 `references/`，再调用 `host_diagnose`、`host_metrics` 等工具执行诊断。退出技能后自动写入退出标记；`GET /agent/sessions/{id}/messages` 额外返回 `activeSkillId` 供前端恢复技能 chip。
 
 ### POST /agent/sessions
 

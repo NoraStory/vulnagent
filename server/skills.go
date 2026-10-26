@@ -159,6 +159,14 @@ func loadSkills() *SkillRegistry {
 			Platforms:   inferPlatforms(meta),
 			Dir:         dir,
 		}
+		if existing, ok := registry.items[id]; ok {
+			// 同一技能存在多份（旧版本解压目录）时保留版本更高的一份
+			if compareSkillVersion(skill.Version, existing.Version) <= 0 {
+				continue
+			}
+			registry.items[id] = skill
+			continue
+		}
 		registry.items[id] = skill
 		registry.order = append(registry.order, id)
 	}
@@ -344,6 +352,80 @@ func (r *SkillRegistry) ReadFile(id, rel string, maxBytes int64) (string, bool, 
 		data = data[:maxBytes]
 	}
 	return string(data), truncated, true, nil
+}
+
+// compareSkillVersion 比较点分版本号，无法解析时按字符串比较。
+func compareSkillVersion(a, b string) int {
+	parse := func(v string) []int {
+		parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".")
+		out := make([]int, 0, len(parts))
+		for _, part := range parts {
+			n := 0
+			for _, ch := range part {
+				if ch < '0' || ch > '9' {
+					break
+				}
+				n = n*10 + int(ch-'0')
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	left, right := parse(a), parse(b)
+	for i := 0; i < len(left) || i < len(right); i++ {
+		var x, y int
+		if i < len(left) {
+			x = left[i]
+		}
+		if i < len(right) {
+			y = right[i]
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// ReadFileRange 按行范围读取技能文档，避免一次加载超大文件。
+func (r *SkillRegistry) ReadFileRange(id, rel string, startLine, maxLines int) (string, int, bool, error) {
+	content, _, _, err := r.ReadFile(id, rel, 2<<20)
+	if err != nil {
+		return "", 0, false, err
+	}
+	lines := strings.Split(content, "\n")
+	total := len(lines)
+	if startLine < 1 {
+		startLine = 1
+	}
+	if startLine > total {
+		return "", total, false, nil
+	}
+	if maxLines <= 0 {
+		maxLines = 400
+	}
+	if maxLines > 2000 {
+		maxLines = 2000
+	}
+	end := startLine - 1 + maxLines
+	if end > total {
+		end = total
+	}
+	selected := strings.Join(lines[startLine-1:end], "\n")
+	truncated := end < total
+	if len(selected) > 64<<10 {
+		// 按字节截断可能切断 UTF-8，回退到最后一个换行
+		cut := 64 << 10
+		if idx := strings.LastIndex(selected[:cut], "\n"); idx > 0 {
+			cut = idx
+		}
+		selected = selected[:cut]
+		truncated = true
+	}
+	return selected, total, truncated, nil
 }
 
 // Files 列出技能目录下的文件（最多 500 个）

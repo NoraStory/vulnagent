@@ -248,7 +248,13 @@ export function AssistantPage() {
   const modeHint = approvalModes.find((item) => item.value === mode)?.hint ?? "";
   const activeSkill = skills.find((item) => item.id === activeSkillId);
   const slashMatches = slashOpen
-    ? skills.filter((item) => `${item.id} ${item.displayName}`.toLowerCase().includes(slashQuery))
+    ? skills
+        .filter((item) => `${item.id} ${item.displayName}`.toLowerCase().includes(slashQuery))
+        .sort(
+          (a, b) =>
+            Number(b.id.toLowerCase().startsWith(slashQuery)) -
+            Number(a.id.toLowerCase().startsWith(slashQuery))
+        )
     : [];
   const pendingApproval = items.find(
     (item): item is Extract<Item, { kind: "approval" }> =>
@@ -312,6 +318,7 @@ export function AssistantPage() {
           status: "pending"
         }));
         setItems([...toItems(result.messages ?? []), ...restored]);
+        setActiveSkillId(result.activeSkillId ?? "");
       })
       .catch((err) => {
         if (mounted) setError(err instanceof ApiError ? err.message : "读取会话失败");
@@ -737,6 +744,12 @@ export function AssistantPage() {
                   <span className="line-clamp-2 text-[10.5px] leading-[15px] text-ink3">{skill.description}</span>
                 </button>
               ))}
+            </div>
+          )}
+
+          {slashOpen && slashMatches.length === 0 && (
+            <div className="mb-2 rounded-[10px] border border-line bg-surface px-3 py-2 text-[11.5px] text-ink3">
+              没有匹配的技能，输入 <span className="mono">/</span> 查看全部
             </div>
           )}
 

@@ -298,31 +298,45 @@ func (a *App) toolListSkillFiles() harness.Tool {
 
 func (a *App) toolReadSkillFile() harness.Tool {
 	return harness.Tool{
-		Spec: toolSpec("read_skill_file", "读取运维技能目录内的文档（默认 SKILL.md，单文件最多 256KB），按技能指引渐进加载。", harness.RiskLow, "viewer", `{
+		Spec: toolSpec("read_skill_file", "按行范围读取运维技能文档（默认 SKILL.md，单次最多 400 行/64KB），用于渐进加载长文档。", harness.RiskLow, "viewer", `{
 			"type":"object","properties":{
 				"skillId":{"type":"string"},
-				"path":{"type":"string","description":"技能目录内的相对路径，例如 SKILL.md、guides/workflow.md"}
+				"path":{"type":"string","description":"技能目录内的相对路径，例如 SKILL.md、guides/workflow.md"},
+				"startLine":{"type":"integer","minimum":1,"description":"起始行，默认 1"},
+				"maxLines":{"type":"integer","minimum":1,"maximum":2000,"description":"读取行数，默认 400"}
 			},"required":["skillId"],"additionalProperties":false}`),
 		Run: func(raw json.RawMessage) (any, error) {
 			var in struct {
-				SkillID string `json:"skillId"`
-				Path    string `json:"path"`
+				SkillID   string `json:"skillId"`
+				Path      string `json:"path"`
+				StartLine int    `json:"startLine"`
+				MaxLines  int    `json:"maxLines"`
 			}
 			if err := decodeArgs(raw, &in); err != nil {
 				return nil, err
 			}
-			content, truncated, _, err := a.skills.ReadFile(in.SkillID, in.Path, 256<<10)
+			content, total, truncated, err := a.skills.ReadFileRange(in.SkillID, in.Path, in.StartLine, in.MaxLines)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{
-				"skillId":   in.SkillID,
-				"path":      in.Path,
-				"content":   content,
-				"truncated": truncated,
+				"skillId":    in.SkillID,
+				"path":       in.Path,
+				"startLine":  maxInt(in.StartLine, 1),
+				"totalLines": total,
+				"content":    content,
+				"truncated":  truncated,
 			}, nil
 		},
 	}
+}
+
+// maxInt 返回较大值，避免负偏移
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (a *App) toolHostDiagnose() harness.Tool {
@@ -358,9 +372,35 @@ func (a *App) toolHostDiagnose() harness.Tool {
 				"target": strings.TrimSpace(in.Target),
 				"limit":  in.Limit,
 			}
-			return a.runHostActionWithWait(in.AssetID, "diagnose", params, "Agent 助手", 45*time.Second)
+			res, err := a.runHostActionWithWait(in.AssetID, "diagnose", params, "Agent 助手", 45*time.Second)
+			if err != nil {
+				return nil, err
+			}
+			// 诊断输出可能很大，返回给模型前截断，避免撑爆上下文
+			if payload, ok := res.(map[string]any); ok {
+				if output, ok := payload["output"].(string); ok && len(output) > 12<<10 {
+					payload["output"] = truncateText(output, 12<<10) + "\n…（输出已截断，请缩小查询范围或指定 target）"
+					payload["truncated"] = true
+				}
+			}
+			return res, nil
 		},
 	}
+}
+
+// truncateText 按字节上限截断，尽量落在换行处，避免切断 UTF-8 字符。
+func truncateText(text string, max int) string {
+	if len(text) <= max {
+		return text
+	}
+	cut := max
+	if idx := strings.LastIndex(text[:cut], "\n"); idx > 0 {
+		cut = idx
+	}
+	for cut > 0 && (text[cut]&0xC0) == 0x80 {
+		cut--
+	}
+	return text[:cut]
 }
 
 func (a *App) toolListFindings() harness.Tool {

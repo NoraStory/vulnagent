@@ -917,8 +917,8 @@ harness_handlers.go          SSE 会话接口与审批接口
 - **来源**：`skill/*.zip` 在启动时解压到 `skills/`（已存在则跳过），解析每个 `SKILL.md` 的 YAML front matter（name/display_name/description/version/platforms）；`VA_SKILL_DIR` 可指定技能目录。
 - **调用**：前端 `GET /api/v1/agent/skills` 获取列表；输入框键入 `/` 弹出技能菜单（↑↓ 选择、Enter 确认、Esc 关闭），选中后显示技能 chip；消息请求携带 `skillId`。
 - **上下文**：服务端在会话中写入一条 `[skill] id=…` 系统消息（同一技能只注入一次），告知模型技能目录与渐进加载规则；退出技能时写入退出标记。系统消息随历史保留，刷新/继续对话不丢失。
-- **文档工具**：`list_skill_files`（列文件）与 `read_skill_file`（读文件，默认 `SKILL.md`，≤256KB）只读、限定技能目录内相对路径，拒绝绝对路径与 `..`。
-- **主机诊断**：`host_diagnose` 提供固定只读目录（磁盘、内存/OOM、网络连通/延迟、服务、日志、时间同步、软件包、安全基线、Windows Update、启动项、事件日志、已装程序、会话、计划任务、SMB、DNS、防火墙、证书、IIS、存储池、备份、Docker/K8s、崩溃恢复等），命令由 Agent 内置映射生成，不接受任意 shell；`target` 仅允许主机名/IP/设备名。
+- **文档工具**：`list_skill_files`（列文件）与 `read_skill_file`（按 `startLine/maxLines` 读取，默认 400 行、单次 ≤64KB）只读、限定技能目录内相对路径，拒绝绝对路径与 `..`；同一技能存在多版本目录时保留最高版本。
+- **主机诊断**：`host_diagnose` 提供固定只读目录（磁盘、内存/OOM、网络连通/延迟、服务、日志、时间同步、软件包、安全基线、Windows Update、启动项、事件日志、已装程序、会话、计划任务、SMB、DNS、防火墙、证书、IIS、存储池、备份、Docker/K8s、崩溃恢复等），命令由 Agent 内置映射生成，不接受任意 shell；`target` 仅允许主机名/IP/设备名。单次返回给模型的输出上限 12KB（大清单按行截断），避免挤占上下文。
 - **安全边界**：技能文档只读；诊断命令固定目录；删除/清理/修复等变更仍通过 `service_action`、`write_host_file`、`apply_remediation` 等工具走审批，技能不会绕过闸门。
 
 ### 7.5.5 交互流程
