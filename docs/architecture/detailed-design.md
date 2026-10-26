@@ -506,6 +506,23 @@ CREATE TABLE finding_events (
   created_at TEXT
 );
 
+-- 本地工单（控制面自建，幂等：一个漏洞至多一张工单）
+CREATE TABLE tickets (
+  id         TEXT PRIMARY KEY,        -- VA-YYYY-NNNN
+  finding_id INTEGER NOT NULL,
+  cve_id     TEXT NOT NULL,
+  asset_id   INTEGER NOT NULL,
+  priority   TEXT NOT NULL DEFAULT 'P3',
+  status     TEXT NOT NULL DEFAULT 'open',
+  assignee   TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  note       TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_tickets_finding ON tickets(finding_id);
+CREATE INDEX idx_tickets_status ON tickets(status, updated_at DESC);
+
 -- 权限
 CREATE TABLE users (
   id         INTEGER PRIMARY KEY,

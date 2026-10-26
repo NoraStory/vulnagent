@@ -76,6 +76,20 @@ export interface FindingEvent {
   detail: string;
 }
 
+export interface Ticket {
+  id: string;
+  findingId: number;
+  cveId: string;
+  assetId: number;
+  priority: Priority;
+  status: string;
+  assignee: string;
+  createdBy: string;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FindingDetail extends Finding {
   description: string;
   cwe: { id: number; cn: string };
@@ -84,6 +98,7 @@ export interface FindingDetail extends Finding {
   poc: PocItem[];
   advice: Advice;
   events: FindingEvent[];
+  ticket?: Ticket;
 }
 
 export interface Paged<T> {

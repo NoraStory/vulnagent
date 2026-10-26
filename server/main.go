@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -17,11 +18,38 @@ import (
 	"vulnagent/server/internal/platform/config"
 )
 
-const (
+// 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
+// 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
+var (
 	appVersion  = "0.1.0-dev"
-	buildCommit = "local"
-	buildTime   = "2026-10-22T00:00:00+08:00"
+	buildCommit = ""
+	buildTime   = ""
 )
+
+func init() {
+	commit, builtAt := buildCommit, buildTime
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				if commit == "" {
+					commit = setting.Value
+				}
+			case "vcs.time":
+				if builtAt == "" {
+					builtAt = setting.Value
+				}
+			}
+		}
+	}
+	if commit == "" {
+		commit = "local"
+	}
+	if builtAt == "" {
+		builtAt = "未知"
+	}
+	buildCommit, buildTime = commit, builtAt
+}
 
 // App 控制面服务上下文
 type App struct {
@@ -77,6 +105,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/findings/{id}", a.handleFindingPatch)
 	mux.HandleFunc("POST /api/v1/findings/{id}/ticket", a.handleFindingTicket)
 	mux.HandleFunc("POST /api/v1/findings/{id}/rescan", a.handleFindingRescan)
+	mux.HandleFunc("GET /api/v1/tickets", a.handleTickets)
 
 	mux.HandleFunc("GET /api/v1/assets", a.handleAssets)
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)

@@ -103,13 +103,14 @@ func truthy(key string) bool {
 	return false
 }
 
-// seedDemo 默认开启演示数据，显式关闭时返回 false
+// seedDemo 仅在显式设置 VA_SEED_DEMO=on/1/true/yes 时灌入演示数据，
+// 默认关闭，避免示例数据混入生产环境。
 func seedDemo() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("VA_SEED_DEMO"))) {
-	case "off", "0", "false", "no":
-		return false
+	case "1", "on", "true", "yes":
+		return true
 	}
-	return true
+	return false
 }
 
 func durationOr(key string, fallback, min time.Duration) time.Duration {

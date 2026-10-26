@@ -182,9 +182,24 @@
   },
   "events": [
     { "time": "2026-10-22T09:12:00+08:00", "event": "status: open → fixing", "actor": "李维", "detail": "已排期 10-24 变更窗口" }
-  ]
+  ],
+  "ticket": {
+    "id": "VA-2026-0137",
+    "findingId": 42,
+    "cveId": "CVE-2021-44228",
+    "assetId": 3,
+    "priority": "P0",
+    "status": "fixing",
+    "assignee": "李维",
+    "createdBy": "李维",
+    "note": "控制面本地工单，需在变更窗口内完成修复并复扫验证",
+    "createdAt": "2026-10-22T09:12:00+08:00",
+    "updatedAt": "2026-10-22T09:12:00+08:00"
+  }
 }
 ```
+
+`ticket` 仅在该漏洞已创建本地工单时出现；未建单时字段省略。
 
 ### PATCH /findings/{id}
 
@@ -194,7 +209,49 @@
 
 200：`{ "ok": true, "finding": { ...列表字段 } }`
 
-### POST /findings/{id}/ticket → `{ "ok": true, "ticketId": "VA-2026-0137", "status": "fixing" }`
+- 若该漏洞已存在本地工单，状态/责任人会同步到工单，`updatedAt` 一并刷新。
+
+### POST /findings/{id}/ticket
+
+创建（或返回既有）本地工单，幂等：
+
+```json
+{
+  "ok": true,
+  "ticketId": "VA-2026-0137",
+  "status": "fixing",
+  "created": true,
+  "ticket": { "id": "VA-2026-0137", "findingId": 42, "...": "同上" }
+}
+```
+
+- 首次创建时，`open/triaged` 会流转为 `fixing`；已存在工单返回 `created: false`，不重复建单。
+- 建单动作写 `finding.ticket` 审计、追加工单事件，并派发 `ticket.created` webhook。
+
+### GET /api/v1/tickets（operator）
+
+```json
+{
+  "items": [
+    {
+      "id": "VA-2026-0137",
+      "findingId": 42,
+      "cveId": "CVE-2021-44228",
+      "assetId": 3,
+      "priority": "P0",
+      "status": "fixing",
+      "assignee": "李维",
+      "createdBy": "李维",
+      "note": "控制面本地工单，需在变更窗口内完成修复并复扫验证",
+      "createdAt": "2026-10-22T09:12:00+08:00",
+      "updatedAt": "2026-10-22T09:12:00+08:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+- 查询参数：`status`（精确匹配）、`limit`（默认 50，上限 200），按 `updated_at` 倒序。
 
 ### POST /findings/{id}/rescan
 
@@ -641,7 +698,7 @@ vulnagent_selfcheck_failed 0
 
 ## 9. 演示账号
 
-仅演示模式（默认）首次启动时创建；生产模式设置 `VA_SEED_DEMO=off` 与 `VA_ADMIN_PASSWORD`，只初始化一个 admin 账号。
+仅在 `VA_SEED_DEMO=on`（或 `1/true/yes`）时首次启动创建；默认关闭。生产模式同时设置 `VA_ADMIN_PASSWORD`，只初始化一个 admin 账号。
 
 | 账号 | 口令 | 角色 | 显示名 |
 |---|---|---|---|

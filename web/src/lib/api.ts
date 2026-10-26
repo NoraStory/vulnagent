@@ -18,6 +18,7 @@ import type {
   SelfCheckRun,
   SettingsData,
   SyncSource,
+  Ticket,
   User
 } from "./types";
 
@@ -233,7 +234,7 @@ export const api = {
     return request(`/findings/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   },
 
-  createTicket(id: number): Promise<{ ok: boolean; ticketId: string; status: string }> {
+  createTicket(id: number): Promise<{ ok: boolean; ticketId: string; status: string; created: boolean; ticket: Ticket }> {
     return request(`/findings/${id}/ticket`, { method: "POST" });
   },
 

@@ -249,7 +249,7 @@ export function SettingsPage() {
                 <PreviewRow label="资产权重 0.8" weight={weights.asset} raw={0.8} color="#34C759" />
               </div>
               <div className="mt-3 flex items-center justify-between rounded-[10px] bg-subtle px-3 py-2">
-                <span className="text-[11.5px] text-ink2">示例综合分</span>
+                <span className="text-[11.5px] text-ink2">预览综合分</span>
                 <span className="text-[15px] font-semibold tabular-nums text-ink">
                   {Math.round(
                     100 *

@@ -257,22 +257,18 @@ func (a *App) runSelfcheck(triggeredBy string) (selfcheckRun, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	probeItems, probeErr := intelClient.Latest(ctx, 1, 1, "")
 	cancel()
-	authLabel := "公开接口"
-	if apiKey != "" {
-		authLabel = "API Key"
-	}
 	switch {
 	case probeErr == nil:
+		label := "公开接口"
+		if apiKey != "" {
+			label = "API Key"
+		}
 		add("self.intel_api", "平台自身", "情报接口连通性", "pass",
-			fmt.Sprintf("情报接口可访问（%s，返回 %d 条）", authLabel, len(probeItems)), "", time.Since(t0))
-	case apiKey == "":
-		add("self.intel_api", "平台自身", "情报接口连通性", "warn",
-			"情报接口不可用且未配置密钥："+probeErr.Error(),
-			"检查网络出口，或配置 VULNAGENT_CVE_API_KEY 后重试", time.Since(t0))
+			fmt.Sprintf("情报接口可访问（%s，返回 %d 条）", label, len(probeItems)), "", time.Since(t0))
 	default:
 		add("self.intel_api", "平台自身", "情报接口连通性", "warn",
 			"情报接口不可用："+probeErr.Error(),
-			"检查网络与 API Key 是否正确", time.Since(t0))
+			"检查网络出口与 VULNAGENT_CVE_BASE_URL 配置后重试", time.Since(t0))
 	}
 
 	// ---- 权限与审计 ----

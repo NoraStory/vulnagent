@@ -2,7 +2,17 @@
 
 package main
 
-// diskFree Windows 下不引入额外依赖，直接降级为 skip
+import "golang.org/x/sys/windows"
+
+// diskFree 通过 GetDiskFreeSpaceExW 获取数据目录所在卷的总量与可用空间
 func diskFree(dir string) (total uint64, free uint64, ok bool) {
-	return 0, 0, false
+	path, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return 0, 0, false
+	}
+	var freeToCaller, totalBytes, totalFree uint64
+	if err := windows.GetDiskFreeSpaceEx(path, &freeToCaller, &totalBytes, &totalFree); err != nil {
+		return 0, 0, false
+	}
+	return totalBytes, freeToCaller, true
 }

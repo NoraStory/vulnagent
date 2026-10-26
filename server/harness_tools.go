@@ -411,6 +411,9 @@ func (a *App) toolUpdateFindingStatus() harness.Tool {
 				return nil, err
 			}
 			now := fmtT(nowT())
+			if ticket, found, err := a.ticketRepo().ByFinding(ctx, in.FindingID); err == nil && found {
+				_ = a.ticketRepo().UpdateStatus(ctx, ticket.ID, in.Status, cur.Assignee, now)
+			}
 			event := fmt.Sprintf("status: %s → %s", cur.Status, in.Status)
 			_ = a.findingRepo().AddEvent(ctx, in.FindingID, event, "Agent 助手", "经审批由 Agent 助手执行", now)
 			a.auditAs("Agent 助手", "agent", "127.0.0.1", "harness", "finding.status",
@@ -438,29 +441,26 @@ func (a *App) toolCreateTicket() harness.Tool {
 			if err != nil {
 				return nil, err
 			}
-			maxSeq, _ := a.findingRepo().NextTicketSeq(ctx)
-			ticketID := fmt.Sprintf("VA-2026-%04d", maxSeq+1)
-			status := cur.Status
-			assignee := cur.Assignee
-			if assignee == "" {
-				assignee = "Agent 助手"
+			item, err := a.getFinding(in.FindingID)
+			if err != nil {
+				return nil, err
 			}
-			if status == "open" || status == "triaged" {
-				status = "fixing"
-			}
-			if err := a.findingRepo().CreateTicket(ctx, in.FindingID, ticketID, status, assignee); err != nil {
+			ticket, created, err := a.ensureTicket(item, "Agent 助手")
+			if err != nil {
 				return nil, err
 			}
 			now := fmtT(nowT())
-			_ = a.findingRepo().AddEvent(ctx, in.FindingID, "ticket: "+ticketID+" 已创建", "Agent 助手",
-				"经审批由 Agent 助手创建工单", now)
-			a.auditAs("Agent 助手", "agent", "127.0.0.1", "harness", "finding.ticket",
-				cur.CVEID+" @ "+cur.AssetHostname, "创建工单 "+ticketID)
-			a.dispatch("ticket.created", map[string]any{
-				"ticketId": ticketID, "cveId": cur.CVEID, "hostname": cur.AssetHostname,
-				"priority": cur.Priority, "risk": cur.Risk, "status": status, "assignee": assignee,
-			})
-			return map[string]any{"ok": true, "ticketId": ticketID, "status": status}, nil
+			if created {
+				_ = a.findingRepo().AddEvent(ctx, in.FindingID, "ticket: "+ticket.ID+" 已创建", "Agent 助手",
+					"经审批由 Agent 助手创建本地工单", now)
+				a.auditAs("Agent 助手", "agent", "127.0.0.1", "harness", "finding.ticket",
+					cur.CVEID+" @ "+cur.AssetHostname, "创建工单 "+ticket.ID)
+				a.dispatch("ticket.created", map[string]any{
+					"ticketId": ticket.ID, "cveId": cur.CVEID, "hostname": cur.AssetHostname,
+					"priority": cur.Priority, "risk": cur.Risk, "status": ticket.Status, "assignee": ticket.Assignee,
+				})
+			}
+			return map[string]any{"ok": true, "ticketId": ticket.ID, "status": ticket.Status, "ticket": ticket, "created": created}, nil
 		},
 	}
 }

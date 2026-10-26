@@ -30,6 +30,8 @@ func (a *App) statsRepo() *sqlite.StatsRepo { return sqlite.NewStatsRepo(a.db) }
 
 func (a *App) harnessRepo() *sqlite.HarnessRepo { return sqlite.NewHarnessRepo(a.db) }
 
+func (a *App) ticketRepo() *sqlite.TicketRepo { return sqlite.NewTicketRepo(a.db) }
+
 // readDB 返回 Harness 读工具专用的只读连接；打开失败时回落到主连接
 func (a *App) readDB() *sql.DB {
 	a.roOnce.Do(func() {

@@ -638,6 +638,21 @@ func seedDemo(db *sql.DB) error {
 				}
 				fid, _ := res.LastInsertId()
 
+				if ticketID != "" {
+					ticketAt := firstSeen.Add(time.Duration(2+idx%10) * time.Hour)
+					if ticketAt.After(now) {
+						ticketAt = now.Add(-time.Duration(idx%9+1) * time.Minute)
+					}
+					if _, err := tx.Exec(`INSERT INTO tickets(id, finding_id, cve_id, asset_id, priority,
+						status, assignee, created_by, note, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+						ticketID, fid, c.id, assetID, priority, status,
+						firstNonEmpty(assignee, "李维"), firstNonEmpty(assignee, "李维"),
+						"控制面本地工单，需在变更窗口内完成修复并复扫验证",
+						fmtT(ticketAt), fmtT(ticketAt)); err != nil {
+						return err
+					}
+				}
+
 				if status != "open" {
 					clamp := func(t time.Time) time.Time {
 						if t.After(now) {
@@ -658,7 +673,7 @@ func seedDemo(db *sql.DB) error {
 							findingID: fid,
 							event:     "ticket: " + ticketID + " 已创建",
 							actor:     firstNonEmpty(assignee, "李维"),
-							detail:    "工单已同步至变更平台",
+							detail:    "控制面本地工单已创建，需在变更窗口内完成修复",
 							createdAt: clamp(firstSeen.Add(time.Duration(2+idx%10) * time.Hour)),
 						})
 					}

@@ -172,7 +172,7 @@ func (r *FindingRepo) CreateTicket(ctx context.Context, id int64, ticketID, stat
 func (r *FindingRepo) NextTicketSeq(ctx context.Context) (int, error) {
 	var maxSeq int
 	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(substr(ticket_id, 9) AS INTEGER)), 0)
-		FROM findings WHERE ticket_id LIKE 'VA-2026-%'`).Scan(&maxSeq)
+		FROM findings WHERE ticket_id LIKE 'VA-%'`).Scan(&maxSeq)
 	return maxSeq, err
 }
 

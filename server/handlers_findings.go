@@ -80,6 +80,7 @@ type findingDetail struct {
 	Poc            []pocItem     `json:"poc"`
 	Advice         advice        `json:"advice"`
 	Events         []eventItem   `json:"events"`
+	Ticket         *ports.Ticket `json:"ticket,omitempty"`
 }
 
 // toFindingItem 把仓储模型转换为接口 DTO
@@ -197,6 +198,9 @@ func (a *App) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
 		Poc:            pocs,
 		Advice:         buildAdvice(it),
 		Events:         events,
+	}
+	if ticket, found, err := a.ticketRepo().ByFinding(r.Context(), id); err == nil && found {
+		out.Ticket = &ticket
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -317,6 +321,10 @@ func (a *App) handleFindingPatch(w http.ResponseWriter, r *http.Request) {
 		_ = a.findingRepo().AddEvent(r.Context(), id, event, u.Name, "控制台重新指派", now)
 		a.audit(r, "finding.assign", cur.CveID+" @ "+cur.Asset.Hostname, event)
 	}
+	// 工单与漏洞状态保持一致
+	if ticket, found, err := a.ticketRepo().ByFinding(r.Context(), id); err == nil && found {
+		_ = a.ticketRepo().UpdateStatus(r.Context(), ticket.ID, newStatus, newAssignee, now)
+	}
 
 	updated, err := a.getFinding(id)
 	if err != nil {
@@ -342,39 +350,34 @@ func (a *App) handleFindingTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxSeq, _ := a.findingRepo().NextTicketSeq(r.Context())
-	ticketID := fmt.Sprintf("VA-2026-%04d", maxSeq+1)
-	status := cur.Status
-	assignee := cur.Assignee
-	if assignee == "" {
-		assignee = u.Name
-	}
-	if status == "open" || status == "triaged" {
-		status = "fixing"
-	}
-	if err := a.findingRepo().CreateTicket(r.Context(), id, ticketID, status, assignee); err != nil {
+	ticket, created, err := a.ensureTicket(cur, u.Name)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "创建工单失败")
 		return
 	}
 
 	now := fmtT(nowT())
-	detail := "工单已同步至变更平台"
-	if cur.Status != status {
-		detail = "工单已创建，状态由 " + cur.Status + " 流转为 " + status
+	if created {
+		detail := "本地工单已创建，状态保持 " + ticket.Status
+		if cur.Status != ticket.Status {
+			detail = "本地工单已创建，漏洞状态由 " + cur.Status + " 流转为 " + ticket.Status
+		}
+		_ = a.findingRepo().AddEvent(r.Context(), id, "ticket: "+ticket.ID+" 已创建", u.Name, detail, now)
+		a.audit(r, "finding.ticket", cur.CveID+" @ "+cur.Asset.Hostname, "创建工单 "+ticket.ID)
+		a.dispatch("ticket.created", map[string]any{
+			"ticketId": ticket.ID,
+			"cveId":    cur.CveID,
+			"hostname": cur.Asset.Hostname,
+			"priority": cur.Priority,
+			"risk":     cur.Risk,
+			"status":   ticket.Status,
+			"assignee": ticket.Assignee,
+		})
 	}
-	_ = a.findingRepo().AddEvent(r.Context(), id, "ticket: "+ticketID+" 已创建", u.Name, detail, now)
-	a.audit(r, "finding.ticket", cur.CveID+" @ "+cur.Asset.Hostname, "创建工单 "+ticketID)
-	a.dispatch("ticket.created", map[string]any{
-		"ticketId": ticketID,
-		"cveId":    cur.CveID,
-		"hostname": cur.Asset.Hostname,
-		"priority": cur.Priority,
-		"risk":     cur.Risk,
-		"status":   status,
-		"assignee": assignee,
-	})
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ticketId": ticketID, "status": status})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "ticketId": ticket.ID, "status": ticket.Status, "ticket": ticket, "created": created,
+	})
 }
 
 func (a *App) handleFindingRescan(w http.ResponseWriter, r *http.Request) {

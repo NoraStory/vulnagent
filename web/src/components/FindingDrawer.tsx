@@ -77,7 +77,10 @@ export function FindingDrawer({
     try {
       if (kind === "ticket") {
         const result = await api.createTicket(detail.id);
-        toast.push(`工单 ${result.ticketId} 已创建`);
+        toast.push(
+          result.created ? `工单 ${result.ticketId} 已创建` : `工单已存在：${result.ticketId}`,
+          result.created ? "success" : "info"
+        );
       } else if (kind === "rescan") {
         const result = await api.rescan(detail.id);
         if (result.skipped) {
@@ -316,6 +319,27 @@ export function FindingDrawer({
                 </section>
               )}
 
+              {detail.ticket && (
+                <section>
+                  <h3 className="text-[12.5px] font-semibold text-ink">本地工单</h3>
+                  <div className="mt-2 rounded-panel border border-line bg-subtle/60 p-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-[12.5px] text-ink">{detail.ticket.id}</span>
+                      <StatusPill status={detail.ticket.status} />
+                    </div>
+                    <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2.5">
+                      <Meta label="责任人">{detail.ticket.assignee || "未指派"}</Meta>
+                      <Meta label="创建人">{detail.ticket.createdBy || "系统"}</Meta>
+                      <Meta label="更新时间">{formatTime(detail.ticket.updatedAt)}</Meta>
+                      <Meta label="优先级">{detail.ticket.priority}</Meta>
+                    </div>
+                    {detail.ticket.note && (
+                      <p className="mt-2.5 text-[11px] leading-[17px] text-ink3">{detail.ticket.note}</p>
+                    )}
+                  </div>
+                </section>
+              )}
+
               <section>
                 <h3 className="text-[12.5px] font-semibold text-ink">处理记录</h3>
                 <ol className="mt-2 flex flex-col gap-3 border-l border-line pl-3">
@@ -356,11 +380,11 @@ export function FindingDrawer({
               <button
                 type="button"
                 className="btn btn-secondary h-8"
-                disabled={!canWrite || pending !== ""}
+                disabled={!canWrite || pending !== "" || Boolean(detail.ticket)}
                 onClick={() => void runAction("ticket")}
               >
                 <Ticket size={13} />
-                创建工单
+                {detail.ticket ? "工单已创建" : "创建工单"}
               </button>
               <button
                 type="button"
