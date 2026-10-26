@@ -720,6 +720,14 @@ CREATE TABLE host_job_attempts (
   started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT ''
 );
 
+-- Agent 长期记忆
+CREATE TABLE agent_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL DEFAULT 'global',
+  scope_key TEXT NOT NULL DEFAULT '', content TEXT NOT NULL,
+  source_session TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_agent_memories_scope ON agent_memories(scope, scope_key, updated_at DESC);
+
 -- 权限
 CREATE TABLE users (
   id         INTEGER PRIMARY KEY,
@@ -1144,6 +1152,8 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 主机作业通道 | Agent pull 拉取作业，领取时原子抢占；服务端指数退避 + 抖动安排重试；作业幂等键 10 分钟内去重；执行结果写 `host_jobs` 与 `host_job_attempts` |
 | 受控主机执行 | `run_host_command`（argv 白名单）、`read_host_file`、`write_host_file`（白名单目录 + 原子写 + 自动备份）、`service_action`；全部走审批，高风险需口令再认证 |
 | 提权 helper | `vulnagent helper` 仅接受白名单动作；Linux 通过 `sudo -n` 调用，Windows 需 Agent 以管理员/SYSTEM 运行 |
+| 上下文记忆 | 会话超过 20 条后自动压缩早期消息为摘要；48KB 字符预算从最新消息回溯保留；长期记忆 `agent_memories` 支持 global/asset 作用域，`remember`/`recall_memory` 工具与对话自动召回 |
+| 操作轨迹 | `GET /api/v1/trajectory` 聚合审计、主机作业与工具调用，按时间倒序；控制台「轨迹」页支持按类型过滤 |
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |

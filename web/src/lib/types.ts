@@ -300,6 +300,17 @@ export interface AssetJobs {
   total: number;
 }
 
+export interface TrajectoryItem {
+  id: string;
+  kind: string;
+  time: string;
+  actor: string;
+  action: string;
+  target: string;
+  status: string;
+  detail: string;
+}
+
 export interface AssetDetail {
   demo: boolean;
   asset: AssetItem;

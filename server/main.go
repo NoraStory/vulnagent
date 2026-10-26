@@ -131,6 +131,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/reports/findings.json", a.handleFindingsJSON)
 
 	mux.HandleFunc("GET /api/v1/metrics", a.handleMetrics)
+	mux.HandleFunc("GET /api/v1/trajectory", a.handleTrajectory)
 
 	mux.HandleFunc("GET /api/v1/notify-settings", a.handleNotifyGet)
 	mux.HandleFunc("PUT /api/v1/notify-settings", a.handleNotifyUpdate)

@@ -36,6 +36,8 @@ func (a *App) telemetryRepo() *sqlite.TelemetryRepo { return sqlite.NewTelemetry
 
 func (a *App) jobRepo() *sqlite.JobRepo { return sqlite.NewJobRepo(a.db) }
 
+func (a *App) memoryRepo() *sqlite.MemoryRepo { return sqlite.NewMemoryRepo(a.db) }
+
 // readDB 返回 Harness 读工具专用的只读连接；打开失败时回落到主连接
 func (a *App) readDB() *sql.DB {
 	a.roOnce.Do(func() {

@@ -64,6 +64,7 @@ type Principal struct {
 // Service Harness 应用服务
 type Service struct {
 	Repo           ports.HarnessRepository
+	Memory         ports.MemoryRepository
 	LLM            ports.LLM
 	Registry       *Registry
 	VerifyPassword func(username, password string) bool
@@ -283,17 +284,11 @@ func (s *Service) session(ctx context.Context, p Principal, id string) (harness.
 }
 
 func (s *Service) runLoop(ctx context.Context, p Principal, sess harness.Session, emit func(Event)) error {
-	history, err := s.Repo.Messages(ctx, sess.ID, 24)
+	history, err := s.Repo.Messages(ctx, sess.ID, 60)
 	if err != nil {
 		return err
 	}
-	llmMessages := make([]ports.LLMMessage, 0, len(history)+1)
-	if s.SystemPrompt != "" {
-		llmMessages = append(llmMessages, ports.LLMMessage{Role: "system", Content: s.SystemPrompt})
-	}
-	for _, m := range history {
-		llmMessages = append(llmMessages, toLLMMessage(m))
-	}
+	llmMessages := s.buildContext(ctx, history)
 	defs := s.Registry.DefsFor(p.Role)
 
 	for step := 0; step < s.Opts.MaxSteps; step++ {
@@ -336,6 +331,90 @@ func (s *Service) runLoop(ctx context.Context, p Principal, sess harness.Session
 	}
 	emit(Event{Type: "done", Data: map[string]any{"steps": s.Opts.MaxSteps, "truncated": true}})
 	return nil
+}
+
+// buildContext 组装上下文：系统提示 + 长期记忆 + 早期消息摘要 + 最近消息，并做字符预算裁剪。
+func (s *Service) buildContext(ctx context.Context, history []harness.Message) []ports.LLMMessage {
+	const keepRecent = 20
+	const budgetChars = 48 << 10
+
+	out := make([]ports.LLMMessage, 0, len(history)+3)
+	if s.SystemPrompt != "" {
+		out = append(out, ports.LLMMessage{Role: "system", Content: s.SystemPrompt})
+	}
+	if s.Memory != nil {
+		if memories, err := s.Memory.Search(ctx, "global", "", "", 5); err == nil && len(memories) > 0 {
+			var b strings.Builder
+			b.WriteString("长期记忆（供参考，注意时效）：\n")
+			for _, m := range memories {
+				fmt.Fprintf(&b, "- [%s] %s\n", m.UpdatedAt, m.Content)
+			}
+			out = append(out, ports.LLMMessage{Role: "system", Content: b.String()})
+		}
+	}
+	if len(history) > keepRecent {
+		older := history[:len(history)-keepRecent]
+		var b strings.Builder
+		b.WriteString("较早对话的压缩摘要（按时间顺序，已截断）：\n")
+		for _, m := range older {
+			text := strings.TrimSpace(m.Content)
+			if text == "" && len(m.ToolCalls) > 0 {
+				text = "[工具调用]"
+			}
+			if len(text) > 240 {
+				text = text[:240] + "…"
+			}
+			if text == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "%s: %s\n", m.Role, text)
+		}
+		out = append(out, ports.LLMMessage{Role: "system", Content: b.String()})
+		history = history[len(history)-keepRecent:]
+	}
+	for _, m := range history {
+		out = append(out, toLLMMessage(m))
+	}
+	return trimContext(out, budgetChars)
+}
+
+// trimContext 保留系统消息，并按总字符预算从最新消息向前保留。
+func trimContext(messages []ports.LLMMessage, budget int) []ports.LLMMessage {
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content) + 64
+	}
+	if total <= budget {
+		return messages
+	}
+	systems := make([]ports.LLMMessage, 0, 2)
+	rest := make([]ports.LLMMessage, 0, len(messages))
+	for _, m := range messages {
+		if m.Role == "system" {
+			systems = append(systems, m)
+		} else {
+			rest = append(rest, m)
+		}
+	}
+	used := 0
+	for _, m := range systems {
+		used += len(m.Content) + 64
+	}
+	cut := len(rest)
+	for cut > 0 {
+		next := rest[cut-1]
+		cost := len(next.Content) + 64
+		if used+cost > budget {
+			break
+		}
+		used += cost
+		cut--
+	}
+	out := append(append([]ports.LLMMessage{}, systems...), rest[cut:]...)
+	if len(out) == len(systems) {
+		out = append(out, ports.LLMMessage{Role: "system", Content: "（上下文过长，早期对话已省略，请结合长期记忆与工具结果回答）"})
+	}
+	return out
 }
 
 func (s *Service) invoke(ctx context.Context, p Principal, sess harness.Session, call ports.LLMToolCall, emit func(Event)) (string, bool, error) {

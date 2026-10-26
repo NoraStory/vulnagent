@@ -20,6 +20,7 @@ func (a *App) initHarness(cfg config.Config) {
 		})
 	}
 	a.harness = harnessapp.New(a.harnessRepo(), llm, harnessapp.NewRegistry(a.harnessTools()), a.verifyPassword)
+	a.harness.Memory = a.memoryRepo()
 	a.harness.SystemPrompt = harnessSystemPrompt()
 	if a.harness.Available() {
 		slog.Info("Agent Harness 已启用", "model", cfg.LLMModel, "tools", a.harness.Registry.Len())

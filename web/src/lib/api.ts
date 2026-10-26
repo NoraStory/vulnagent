@@ -21,6 +21,7 @@ import type {
   SettingsData,
   SyncSource,
   Ticket,
+  TrajectoryItem,
   User
 } from "./types";
 
@@ -382,6 +383,10 @@ export const api = {
 
   auditLogs(params: { page?: number; pageSize?: number; action?: string; actor?: string }): Promise<Paged<AuditItem>> {
     return request(`/audit-logs${query(params)}`);
+  },
+
+  trajectory(params: { kind?: string; limit?: number } = {}): Promise<{ items: TrajectoryItem[]; total: number }> {
+    return request(`/trajectory${query(params)}`);
   },
 
   settings(): Promise<SettingsData> {

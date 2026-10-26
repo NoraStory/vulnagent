@@ -4,6 +4,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   Activity,
   ChevronRight,
+  History,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -28,7 +29,10 @@ const navGroups = [
   },
   {
     label: "智能",
-    items: [{ to: "/assistant", label: "助手", icon: Sparkles }]
+    items: [
+      { to: "/assistant", label: "助手", icon: Sparkles },
+      { to: "/trajectory", label: "轨迹", icon: History }
+    ]
   },
   {
     label: "平台",
@@ -44,6 +48,7 @@ const pageMeta: Record<string, { title: string; subtitle: string; crumb: string 
   "/findings": { title: "漏洞清单", subtitle: "按风险优先级排序，可解释、可闭环", crumb: "漏洞" },
   "/assets": { title: "资产与组件", subtitle: "主机清单、SBOM 与暴露面权重", crumb: "资产" },
   "/assistant": { title: "Agent 助手", subtitle: "只读工具直接执行，写操作需审批", crumb: "助手" },
+  "/trajectory": { title: "操作轨迹", subtitle: "审计、主机作业与工具调用的统一时间线", crumb: "轨迹" },
   "/selfcheck": { title: "平台自检", subtitle: "数据库、情报同步、采集链路与平台自身", crumb: "自检" },
   "/settings": { title: "审计与设置", subtitle: "风险策略、账号权限与操作留痕", crumb: "审计与设置" }
 };

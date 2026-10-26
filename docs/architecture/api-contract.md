@@ -660,6 +660,22 @@ Webhook 请求体：
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
 
+### GET /trajectory?kind=&limit=100
+
+统一操作轨迹，聚合 `audit_logs`、`host_jobs` 与 `agent_tool_calls`，按时间倒序。`kind` 可选 `audit | job | tool`。
+
+```json
+{
+  "items": [
+    { "id": "JOB-…", "kind": "job", "time": "2026-10-26T20:20:00+08:00", "actor": "李维",
+      "action": "run_command", "target": "asset:1", "status": "succeeded", "detail": "storyseeker" },
+    { "id": "audit-128", "kind": "audit", "time": "2026-10-26T20:19:00+08:00", "actor": "李维",
+      "action": "host.job.queue", "target": "JOB-…", "status": "recorded", "detail": "run_command @ asset:1" }
+  ],
+  "total": 2
+}
+```
+
 ### GET /metrics
 
 Prometheus 文本格式（`text/plain; version=0.0.4`）。允许登录会话或 Agent Bearer 令牌访问，便于 Prometheus 抓取。

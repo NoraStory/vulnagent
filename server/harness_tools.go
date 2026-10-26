@@ -39,6 +39,8 @@ func (a *App) harnessTools() []harness.Tool {
 		a.toolRunHostCommand(),
 		a.toolWriteHostFile(),
 		a.toolServiceAction(),
+		a.toolRemember(),
+		a.toolRecallMemory(),
 	}
 }
 
@@ -694,6 +696,90 @@ func (a *App) runHostAction(assetID int64, action string, params any, actor stri
 		"exitCode": done.ExitCode,
 		"attempts": done.Attempts,
 	}, nil
+}
+
+// ---------- 记忆工具（Phase 3） ----------
+
+func (a *App) toolRemember() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("remember", "把已确认的事实写入长期记忆（需审批，避免写入未验证结论）。", harness.RiskMedium, "operator", `{
+			"type":"object","properties":{
+				"content":{"type":"string","description":"一条简洁、可复用的事实"},
+				"scope":{"type":"string","enum":["global","asset"]},
+				"assetId":{"type":"integer","description":"scope=asset 时必填"}
+			},"required":["content"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				Content string `json:"content"`
+				Scope   string `json:"scope"`
+				AssetID int64  `json:"assetId"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(in.Content) == "" {
+				return nil, fmt.Errorf("记忆内容不能为空")
+			}
+			scope := strings.TrimSpace(in.Scope)
+			if scope == "" {
+				scope = "global"
+			}
+			scopeKey := ""
+			if scope == "asset" {
+				if in.AssetID <= 0 {
+					return nil, fmt.Errorf("scope=asset 时必须提供 assetId")
+				}
+				scopeKey = fmt.Sprintf("asset:%d", in.AssetID)
+			}
+			now := fmtT(nowT())
+			id, err := a.memoryRepo().Save(context.Background(), ports.Memory{
+				Scope: scope, ScopeKey: scopeKey, Content: strings.TrimSpace(in.Content),
+				SourceSession: "harness", CreatedAt: now, UpdatedAt: now,
+			})
+			if err != nil {
+				return nil, err
+			}
+			a.auditAs("Agent 助手", "operator", "127.0.0.1", "harness", "memory.save", scope+scopeKey,
+				strings.TrimSpace(in.Content))
+			return map[string]any{"ok": true, "id": id, "scope": scope, "scopeKey": scopeKey}, nil
+		},
+	}
+}
+
+func (a *App) toolRecallMemory() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("recall_memory", "检索长期记忆，可按资产范围过滤（只读）。", harness.RiskLow, "operator", `{
+			"type":"object","properties":{
+				"query":{"type":"string"},
+				"assetId":{"type":"integer"},
+				"limit":{"type":"integer","minimum":1,"maximum":20}
+			},"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var in struct {
+				Query   string `json:"query"`
+				AssetID int64  `json:"assetId"`
+				Limit   int    `json:"limit"`
+			}
+			if err := decodeArgs(raw, &in); err != nil {
+				return nil, err
+			}
+			limit := limitOf(in.Limit, 10, 20)
+			ctx := context.Background()
+			global, err := a.memoryRepo().Search(ctx, "global", "", in.Query, limit)
+			if err != nil {
+				return nil, err
+			}
+			items := global
+			if in.AssetID > 0 {
+				scoped, err := a.memoryRepo().Search(ctx, "asset", fmt.Sprintf("asset:%d", in.AssetID), in.Query, limit)
+				if err != nil {
+					return nil, err
+				}
+				items = append(items, scoped...)
+			}
+			return map[string]any{"count": len(items), "items": items}, nil
+		},
+	}
 }
 
 func (a *App) toolRunSelfcheck() harness.Tool {
