@@ -329,7 +329,164 @@ S_asset   = exposure × business_tier            # 0–1
 
 ## 5. 数据模型
 
-> 以下为 SQLite 方言（PG 兼容），仅列核心表与索引。
+### 5.1 当前实现（SQLite，已落地）
+
+> 以 `server/internal/infrastructure/sqlite/migrations/*.sql` 为准。核心表与关键索引：
+
+```sql
+-- 账号（角色 admin/operator/viewer）
+CREATE TABLE users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE, name TEXT NOT NULL, pwd_hash TEXT NOT NULL,
+  role TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, last_login TEXT NOT NULL DEFAULT ''
+);
+
+-- 资产（source: agent/ssh/container/self）
+CREATE TABLE assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hostname TEXT NOT NULL UNIQUE, ip TEXT NOT NULL DEFAULT '',
+  os_family TEXT NOT NULL DEFAULT '', os_version TEXT NOT NULL DEFAULT '',
+  env TEXT NOT NULL DEFAULT '', exposure TEXT NOT NULL DEFAULT 'internal',
+  tier TEXT NOT NULL DEFAULT 'normal', owner TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'agent', agent_status TEXT NOT NULL DEFAULT 'none',
+  last_seen_at TEXT NOT NULL DEFAULT ''
+);
+
+-- 组件清单（按资产整体替换）
+CREATE TABLE components (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL,
+  purl TEXT NOT NULL, eco TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+  version TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '', product TEXT NOT NULL DEFAULT '',
+  inferred INTEGER NOT NULL DEFAULT 0, UNIQUE(asset_id, purl)
+);
+
+-- CVE 主表（EPSS / 在野利用 / 修复版本内联）
+CREATE TABLE cves (
+  cve_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+  cvss_vector TEXT NOT NULL DEFAULT '', cvss_score REAL NOT NULL DEFAULT 0,
+  severity TEXT NOT NULL DEFAULT 'medium', cwe_id INTEGER NOT NULL DEFAULT 0,
+  cwe_cn TEXT NOT NULL DEFAULT '', published_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '', record_state TEXT NOT NULL DEFAULT 'published',
+  official INTEGER NOT NULL DEFAULT 1, epss REAL NOT NULL DEFAULT 0,
+  exploit_state TEXT NOT NULL DEFAULT 'none', fixed_version TEXT NOT NULL DEFAULT ''
+);
+
+-- 受影响版本区间（左闭右开，按产品名匹配）
+CREATE TABLE cve_affected (
+  cve_id TEXT NOT NULL, product TEXT NOT NULL,
+  version_start_incl TEXT NOT NULL DEFAULT '', version_end_excl TEXT NOT NULL DEFAULT '',
+  fixed_version TEXT NOT NULL DEFAULT '', PRIMARY KEY (cve_id, product)
+);
+
+CREATE TABLE cve_poc (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, cve_id TEXT NOT NULL,
+  link TEXT NOT NULL, inserted_at TEXT NOT NULL DEFAULT '', UNIQUE(cve_id, link)
+);
+
+CREATE TABLE product_map (
+  eco TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, product TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1.0, source TEXT NOT NULL DEFAULT 'manual',
+  updated_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (eco, name)
+);
+
+-- 漏洞结论（risk 为整数 0-100）
+CREATE TABLE findings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL, purl TEXT NOT NULL,
+  component_name TEXT NOT NULL, component_version TEXT NOT NULL, eco TEXT NOT NULL DEFAULT '',
+  cve_id TEXT NOT NULL, cvss REAL NOT NULL DEFAULT 0, epss REAL NOT NULL DEFAULT 0,
+  exploit TEXT NOT NULL DEFAULT 'none', asset_weight REAL NOT NULL DEFAULT 0,
+  risk INTEGER NOT NULL DEFAULT 0, priority TEXT NOT NULL DEFAULT 'P3',
+  score_breakdown TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'open',
+  inferred INTEGER NOT NULL DEFAULT 0, fixed_version TEXT NOT NULL DEFAULT '',
+  assignee TEXT NOT NULL DEFAULT '', ticket_id TEXT NOT NULL DEFAULT '',
+  first_seen TEXT NOT NULL DEFAULT '', last_seen TEXT NOT NULL DEFAULT '',
+  UNIQUE(asset_id, purl, cve_id)
+);
+
+CREATE TABLE finding_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, finding_id INTEGER NOT NULL,
+  event TEXT NOT NULL, actor TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+-- 本地工单（幂等：一个漏洞至多一张）
+CREATE TABLE tickets (
+  id TEXT PRIMARY KEY, finding_id INTEGER NOT NULL, cve_id TEXT NOT NULL,
+  asset_id INTEGER NOT NULL, priority TEXT NOT NULL DEFAULT 'P3',
+  status TEXT NOT NULL DEFAULT 'open', assignee TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+
+-- 审计、同步游标、策略、自检、Agent 令牌与元数据
+CREATE TABLE audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, target TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '', ua TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+CREATE TABLE sync_cursors (
+  source TEXT PRIMARY KEY, last_run_at TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'ok', count INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE risk_policy (
+  id INTEGER PRIMARY KEY CHECK (id = 1), weights TEXT NOT NULL,
+  thresholds TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE selfcheck_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL UNIQUE,
+  started_at TEXT NOT NULL, finished_at TEXT NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL, triggered_by TEXT NOT NULL DEFAULT '',
+  passed INTEGER NOT NULL DEFAULT 0, warnings INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0, checks TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE agent_tokens (token_hash TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE notify_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1), webhook_url TEXT NOT NULL DEFAULT '',
+  secret TEXT NOT NULL DEFAULT '', events TEXT NOT NULL DEFAULT '[]',
+  last_event TEXT NOT NULL DEFAULT '', last_status TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '', last_sent_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
+-- Agent Harness：会话、消息、工具调用、审批
+CREATE TABLE agent_sessions (
+  id TEXT PRIMARY KEY, owner TEXT NOT NULL, role TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE agent_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '', tool_calls TEXT NOT NULL DEFAULT '[]',
+  tool_call_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
+CREATE TABLE agent_tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, tool TEXT NOT NULL,
+  args TEXT NOT NULL DEFAULT '{}', args_hash TEXT NOT NULL, risk TEXT NOT NULL DEFAULT 'low',
+  status TEXT NOT NULL DEFAULT 'running', result TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL DEFAULT '',
+  approver TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE agent_approvals (
+  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, tool TEXT NOT NULL,
+  args_hash TEXT NOT NULL, args TEXT NOT NULL DEFAULT '{}', call_id TEXT NOT NULL DEFAULT '',
+  risk TEXT NOT NULL, requested_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  reason TEXT NOT NULL DEFAULT '', requested_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+  decided_at TEXT NOT NULL DEFAULT '', decided_by TEXT NOT NULL DEFAULT '',
+  consumed_at TEXT NOT NULL DEFAULT ''
+);
+```
+
+关键索引：`findings(risk DESC)`、`findings(priority)`、`findings(status)`、`findings(asset_id)`、
+`findings(cve_id)`、`components(asset_id)`、`cve_affected(product)`、`cves(updated_at)`、
+`cves(epss DESC)`、`audit_logs(created_at DESC)`、`tickets(finding_id)`、`tickets(status, updated_at DESC)`、
+`agent_sessions(owner, updated_at DESC)`、`agent_messages(session_id, id)`、`agent_approvals(session_id, status)`。
+
+### 5.2 目标模型（规划中，尚未实现）
+
+> 以下为后续演进方向（Agent 注册/心跳、SBOM 快照版本化、EPSS 历史、API Token、多租户）。
+> 当前版本没有这些表，不要据此编写查询。
 
 ```sql
 -- 资产
@@ -863,7 +1020,7 @@ Dockerfile              多阶段构建（前端 + Go，单镜像）
 deploy/systemd/         控制面服务、Agent oneshot + timer、环境变量样例
 deploy/k8s/             控制面 Deployment/Service/PVC、Agent CronJob
 docs/architecture/      架构图、详细设计、API 契约
-data/vulnagent.db       首次启动自动生成（演示数据）
+data/vulnagent.db       首次启动自动生成（默认空库，VA_SEED_DEMO=on 才灌演示数据）
 data/agent.token        Agent 接入令牌（0600）
 ```
 
@@ -921,7 +1078,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```
 
-演示账号：`admin / Admin@12345`（管理员）、`operator / Ops@12345`（运维）、`viewer / View@12345`（只读）。
+演示账号（仅 `VA_SEED_DEMO=on` 时存在）：`admin / Admin@12345`（管理员）、`operator / Ops@12345`（运维）、`viewer / View@12345`（只读）。生产模式默认不创建，仅用 `VA_ADMIN_PASSWORD` 初始化管理员。
 
 ### 12.3 已实现
 
@@ -941,6 +1098,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | EPSS 导入 | 支持上传 FIRST CSV，或从 `epss.cyentia.com` 在线拉取全量 gzip CSV；更新 CVE 的 EPSS 后同步漏洞快照并按当前策略重算风险分 |
 | 产品映射 | `(eco, name) → 产品名` 映射，内置常见别名，控制台可增删改，保存后自动重匹配全部资产 |
 | 复扫闭环 | 重新匹配后自动收敛：升级至修复版本 / 不再命中 → verified，组件移除 → closed，并写入事件与审计 |
+| 本地工单 | 控制面自建工单（`VA-YYYY-NNNN`），一个漏洞至多一张、建单幂等；状态与责任人随漏洞处置同步，提供 `GET /api/v1/tickets` 列表与 `ticket.created` webhook |
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |
@@ -949,7 +1107,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | CSV 导出 | 漏洞清单按当前筛选导出 CSV（UTF-8 BOM、上限 5000 条），写 `report.export_csv` 审计 |
 | Webhook 通知 | 新增 P0/P1、工单创建、同步失败、自检失败四类事件，HMAC 签名 + 3 次退避重试，设置页可视化配置与测试 |
 | 数据备份 | `vulnagent backup --out <file>` 走 SQLite `VACUUM INTO`，服务运行中可生成一致性快照 |
-| 运行模式 | 默认演示模式（灌入演示资产并标记 `demo_mode`）；`VA_SEED_DEMO=off` 时不灌演示数据，用 `VA_ADMIN_PASSWORD` 初始化管理员，`/healthz` 与前端「演示数据」标识自动关闭 |
+| 运行模式 | 默认不灌演示数据；仅 `VA_SEED_DEMO=on/1/true/yes` 时灌入演示资产并标记 `demo_mode`。生产模式用 `VA_ADMIN_PASSWORD` 初始化管理员，`/healthz` 与前端「演示数据」标识保持一致 |
 | 观测 | `GET /api/v1/metrics` 输出 Prometheus 文本指标（漏洞按优先级/状态、资产、组件、CVE、在线 Agent、最近自检失败数），支持 Agent Bearer 令牌抓取 |
 | 自更新签名链 | `keygen` 生成 Ed25519 密钥对，`sign` 产出带签名清单，`self-update` 校验签名 + SHA-256 后原子替换并保留 `.old`；已实测篡改清单被拒 |
 | 交付物 | 多阶段 Dockerfile（前端 + Go 单镜像）、systemd server/agent 单元与 timer、K8s Deployment/Service/PVC 与 Agent CronJob |
