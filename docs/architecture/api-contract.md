@@ -581,7 +581,11 @@ Webhook 请求体：
 
 ## 7. 审计与设置
 
-### GET /audit-logs?page=1&pageSize=20&action=&actor=
+### GET /audit-logs?page=1&pageSize=20&action=&actor=&q=&from=&to=
+
+- `action`、`actor`：模糊匹配动作与操作人，可传动作前缀（如 `agent.`）。
+- `q`：关键字，模糊匹配操作人、动作、对象、说明与来源 IP。
+- `from` / `to`：RFC3339 时间边界（含端点），与库内 `created_at` 直接比较，需带时区偏移。
 
 ```json
 {

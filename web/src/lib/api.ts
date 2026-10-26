@@ -387,7 +387,15 @@ export const api = {
     return request("/selfcheck/history");
   },
 
-  auditLogs(params: { page?: number; pageSize?: number; action?: string; actor?: string }): Promise<Paged<AuditItem>> {
+  auditLogs(params: {
+    page?: number;
+    pageSize?: number;
+    action?: string;
+    actor?: string;
+    q?: string;
+    from?: string;
+    to?: string;
+  }): Promise<Paged<AuditItem>> {
     return request(`/audit-logs${query(params)}`);
   },
 

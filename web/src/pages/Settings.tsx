@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bell, History, KeyRound, Lock, Network, Plus, Power, RefreshCw, Save, Send, Settings2, ShieldCheck, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
+import { Bell, History, KeyRound, Lock, Network, Plus, Power, RefreshCw, Save, Search, Send, Settings2, ShieldCheck, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { AuditItem, OpsPolicy, ProductMapping, RiskPolicy, SettingsData, SyncSource } from "../lib/types";
 import { Badge, Empty, Pagination, Skeleton } from "../components/ui";
@@ -1401,18 +1401,81 @@ function SyncPanel() {
   );
 }
 
+const auditActionOptions = [
+  { value: "", label: "全部动作" },
+  { value: "auth.", label: "登录认证" },
+  { value: "agent.", label: "Agent 会话" },
+  { value: "finding", label: "漏洞处置" },
+  { value: "asset", label: "资产" },
+  { value: "scan", label: "扫描" },
+  { value: "sync.", label: "情报同步" },
+  { value: "selfcheck", label: "平台自检" },
+  { value: "report.", label: "报告导出" },
+  { value: "ticket", label: "工单" },
+  { value: "user", label: "账号管理" },
+  { value: "settings", label: "策略设置" }
+];
+
+const auditRangeOptions = [
+  { value: "", label: "全部时间" },
+  { value: "today", label: "今天" },
+  { value: "7d", label: "近 7 天" },
+  { value: "30d", label: "近 30 天" }
+];
+
+// localRFC3339 生成带本地时区偏移的 RFC3339 时间，与库内 created_at 可直接比较
+function localRFC3339(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const offset = -date.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const abs = Math.abs(offset);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
+function auditFrom(range: string): string {
+  if (!range) return "";
+  const start = new Date();
+  if (range === "7d") start.setDate(start.getDate() - 7);
+  else if (range === "30d") start.setDate(start.getDate() - 30);
+  else start.setHours(0, 0, 0, 0);
+  return localRFC3339(start);
+}
+
 function AuditPanel() {
   const [items, setItems] = useState<AuditItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [keyword, setKeyword] = useState("");
+  const [actor, setActor] = useState("");
+  const [action, setAction] = useState("");
+  const [range, setRange] = useState("");
+  const [applied, setApplied] = useState({ q: "", actor: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const pageSize = 14;
 
+  // 文本条件防抖 300ms，避免每次按键都请求
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const q = keyword.trim();
+      const who = actor.trim();
+      setApplied((prev) => (prev.q === q && prev.actor === who ? prev : { q, actor: who }));
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [keyword, actor]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await api.auditLogs({ page, pageSize });
+      const result = await api.auditLogs({
+        page,
+        pageSize,
+        q: applied.q || undefined,
+        actor: applied.actor || undefined,
+        action: action || undefined,
+        from: auditFrom(range) || undefined
+      });
       setItems(result.items ?? []);
       setTotal(result.total);
       setError("");
@@ -1421,11 +1484,22 @@ function AuditPanel() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, applied, action, range]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const dirty = Boolean(keyword || actor || action || range);
+
+  function resetFilters() {
+    setKeyword("");
+    setActor("");
+    setAction("");
+    setRange("");
+    setPage(1);
+    setApplied({ q: "", actor: "" });
+  }
 
   return (
     <section className="card overflow-hidden">
@@ -1434,8 +1508,60 @@ function AuditPanel() {
           <h2 className="text-[14px] font-semibold text-ink">审计日志</h2>
           <p className="mt-0.5 text-[11.5px] text-ink3">登录、扫描、状态变更、导出与策略调整全部留痕</p>
         </div>
-        <span className="text-[11px] text-ink3">共 {total} 条</span>
+        <span className="text-[11px] text-ink3">{dirty ? `筛选出 ${total} 条` : `共 ${total} 条`}</span>
       </header>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-2.5">
+        <label className="relative">
+          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink3" />
+          <input
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            placeholder="搜索动作 / 对象 / 说明 / IP"
+            className="input h-8 w-[240px] pl-8 text-[12.5px]"
+          />
+        </label>
+        <input
+          value={actor}
+          onChange={(event) => setActor(event.target.value)}
+          placeholder="操作人"
+          className="input h-8 w-[120px] text-[12.5px]"
+        />
+        <select
+          value={action}
+          onChange={(event) => {
+            setAction(event.target.value);
+            setPage(1);
+          }}
+          className="input h-8 w-[140px] text-[12.5px]"
+        >
+          {auditActionOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={range}
+          onChange={(event) => {
+            setRange(event.target.value);
+            setPage(1);
+          }}
+          className="input h-8 w-[110px] text-[12.5px]"
+        >
+          {auditRangeOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        {dirty && (
+          <button type="button" className="btn btn-ghost h-8 px-2 text-[12px]" onClick={resetFilters}>
+            <X size={12} />
+            清除筛选
+          </button>
+        )}
+      </div>
       <div className="divider" />
 
       {loading ? (
@@ -1469,7 +1595,7 @@ function AuditPanel() {
                 <tr key={item.id} className="border-b border-line/70 last:border-0 hover:bg-subtle/60">
                   <td className="td pl-5 text-[11.5px] text-ink2">{formatTime(item.time)}</td>
                   <td className="td whitespace-nowrap text-[12px]">{item.actor}</td>
-                  <td className="td text-[11.5px] text-ink3">{roleMeta[item.role] ?? item.role}</td>
+                  <td className="td whitespace-nowrap text-[11.5px] text-ink3">{roleMeta[item.role] ?? item.role}</td>
                   <td className="td">
                     <span className="font-mono text-[11px] text-ink2">{item.action}</span>
                   </td>
@@ -1478,6 +1604,18 @@ function AuditPanel() {
                   <td className="td max-w-[220px] truncate pr-5 text-[11.5px] text-ink3">{item.detail}</td>
                 </tr>
               ))}
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-10 text-center text-[12px] text-ink3">
+                    没有匹配的审计记录
+                    {dirty && (
+                      <button type="button" className="ml-2 text-brand hover:underline" onClick={resetFilters}>
+                        清除筛选
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

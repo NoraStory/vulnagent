@@ -65,5 +65,18 @@ func auditWhere(filter ports.AuditFilter) (string, []any) {
 		where = append(where, "actor LIKE ?")
 		args = append(args, "%"+filter.Actor+"%")
 	}
+	if filter.Query != "" {
+		like := "%" + filter.Query + "%"
+		where = append(where, "(actor LIKE ? OR action LIKE ? OR target LIKE ? OR detail LIKE ? OR ip LIKE ?)")
+		args = append(args, like, like, like, like, like)
+	}
+	if filter.From != "" {
+		where = append(where, "created_at >= ?")
+		args = append(args, filter.From)
+	}
+	if filter.To != "" {
+		where = append(where, "created_at <= ?")
+		args = append(args, filter.To)
+	}
 	return strings.Join(where, " AND "), args
 }

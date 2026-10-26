@@ -222,3 +222,46 @@ func TestHarnessRepoPendingApprovalSkipsExpired(t *testing.T) {
 		t.Fatalf("待审批列表应只含未过期项：%+v err=%v", list, err)
 	}
 }
+
+func TestAuditRepoFilters(t *testing.T) {
+	assets := newTestDB(t)
+	repo := NewAuditRepo(assets.db)
+	ctx := context.Background()
+	entries := []ports.AuditEntry{
+		{Actor: "admin", Role: "admin", Action: "auth.login", Target: "admin", IP: "10.0.0.1", Detail: "登录成功", CreatedAt: "2026-10-25T09:00:00+08:00"},
+		{Actor: "王浩", Role: "admin", Action: "agent.approval.approve", Target: "rescan_asset", IP: "10.0.0.2", Detail: "审批通过", CreatedAt: "2026-10-26T23:22:16+08:00"},
+		{Actor: "李维", Role: "operator", Action: "finding.status", Target: "CVE-2021-44228 @ web-01", IP: "10.0.0.3", Detail: "open → fixing", CreatedAt: "2026-10-27T03:00:00+08:00"},
+	}
+	for _, entry := range entries {
+		if err := repo.Insert(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		filter ports.AuditFilter
+		want   int
+	}{
+		{"按动作前缀", ports.AuditFilter{Action: "agent."}, 1},
+		{"按操作人", ports.AuditFilter{Actor: "王浩"}, 1},
+		{"关键字匹配对象", ports.AuditFilter{Query: "rescan"}, 1},
+		{"关键字匹配 IP", ports.AuditFilter{Query: "10.0.0.3"}, 1},
+		{"起始时间", ports.AuditFilter{From: "2026-10-26T00:00:00+08:00"}, 2},
+		{"结束时间", ports.AuditFilter{To: "2026-10-26T23:59:59+08:00"}, 2},
+		{"组合条件", ports.AuditFilter{Action: "auth.", Query: "登录"}, 1},
+		{"无匹配", ports.AuditFilter{Query: "不存在的关键字"}, 0},
+	}
+	for _, item := range cases {
+		filter := item.filter
+		filter.Limit, filter.Offset = 50, 0
+		list, err := repo.List(ctx, filter)
+		if err != nil {
+			t.Fatalf("%s：查询失败 %v", item.name, err)
+		}
+		total, err := repo.Count(ctx, filter)
+		if err != nil || total != item.want || len(list) != item.want {
+			t.Fatalf("%s：期望 %d 条，实际 total=%d len=%d err=%v", item.name, item.want, total, len(list), err)
+		}
+	}
+}

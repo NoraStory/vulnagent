@@ -398,6 +398,9 @@ func (a *App) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	filter := ports.AuditFilter{
 		Action: strings.TrimSpace(r.URL.Query().Get("action")),
 		Actor:  strings.TrimSpace(r.URL.Query().Get("actor")),
+		Query:  strings.TrimSpace(r.URL.Query().Get("q")),
+		From:   strings.TrimSpace(r.URL.Query().Get("from")),
+		To:     strings.TrimSpace(r.URL.Query().Get("to")),
 		Limit:  size,
 		Offset: offset,
 	}

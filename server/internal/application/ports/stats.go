@@ -101,6 +101,10 @@ type ScoreUpdate struct {
 type AuditFilter struct {
 	Action string
 	Actor  string
+	// Query 关键字，匹配操作人、动作、对象、说明与来源 IP
+	Query  string
+	From   string
+	To     string
 	Limit  int
 	Offset int
 }
