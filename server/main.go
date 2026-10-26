@@ -144,6 +144,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/audit-logs", a.handleAuditLogs)
 	mux.HandleFunc("GET /api/v1/settings", a.handleSettings)
 	mux.HandleFunc("PATCH /api/v1/settings/risk-policy", a.handleRiskPolicy)
+	mux.HandleFunc("GET /api/v1/settings/ops-policy", a.handleOpsPolicy)
+	mux.HandleFunc("PUT /api/v1/settings/ops-policy", a.handleOpsPolicy)
 	mux.HandleFunc("GET /api/v1/sync/status", a.handleSyncStatus)
 	mux.HandleFunc("POST /api/v1/sync/epss", a.handleEPSSUpload)
 	mux.HandleFunc("POST /api/v1/sync/epss/refresh", a.handleEPSSRefresh)
@@ -205,6 +207,7 @@ func runServer() {
 		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter()}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
 	app.initHarness(cfg)
+	app.cleanupOldJobs()
 	defer func() {
 		if app.roDB != nil {
 			_ = app.roDB.Close()

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bell, History, KeyRound, Lock, Network, Plus, Power, RefreshCw, Save, Send, Settings2, ShieldCheck, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { api } from "../lib/api";
-import type { AuditItem, ProductMapping, RiskPolicy, SettingsData, SyncSource } from "../lib/types";
+import type { AuditItem, OpsPolicy, ProductMapping, RiskPolicy, SettingsData, SyncSource } from "../lib/types";
 import { Badge, Empty, Pagination, Skeleton } from "../components/ui";
 import { compactNumber, formatTime, roleMeta, timeAgo } from "../lib/format";
 import { useAuth } from "../lib/auth";
@@ -278,6 +278,8 @@ export function SettingsPage() {
                 自身依赖同样进入扫描范围，平台自身漏洞会在「自检 · 平台自身」中体现。
               </p>
             </section>
+
+            <OpsPolicyCard />
           </div>
         </div>
       )}
@@ -844,6 +846,101 @@ function ModalShell({
         <div className="px-5 py-4">{children}</div>
       </div>
     </div>
+  );
+}
+
+function OpsPolicyCard() {
+  const toast = useToast();
+  const [policy, setPolicy] = useState<OpsPolicy | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .opsPolicy()
+      .then((result) => {
+        if (active) setPolicy(result.policy);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function save() {
+    if (!policy || saving) return;
+    setSaving(true);
+    try {
+      const result = await api.updateOpsPolicy(policy);
+      setPolicy(result.policy);
+      toast.push("运维策略已保存");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "保存失败", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!policy) {
+    return (
+      <section className="card p-5 xl:col-span-5">
+        <Skeleton className="h-5 w-32" />
+        <Skeleton className="mt-4 h-24 w-full" />
+      </section>
+    );
+  }
+
+  return (
+    <section className="card p-5 xl:col-span-5">
+      <h2 className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
+        <Power size={14} className="text-brand" />
+        运维执行策略
+      </h2>
+      <p className="mt-0.5 text-[11.5px] text-ink3">只读模式与作业频率在服务端强制生效</p>
+
+      <label className="mt-4 flex items-center justify-between gap-3 rounded-[10px] bg-subtle px-3 py-2.5">
+        <span>
+          <span className="block text-[12.5px] text-ink">只读模式</span>
+          <span className="mt-0.5 block text-[10.5px] text-ink3">拒绝写文件、服务变更、快照恢复与包升级</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={policy.readOnly}
+          onChange={(event) => setPolicy({ ...policy, readOnly: event.target.checked })}
+          className="h-4 w-4 accent-[#2A5BD7]"
+        />
+      </label>
+
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="text-[11px] text-ink3">每小时作业上限 / 资产</span>
+          <input
+            type="number"
+            min={0}
+            max={500}
+            value={policy.maxJobsPerHour}
+            onChange={(event) => setPolicy({ ...policy, maxJobsPerHour: Number(event.target.value) })}
+            className="input mt-1 h-9"
+          />
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-ink3">作业保留天数</span>
+          <input
+            type="number"
+            min={1}
+            max={3650}
+            value={policy.retentionDays}
+            onChange={(event) => setPolicy({ ...policy, retentionDays: Number(event.target.value) })}
+            className="input mt-1 h-9"
+          />
+        </label>
+      </div>
+
+      <button type="button" className="btn btn-primary mt-4 h-9 w-full" onClick={() => void save()} disabled={saving}>
+        <Save size={13} />
+        {saving ? "保存中…" : "保存运维策略"}
+      </button>
+    </section>
   );
 }
 

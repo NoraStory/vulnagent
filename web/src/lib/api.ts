@@ -12,6 +12,7 @@ import type {
   HarnessSession,
   HarnessToolSpec,
   LoginResponse,
+  OpsPolicy,
   Overview,
   Paged,
   ProductMapping,
@@ -398,6 +399,14 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(policy)
     });
+  },
+
+  opsPolicy(): Promise<{ policy: OpsPolicy }> {
+    return request("/settings/ops-policy");
+  },
+
+  updateOpsPolicy(policy: OpsPolicy): Promise<{ ok: boolean; policy: OpsPolicy }> {
+    return request("/settings/ops-policy", { method: "PUT", body: JSON.stringify(policy) });
   },
 
   syncStatus(): Promise<{ demo: boolean; sources: SyncSource[] }> {

@@ -311,6 +311,12 @@ export interface TrajectoryItem {
   detail: string;
 }
 
+export interface OpsPolicy {
+  readOnly: boolean;
+  maxJobsPerHour: number;
+  retentionDays: number;
+}
+
 export interface AssetDetail {
   demo: boolean;
   asset: AssetItem;

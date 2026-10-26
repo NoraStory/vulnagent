@@ -98,6 +98,22 @@ func TestHostJobQueueClaimAndResult(t *testing.T) {
 	}
 }
 
+func TestOpsPolicyReadOnlyAndRateLimit(t *testing.T) {
+	app, _, assetID := newTicketTestApp(t)
+	if err := app.saveOpsPolicy(opsPolicy{ReadOnly: true, MaxJobsPerHour: 1, RetentionDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.queueHostJob(assetID, "write_file", json.RawMessage(`{"path":"/etc/vulnagent/a","content":"x"}`), "李维", ""); err == nil {
+		t.Fatal("只读模式应拒绝写文件")
+	}
+	if _, err := app.queueHostJob(assetID, "run_command", json.RawMessage(`{"argv":["whoami"]}`), "李维", ""); err != nil {
+		t.Fatalf("只读模式应允许只读命令：%v", err)
+	}
+	if _, err := app.queueHostJob(assetID, "read_file", json.RawMessage(`{"path":"/etc/hosts"}`), "李维", ""); err == nil {
+		t.Fatal("超过每小时上限应拒绝")
+	}
+}
+
 func TestHostJobRetryScheduling(t *testing.T) {
 	app, _, assetID := newTicketTestApp(t)
 	setupAgentToken(t, app, "test-agent-token")

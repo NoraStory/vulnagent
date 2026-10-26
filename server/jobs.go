@@ -29,6 +29,9 @@ func (a *App) queueHostJob(assetID int64, action string, params json.RawMessage,
 		raw, _ := json.Marshal(buf)
 		normalized = raw
 	}
+	if err := a.enforceOpsPolicy(assetID, action); err != nil {
+		return ports.HostJob{}, err
+	}
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s", assetID, action, string(normalized))))
 	key := hex.EncodeToString(sum[:])
 	since := fmtT(nowT().Add(-10 * time.Minute))

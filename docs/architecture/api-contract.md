@@ -608,6 +608,16 @@ Webhook 请求体：
 200：`{ "ok": true, "riskPolicy": { ... }, "recomputed": 56 }`
 校验：权重和必须为 1.0（±0.001），否则 400。
 
+### GET / PUT /settings/ops-policy（admin）
+
+```json
+{ "policy": { "readOnly": false, "maxJobsPerHour": 30, "retentionDays": 30 } }
+```
+
+- `readOnly=true` 时服务端拒绝写文件、服务变更、快照/恢复与包升级，仅允许只读文件与白名单只读命令。
+- `maxJobsPerHour` 按资产统计最近 1 小时作业数，超限入队返回 400；0 表示不限制。
+- `retentionDays` 控制作业历史保留，服务启动时清理超期 `host_jobs` 与尝试记录。
+
 ### GET /sync/status → `{ "demo": true, "sources": [ ...同 overview.sync ] }`
 
 ### POST /sync/osv（admin）

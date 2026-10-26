@@ -1156,6 +1156,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 操作轨迹 | `GET /api/v1/trajectory` 聚合审计、主机作业与工具调用，按时间倒序；控制台「轨迹」页支持按类型过滤 |
 | 快照与回滚 | `snapshot` 动作把文件复制到内容寻址快照目录并写 manifest（SHA-256 校验）；`restore_snapshot` 校验 ID/路径/哈希后原子恢复 |
 | 漏洞自动修复 | `apply_remediation` 按 finding 的修复版本生成包升级作业，支持 dry-run；成功后异步复扫收敛，失败保留输出供回滚 |
+| 运维执行策略 | 设置中心可配置只读模式、每资产每小时作业上限与作业保留天数；服务端入队强制校验，超期作业启动时清理 |
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |
