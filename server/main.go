@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -109,6 +111,7 @@ func (a *App) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/assets", a.handleAssets)
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)
+	mux.HandleFunc("GET /api/v1/assets/{id}/telemetry", a.handleAssetTelemetry)
 	mux.HandleFunc("POST /api/v1/assets/ssh-scan", a.handleSSHScan)
 
 	mux.HandleFunc("GET /api/v1/product-map", a.handleProductMapList)
@@ -277,21 +280,38 @@ func withLogging(next http.Handler) http.Handler {
 	})
 }
 
-// spaHandler 静态文件优先，未命中时回退到 index.html
+// spaHandler 静态文件优先，未命中时回退到 index.html。
+// index.html 不缓存，避免发布后浏览器继续执行旧构建；带哈希的 /assets/ 长期缓存。
 func spaHandler(root string) http.Handler {
 	fileServer := http.FileServer(http.Dir(root))
+	serveIndex := func(w http.ResponseWriter, r *http.Request) bool {
+		index := filepath.Join(root, "index.html")
+		data, err := os.ReadFile(index)
+		if err != nil {
+			http.NotFound(w, r)
+			return false
+		}
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(data)
+		return true
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clean := filepath.Clean("/" + r.URL.Path)
-		target := filepath.Join(root, clean)
+		clean := path.Clean("/" + r.URL.Path)
+		if clean == "/" || clean == "/index.html" {
+			serveIndex(w, r)
+			return
+		}
+		target := filepath.Join(root, filepath.FromSlash(clean))
 		if st, err := os.Stat(target); err == nil && !st.IsDir() {
+			if strings.HasPrefix(clean, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		index := filepath.Join(root, "index.html")
-		if _, err := os.Stat(index); err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		http.ServeFile(w, r, index)
+		serveIndex(w, r)
 	})
 }

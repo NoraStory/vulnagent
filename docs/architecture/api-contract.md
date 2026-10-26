@@ -377,6 +377,45 @@ Webhook 请求体：
 }
 ```
 
+### GET /assets/{id}/telemetry
+
+返回最新一次主机遥测快照与最近 N 个性能采样点（`limit` 默认 48，上限 1000，按时间升序）。
+
+```json
+{
+  "telemetry": {
+    "collectedAt": "2026-10-26T20:02:39+08:00",
+    "metrics": {
+      "cpuPercent": 20,
+      "load1": 0.42, "load5": 0.38, "load15": 0.31,
+      "memUsed": 12522741760, "memTotal": 15885082624,
+      "swapUsed": 0, "swapTotal": 0,
+      "diskReadBps": 0, "diskWriteBps": 0,
+      "netRxBps": 2700000, "netTxBps": 12300,
+      "uptimeSec": 819321, "processCount": 329
+    },
+    "hardware": {
+      "cpuModel": "AMD Ryzen 7 8845H w/ Radeon 780M Graphics",
+      "cpuCores": 8, "cpuThreads": 16, "memTotal": 15885082624,
+      "kernel": "10.0.26200", "virtualization": "physical", "serial": "…",
+      "disks": [{ "device": "PHYSICALDRIVE0", "model": "Micron_2450…", "serial": "…", "sizeBytes": 1024209543168 }],
+      "nics": [{ "name": "Ethernet0", "mac": "00:50:56:AA:BB:CC", "speedMbps": 1000 }]
+    },
+    "services": [{ "name": "W3SVC", "state": "running", "enabled": true, "detail": "Automatic" }],
+    "ports": [{ "proto": "tcp", "addr": "::", "port": 8787, "process": "vulnagent", "pid": 44808 }]
+  },
+  "series": [
+    { "ts": "2026-10-26T20:02:39+08:00", "cpuPercent": 20, "load1": 0.42,
+      "memUsed": 12522741760, "memTotal": 15885082624,
+      "netRxBps": 2700000, "netTxBps": 12300, "diskReadBps": 0, "diskWriteBps": 0 }
+  ]
+}
+```
+
+- `telemetry` 为 `null` 表示该资产尚未上报遥测。
+- 性能采样写入 `host_metrics`，硬件/服务/端口以最新快照整体替换（`asset_telemetry`）。
+- Windows 的 `load1/5/15` 无对应语义，统一返回 0；网卡 `speedMbps` 已从 bit/s 换算并对异常值归零。
+
 ### POST /assets/ssh-scan（operator+）
 
 无 Agent 兜底采集：控制面 SSH 直连目标机执行只读脚本，结果走与 Agent 相同的入库/匹配/收敛流程。

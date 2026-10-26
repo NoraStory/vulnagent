@@ -193,6 +193,88 @@ export interface AssetComponent {
   findings: number;
 }
 
+export interface HostMetrics {
+  cpuPercent: number;
+  load1: number;
+  load5: number;
+  load15: number;
+  memUsed: number;
+  memTotal: number;
+  swapUsed: number;
+  swapTotal: number;
+  diskReadBps: number;
+  diskWriteBps: number;
+  netRxBps: number;
+  netTxBps: number;
+  uptimeSec: number;
+  processCount: number;
+}
+
+export interface HostDisk {
+  device: string;
+  model: string;
+  serial: string;
+  sizeBytes: number;
+}
+
+export interface HostNIC {
+  name: string;
+  mac: string;
+  speedMbps: number;
+}
+
+export interface HostHardware {
+  cpuModel: string;
+  cpuCores: number;
+  cpuThreads: number;
+  memTotal: number;
+  kernel: string;
+  virtualization: string;
+  serial: string;
+  disks: HostDisk[];
+  nics: HostNIC[];
+}
+
+export interface HostService {
+  name: string;
+  state: string;
+  enabled: boolean;
+  detail: string;
+}
+
+export interface HostPort {
+  proto: string;
+  addr: string;
+  port: number;
+  process: string;
+  pid: number;
+}
+
+export interface HostTelemetry {
+  collectedAt: string;
+  metrics: HostMetrics;
+  hardware: HostHardware;
+  services: HostService[];
+  ports: HostPort[];
+}
+
+export interface MetricPoint {
+  ts: string;
+  cpuPercent: number;
+  load1: number;
+  memUsed: number;
+  memTotal: number;
+  netRxBps: number;
+  netTxBps: number;
+  diskReadBps: number;
+  diskWriteBps: number;
+}
+
+export interface AssetTelemetry {
+  telemetry: HostTelemetry | null;
+  series: MetricPoint[];
+}
+
 export interface AssetDetail {
   demo: boolean;
   asset: AssetItem;

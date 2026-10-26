@@ -1,6 +1,7 @@
 import type {
   AssetDetail,
   AssetItem,
+  AssetTelemetry,
   AuditItem,
   Finding,
   FindingDetail,
@@ -331,6 +332,10 @@ export const api = {
 
   asset(id: number | string): Promise<AssetDetail> {
     return request(`/assets/${id}`);
+  },
+
+  assetTelemetry(id: number | string, limit = 48): Promise<AssetTelemetry> {
+    return request(`/assets/${id}/telemetry${query({ limit })}`);
   },
 
   sshScan(payload: {

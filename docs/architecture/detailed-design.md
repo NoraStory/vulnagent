@@ -680,6 +680,25 @@ CREATE TABLE tickets (
 CREATE INDEX idx_tickets_finding ON tickets(finding_id);
 CREATE INDEX idx_tickets_status ON tickets(status, updated_at DESC);
 
+-- 主机遥测：性能时序 + 最新硬件/服务/端口快照
+CREATE TABLE host_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL, ts TEXT NOT NULL,
+  cpu_percent REAL NOT NULL DEFAULT 0, load1 REAL NOT NULL DEFAULT 0,
+  load5 REAL NOT NULL DEFAULT 0, load15 REAL NOT NULL DEFAULT 0,
+  mem_used INTEGER NOT NULL DEFAULT 0, mem_total INTEGER NOT NULL DEFAULT 0,
+  swap_used INTEGER NOT NULL DEFAULT 0, swap_total INTEGER NOT NULL DEFAULT 0,
+  disk_read_bps REAL NOT NULL DEFAULT 0, disk_write_bps REAL NOT NULL DEFAULT 0,
+  net_rx_bps REAL NOT NULL DEFAULT 0, net_tx_bps REAL NOT NULL DEFAULT 0,
+  uptime_sec INTEGER NOT NULL DEFAULT 0, process_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_host_metrics_asset_ts ON host_metrics(asset_id, ts DESC);
+
+CREATE TABLE asset_telemetry (
+  asset_id INTEGER PRIMARY KEY, collected_at TEXT NOT NULL,
+  metrics_json TEXT NOT NULL DEFAULT '{}', hardware_json TEXT NOT NULL DEFAULT '{}',
+  services_json TEXT NOT NULL DEFAULT '[]', ports_json TEXT NOT NULL DEFAULT '[]'
+);
+
 -- 权限
 CREATE TABLE users (
   id         INTEGER PRIMARY KEY,
@@ -1099,6 +1118,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 产品映射 | `(eco, name) → 产品名` 映射，内置常见别名，控制台可增删改，保存后自动重匹配全部资产 |
 | 复扫闭环 | 重新匹配后自动收敛：升级至修复版本 / 不再命中 → verified，组件移除 → closed，并写入事件与审计 |
 | 本地工单 | 控制面自建工单（`VA-YYYY-NNNN`），一个漏洞至多一张、建单幂等；状态与责任人随漏洞处置同步，提供 `GET /api/v1/tickets` 列表与 `ticket.created` webhook |
+| 主机遥测 | Agent 上报 CPU/内存/磁盘/网络/负载/进程性能时序与硬件、服务、监听端口；Linux 走 `/proc`、`/sys`、systemd/ss，Windows 走 PowerShell/CIM；资产详情支持趋势图与设备详情 |
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |

@@ -37,6 +37,7 @@ type Report struct {
 	Mode        string      `json:"mode"`
 	Components  []Component `json:"components"`
 	SelfSBOM    []Component `json:"self_sbom"`
+	Telemetry   *Telemetry  `json:"telemetry,omitempty"`
 	Warnings    []string    `json:"warnings"`
 }
 
@@ -86,6 +87,10 @@ func Collect(opts Options) (Report, error) {
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("组件数量超过上限 %d，已截断", opts.MaxComponents))
 		rep.Components = rep.Components[:opts.MaxComponents]
 	}
+	// 主机遥测（性能/硬件/服务/端口）与软件清单一起上报；失败只降级为警告
+	telemetry, telemetryWarnings := collectTelemetry()
+	rep.Telemetry = &telemetry
+	rep.Warnings = append(rep.Warnings, telemetryWarnings...)
 	if opts.IncludeSelf {
 		rep.SelfSBOM = SelfSBOM()
 	}

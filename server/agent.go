@@ -121,6 +121,12 @@ func (a *App) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db_error", "写入资产失败")
 		return
 	}
+	// 遥测写入失败不影响清单入库与漏洞匹配，只记录告警
+	if payload.Telemetry != nil {
+		if err := a.telemetryRepo().Save(r.Context(), outcome.AssetID, toPortsTelemetry(*payload.Telemetry)); err != nil {
+			slog.Warn("主机遥测写入失败", "hostname", hostname, "assetId", outcome.AssetID, "err", err)
+		}
+	}
 
 	a.auditAs("Agent "+hostname, "agent", clientIP(r), r.UserAgent(), "agent.report",
 		fmt.Sprintf("%s · %d 个组件", hostname, outcome.Components),
