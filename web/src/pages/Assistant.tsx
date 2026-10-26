@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowDown,
@@ -165,7 +165,7 @@ function ToolStatusIcon({ item }: { item: ToolItem }) {
   return <X size={12} className="text-danger" />;
 }
 
-function ToolGroup({ group }: { group: ToolItem[] }) {
+const ToolGroup = memo(function ToolGroup({ group }: { group: ToolItem[] }) {
   const running = group.some((item) => item.running);
   const finished = group.filter((item) => !item.running);
   const failed = finished.filter((item) => !item.ok).length;
@@ -223,7 +223,70 @@ function ToolGroup({ group }: { group: ToolItem[] }) {
       </div>
     </details>
   );
-}
+});
+
+// 单条消息组件：用 memo 固定历史消息，切换权限或输入文字时不重复渲染、不重解析 Markdown
+type PlainItem = Exclude<Item, ToolItem>;
+
+const MessageItem = memo(function MessageItem({ item }: { item: PlainItem }) {
+  if (item.kind === "user") {
+    return (
+      <div className="animate-rise flex justify-end">
+        <div className="bubble-user whitespace-pre-wrap">{item.content}</div>
+      </div>
+    );
+  }
+  if (item.kind === "assistant") {
+    return (
+      <div className="animate-rise flex items-start gap-2">
+        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink text-white">
+          <Sparkles size={12} />
+        </span>
+        <div className="bubble-assistant">
+          <Markdown content={item.content} />
+        </div>
+      </div>
+    );
+  }
+  if (item.kind === "approval") {
+    return (
+      <div className="animate-rise rounded-[12px] border border-[#F5D9B8] bg-warnSoft/60 px-3.5 py-3">
+        <div className="flex items-center gap-2">
+          <ShieldAlert size={14} className="text-warn" />
+          <span className="text-[12.5px] font-semibold text-ink">需要人工审批</span>
+          <span className={`pill ${riskClass[item.approval.risk] ?? ""}`}>
+            {riskLabel[item.approval.risk] ?? item.approval.risk}
+          </span>
+        </div>
+        <p className="mt-1 text-[12px] text-ink2">{item.approval.reason}</p>
+        <p className="mt-0.5 text-[10.5px] text-ink3">
+          有效期至 {formatTime(item.approval.expiresAt)} · 一次性生效，参数变更即失效
+        </p>
+        <pre className="mono mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface/80 p-2 text-[11px] text-ink2">
+          {item.approval.tool} {item.approval.args}
+        </pre>
+        {item.status === "pending" ? (
+          <p className="mt-2 text-[11.5px] text-warn">等待你在输入框上方点击「批准并执行」或「拒绝」</p>
+        ) : (
+          <p className="mt-2 text-[11.5px] text-ink2">
+            已{item.status === "approved" ? "批准并执行" : "拒绝"} · 审批一次性生效
+          </p>
+        )}
+        {item.error && (
+          <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-danger">
+            <AlertCircle size={12} />
+            {item.error}
+          </p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-[10px] border border-[#F5C6C2] bg-dangerSoft px-3 py-2 text-[12px] text-danger">
+      {item.content}
+    </div>
+  );
+});
 
 export function AssistantPage() {
   const [tools, setTools] = useState<HarnessToolSpec[]>([]);
@@ -237,6 +300,7 @@ export function AssistantPage() {
   const [error, setError] = useState("");
   const [passwords, setPasswords] = useState<Record<string, string>>({});
   const [pendingMode, setPendingMode] = useState<HarnessApprovalMode>("each");
+  const [modeSaving, setModeSaving] = useState(false);
   const [skills, setSkills] = useState<HarnessSkill[]>([]);
   const [activeSkillId, setActiveSkillId] = useState("");
   const [slashOpen, setSlashOpen] = useState(false);
@@ -267,6 +331,8 @@ export function AssistantPage() {
       item.kind === "approval" && item.status === "pending"
   );
   const hasPendingApproval = Boolean(pendingApproval);
+  // 仅在消息变化时重新分组，保证 Block 引用稳定，配合 memo 让历史消息跳过渲染
+  const blocks = useMemo(() => groupItems(items), [items]);
 
   useEffect(() => {
     let mounted = true;
@@ -527,16 +593,27 @@ export function AssistantPage() {
   }
 
   async function changeMode(next: HarnessApprovalMode) {
-    if (next === mode) return;
+    if (next === mode || modeSaving) return;
+    const previous = mode;
+    // 先本地生效，避免等待接口返回期间点击像“没反应”
     setPendingMode(next);
+    setModeSaving(true);
     setError("");
-    if (!activeId) return;
-    try {
-      const { session } = await api.harnessUpdateSession(activeId, next);
-      setSessions((prev) => prev.map((item) => (item.id === session.id ? session : item)));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "切换权限失败");
+    if (activeId) {
+      setSessions((prev) =>
+        prev.map((item) => (item.id === activeId ? { ...item, approvalMode: next } : item))
+      );
+      try {
+        const { session } = await api.harnessUpdateSession(activeId, next);
+        setSessions((prev) => prev.map((item) => (item.id === session.id ? session : item)));
+      } catch (err) {
+        setSessions((prev) =>
+          prev.map((item) => (item.id === activeId ? { ...item, approvalMode: previous } : item))
+        );
+        setError(err instanceof ApiError ? err.message : "切换权限失败");
+      }
     }
+    setModeSaving(false);
   }
 
   function sessionList(onPick?: () => void) {
@@ -678,74 +755,13 @@ export function AssistantPage() {
             </div>
           )}
 
-          {groupItems(items).map((block) => {
-            if (block.kind === "tools") {
-              return <ToolGroup key={block.key} group={block.items} />;
-            }
-            const item = block.item;
-            if (item.kind === "user") {
-              return (
-                <div key={item.key} className="animate-rise flex justify-end">
-                  <div className="bubble-user whitespace-pre-wrap">{item.content}</div>
-                </div>
-              );
-            }
-            if (item.kind === "assistant") {
-              return (
-                <div key={item.key} className="animate-rise flex items-start gap-2">
-                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink text-white">
-                    <Sparkles size={12} />
-                  </span>
-                  <div className="bubble-assistant">
-                    <Markdown content={item.content} />
-                  </div>
-                </div>
-              );
-            }
-            if (item.kind === "approval") {
-              return (
-                <div
-                  key={item.key}
-                  className="animate-rise rounded-[12px] border border-[#F5D9B8] bg-warnSoft/60 px-3.5 py-3"
-                >
-                  <div className="flex items-center gap-2">
-                    <ShieldAlert size={14} className="text-warn" />
-                    <span className="text-[12.5px] font-semibold text-ink">需要人工审批</span>
-                    <span className={`pill ${riskClass[item.approval.risk] ?? ""}`}>
-                      {riskLabel[item.approval.risk] ?? item.approval.risk}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[12px] text-ink2">{item.approval.reason}</p>
-                  <p className="mt-0.5 text-[10.5px] text-ink3">
-                    有效期至 {formatTime(item.approval.expiresAt)} · 一次性生效，参数变更即失效
-                  </p>
-                  <pre className="mono mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface/80 p-2 text-[11px] text-ink2">
-                    {item.approval.tool} {item.approval.args}
-                  </pre>
-                  {item.status === "pending" ? (
-                    <p className="mt-2 text-[11.5px] text-warn">
-                      等待你在输入框上方点击「批准并执行」或「拒绝」
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-[11.5px] text-ink2">
-                      已{item.status === "approved" ? "批准并执行" : "拒绝"} · 审批一次性生效
-                    </p>
-                  )}
-                  {item.error && (
-                    <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-danger">
-                      <AlertCircle size={12} />
-                      {item.error}
-                    </p>
-                  )}
-                </div>
-              );
-            }
-            return (
-              <div key={item.key} className="rounded-[10px] border border-[#F5C6C2] bg-dangerSoft px-3 py-2 text-[12px] text-danger">
-                {item.content}
-              </div>
-            );
-          })}
+          {blocks.map((block) =>
+            block.kind === "tools" ? (
+              <ToolGroup key={block.key} group={block.items} />
+            ) : (
+              <MessageItem key={block.key} item={block.item} />
+            )
+          )}
           </div>
           {!atBottom && items.length > 0 && (
             <button
@@ -793,7 +809,8 @@ export function AssistantPage() {
                   type="button"
                   title={option.hint}
                   onClick={() => void changeMode(option.value)}
-                  className={`rounded-[6px] px-2.5 py-1 text-[11px] transition-colors ${
+                  disabled={modeSaving}
+                  className={`rounded-[6px] px-2.5 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                     mode === option.value
                       ? option.value === "full"
                         ? "bg-dangerSoft font-medium text-danger"
