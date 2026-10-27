@@ -596,3 +596,32 @@ export interface SshAgentEvent {
   data?: any;
 }
 
+// ---------- SFTP 文件管理 ----------
+
+export interface SftpEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+  mode: string;
+  modified: string;
+  symlink: boolean;
+}
+
+export interface SftpList {
+  path: string;
+  parent: string;
+  items: SftpEntry[];
+  truncated: boolean;
+  host: string;
+}
+
+export interface SftpPreview {
+  path: string;
+  binary: boolean;
+  truncated: boolean;
+  content: string;
+  size: number;
+  modified: string;
+}
+

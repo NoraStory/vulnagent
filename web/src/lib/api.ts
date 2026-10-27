@@ -34,7 +34,9 @@ import type {
   SshAgentEvent,
   SshAgentMode,
   SshAgentRun,
-  SshAgentRunDetail
+  SshAgentRunDetail,
+  SftpList,
+  SftpPreview
 } from "./types";
 
 const BASE = "/api/v1";
@@ -634,6 +636,53 @@ export const api = {
 
   sshAgentRunDetail(id: string): Promise<SshAgentRunDetail> {
     return request(`/ssh/agent/runs/${encodeURIComponent(id)}`);
+  },
+
+  // ---------- SFTP 文件管理 ----------
+
+  sftpList(hostId: number, path: string): Promise<SftpList> {
+    return request(`/ssh/files/list${query({ hostId, path })}`);
+  },
+
+  sftpPreview(hostId: number, path: string): Promise<SftpPreview> {
+    return request(`/ssh/files/preview${query({ hostId, path })}`);
+  },
+
+  sftpMkdir(hostId: number, path: string): Promise<{ ok: boolean; path: string }> {
+    return request("/ssh/files/mkdir", { method: "POST", body: JSON.stringify({ hostId, path }) });
+  },
+
+  sftpRename(hostId: number, from: string, to: string): Promise<{ ok: boolean }> {
+    return request("/ssh/files/rename", { method: "POST", body: JSON.stringify({ hostId, from, to }) });
+  },
+
+  sftpDelete(hostId: number, path: string, recursive = false): Promise<{ ok: boolean }> {
+    return request(`/ssh/files${query({ hostId, path, recursive: recursive ? "true" : undefined })}`, {
+      method: "DELETE"
+    });
+  },
+
+  sftpSave(hostId: number, path: string, content: string): Promise<{ ok: boolean; path: string; size: number }> {
+    return request("/ssh/files/save", { method: "POST", body: JSON.stringify({ hostId, path, content }) });
+  },
+
+  async sftpUpload(hostId: number, path: string, file: File): Promise<{ ok: boolean; path: string; size: number }> {
+    const form = new FormData();
+    form.set("path", path);
+    form.set("file", file);
+    const response = await fetch(`/api/v1/ssh/files/upload?hostId=${hostId}`, {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    if (!response.ok) {
+      throw await toApiError(response, "上传失败");
+    }
+    return (await response.json()) as { ok: boolean; path: string; size: number };
+  },
+
+  sftpDownloadURL(hostId: number, path: string): string {
+    return `/api/v1/ssh/files/download${query({ hostId, path })}`;
   }
 };
 

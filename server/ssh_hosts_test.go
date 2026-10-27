@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/pkg/sftp"
 )
 
 func TestSSHSecretRoundTrip(t *testing.T) {
@@ -92,6 +94,12 @@ func TestExtractShellCommands(t *testing.T) {
 
 // startTestSSHServer 启动一个仅用于测试的 SSH 服务，支持口令认证与回显 shell
 func startTestSSHServer(t *testing.T) (addr, fingerprint string) {
+	addr, fingerprint, _ = startTestSSHServerEx(t)
+	return addr, fingerprint
+}
+
+// startTestSSHServerEx 额外返回 SFTP 子系统的根目录
+func startTestSSHServerEx(t *testing.T) (addr, fingerprint, root string) {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -111,6 +119,7 @@ func startTestSSHServer(t *testing.T) (addr, fingerprint string) {
 	}
 	config.AddHostKey(signer)
 
+	root = t.TempDir()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -122,13 +131,13 @@ func startTestSSHServer(t *testing.T) (addr, fingerprint string) {
 			if err != nil {
 				return
 			}
-			go serveTestSSHConn(conn, config)
+			go serveTestSSHConn(conn, config, root)
 		}
 	}()
-	return listener.Addr().String(), ssh.FingerprintSHA256(signer.PublicKey())
+	return listener.Addr().String(), ssh.FingerprintSHA256(signer.PublicKey()), root
 }
 
-func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig) {
+func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 	serverConn, chans, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {
 		_ = conn.Close()
@@ -180,6 +189,20 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig) {
 					}
 					status := struct{ Status uint32 }{exit}
 					_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(&status))
+					return
+				case "subsystem":
+					var payload struct{ Name string }
+					_ = ssh.Unmarshal(req.Payload, &payload)
+					if payload.Name != "sftp" {
+						_ = req.Reply(false, nil)
+						continue
+					}
+					_ = req.Reply(true, nil)
+					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(root))
+					if err != nil {
+						return
+					}
+					_ = server.Serve()
 					return
 				default:
 					_ = req.Reply(false, nil)

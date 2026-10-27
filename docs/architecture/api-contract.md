@@ -1109,3 +1109,87 @@ vulnagent_selfcheck_failed 0
 ### GET /ssh/agent/runs/{id}（viewer+）
 
 返回 `{ "run": {…}, "steps": [ { "index": 0, "thought": "…", "command": "df -h", "output": "…", "risk": "normal", "approved": "auto", "exitCode": 0, "createdAt": "…" } ] }`，用于审计与复盘。
+
+### 12.1 SFTP 文件管理（operator+）
+
+路径参数统一使用绝对路径，后端会 `path.Clean` 归一化；空路径返回 `400 bad_request`，根目录 `/` 不可删除。
+
+#### GET /ssh/files/list?hostId=1&path=/var/log
+
+```json
+{
+  "host": "web-01",
+  "path": "/var/log",
+  "parent": "/var",
+  "truncated": false,
+  "items": [
+    { "name": "syslog", "path": "/var/log/syslog", "dir": false, "size": 4096,
+      "mode": "-rw-r-----", "modified": "2026-10-27T11:42:45+08:00", "symlink": false }
+  ]
+}
+```
+
+- 目录优先、名称不区分大小写排序；单次最多返回 2000 项，超出时 `truncated=true`。
+- 软链接会额外 `stat` 一次以判定真实类型；`parent` 在根目录时为空字符串。
+- 目录不存在或不可读返回 `404 not_found`；SSH/SFTP 连接失败返回 `502 sftp_failed`。
+
+#### GET /ssh/files/preview?hostId=1&path=/etc/hosts
+
+```json
+{ "path": "/etc/hosts", "binary": false, "truncated": false, "content": "127.0.0.1 localhost\n",
+  "size": 24, "modified": "2026-10-27T11:42:45+08:00" }
+```
+
+- 仅用于小文本文件：超过 2MB 返回 `413 too_large`；内容最多返回前 256KB（`truncated=true`）。
+- 包含 NUL 字节时 `binary=true`，前端提示改为下载。
+
+#### GET /ssh/files/download?hostId=1&path=/var/log/syslog
+
+- 返回 `application/octet-stream` 与 `Content-Disposition: attachment`，支持 `Range`（`http.ServeContent`）。
+- 目标不存在 `404 not_found`；目标是目录 `400 bad_request`。
+
+#### POST /ssh/files/upload?hostId=1
+
+`multipart/form-data`：
+
+| 字段 | 位置 | 说明 |
+|---|---|---|
+| `hostId` | query | 主机 ID |
+| `path` | form | 目标目录（绝对路径） |
+| `file` | form | 文件内容，单文件上限 256MB |
+
+- 使用临时文件名写入后再 `rename`，避免半写文件；同名文件会被覆盖，同名目录返回 `409 is_dir`。
+- 200：`{ "ok": true, "path": "/var/log/app.log", "size": 1024 }`。
+
+#### POST /ssh/files/mkdir
+
+```json
+{ "hostId": 1, "path": "/opt/backup/2026-10" }
+```
+
+- `path` 是完整目标路径，使用 `MkdirAll` 语义；200：`{ "ok": true, "path": "…" }`。
+
+#### POST /ssh/files/rename
+
+```json
+{ "hostId": 1, "from": "/opt/a.txt", "to": "/opt/b.txt" }
+```
+
+- 同时支持重命名与跨目录移动；目标已存在时的行为由远端 SFTP 服务决定。
+
+#### DELETE /ssh/files?hostId=1&path=/opt/backup&recursive=true
+
+- 文件直接删除；目录非空且未传 `recursive=true` 时返回 `409 dir_not_empty`，前端据此弹出递归确认。
+- 递归删除先 `Walk` 收集路径（上限 5000 条）再逆序删除；删除根目录返回 `400 bad_request`。
+
+#### POST /ssh/files/save
+
+```json
+{ "hostId": 1, "path": "/etc/nginx/nginx.conf", "content": "…" }
+```
+
+- 在线编辑保存，`content` 上限 256KB（超过返回 `400 bad_request`）。
+- 同样采用「临时文件 + rename」原子替换，文件权限重置为远端默认（通常 0644 受 umask 影响），原有权限位不保留。
+- 200：`{ "ok": true, "path": "…", "size": 1234 }`。
+
+> 所有 SFTP 操作都会写审计：`ssh.file.list` 不记录，`ssh.file.read` / `ssh.file.download` / `ssh.file.upload` / `ssh.file.save` / `ssh.file.mkdir` / `ssh.file.rename` / `ssh.file.delete` 记录主机名与目标路径（上传附带字节数）。

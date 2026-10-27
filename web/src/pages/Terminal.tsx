@@ -16,6 +16,7 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  FolderOpen,
   Loader2,
   Pencil,
   Play,
@@ -36,6 +37,7 @@ import { api, ApiError, sshTerminalURL } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { useToast } from "../lib/toast";
 import { Markdown } from "../components/Markdown";
+import { SftpPanel } from "../components/SftpPanel";
 import { Skeleton } from "../components/ui";
 import type {
   SshAgentEvent,
@@ -334,6 +336,7 @@ export function TerminalPage() {
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeKey, setActiveKey] = useState("");
   const [aiOpen, setAiOpen] = useState(false);
+  const [fileOpen, setFileOpen] = useState(false);
   const [aiMode, setAiMode] = useState<"chat" | "agent">("chat");
   const [aiByTab, setAiByTab] = useState<Record<string, AiMessage[]>>({});
   const [aiInput, setAiInput] = useState("");
@@ -448,7 +451,10 @@ export function TerminalPage() {
 
   function updateTab(key: string, patch: Partial<OpenTab>) {
     setTabs((prev) => prev.map((tab) => (tab.key === key ? { ...tab, ...patch } : tab)));
-    if (patch.status === "connected") void loadSessions();
+    if (patch.status === "connected") {
+      void loadSessions();
+      void loadHosts();
+    }
   }
 
   function pushAi(key: string, message: AiMessage) {
@@ -1025,6 +1031,15 @@ export function TerminalPage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            className="btn btn-secondary h-8 px-2.5 text-[12px]"
+            onClick={() => setFileOpen(true)}
+            disabled={!activeTab}
+          >
+            <FolderOpen size={13} />
+            文件
+          </button>
+          <button
+            type="button"
             className="btn btn-secondary h-8 px-2.5 text-[12px] xl:hidden"
             onClick={() => setAiOpen(true)}
           >
@@ -1109,9 +1124,9 @@ export function TerminalPage() {
                   </button>
                   <div className="mt-1 flex items-center gap-1">
                     <span className="text-[9.5px] text-ink3">
-                      {host.lastConnectedAt ? `最近 ${timeAgo(host.lastConnectedAt)}` : "未连接"}
+                      {host.lastConnectedAt ? `最近 ${timeAgo(host.lastConnectedAt)}` : "从未连接"}
                     </span>
-                    <span className="ml-auto flex opacity-0 transition-opacity group-hover:opacity-100">
+                    <span className="ml-auto flex opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                       <button
                         type="button"
                         className="rounded p-0.5 text-ink3 hover:bg-surface hover:text-ink"
@@ -1328,6 +1343,17 @@ export function TerminalPage() {
             onClick={(event) => event.stopPropagation()}
           >
             {aiPanel}
+          </div>
+        </div>
+      )}
+
+      {fileOpen && activeTab && (
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setFileOpen(false)}>
+          <div
+            className="relative h-full w-[440px] max-w-[94vw] border-l border-line bg-surface shadow-float"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <SftpPanel key={activeTab.host.id} host={activeTab.host} onClose={() => setFileOpen(false)} />
           </div>
         </div>
       )}
