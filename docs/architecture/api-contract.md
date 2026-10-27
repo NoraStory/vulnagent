@@ -1056,3 +1056,56 @@ vulnagent_selfcheck_failed 0
 - `question` 上限 2000 字符，`context` 上限 8000 字符（前端只发送最近终端输出）。
 - 模型未配置返回 `503 llm_unavailable`；调用失败返回 `502 llm_failed`。
 - 返回命令只是建议，前端默认仅插入终端，执行前需要人工二次确认。
+
+### POST /ssh/agent/run（SSE，operator+）
+
+请求：
+
+```json
+{ "hostId": 1, "goal": "检查磁盘使用率并找出占用最大的目录", "mode": "safe" }
+```
+
+`mode` 取值：
+
+| 值 | 行为 |
+|---|---|
+| `confirm` | 每条命令执行前都等待人工批准 |
+| `safe` | 只读命令直接执行；high / critical 需要批准（默认） |
+| `auto` | 除 critical 外直接执行；critical 始终需要批准 |
+
+响应 `text/event-stream`，每行 `data: <json>`：
+
+| type | data | 说明 |
+|---|---|---|
+| `status` | `{runId, mode, maxSteps, host}` | 运行开始 |
+| `step` | `{index, thought, command, risk, approval}` | 规划出的命令；`risk` 为 `normal/high/critical`，`approval` 为 `pending/not_required` |
+| `await_approval` | `{approvalId, index, command, risk, reason}` | 等待人工批准（5 分钟有效） |
+| `approval_result` | `{index, approved}` | 审批结果 |
+| `output` | `{index, output, exitCode}` | 命令输出（单步最多 16KB） |
+| `done` | `{runId, steps, summary, truncated}` | 结束；达到步数上限时 summary 为模型生成的收尾结论 |
+| `error` | `{message}` | 运行失败 |
+
+- 每次运行最多 8 步；单条命令 90 秒超时；运行与每一步写入 `ssh_agent_runs` / `ssh_agent_steps`。
+- 运行与当前浏览器 SSE 连接绑定，断开即终止；审计记录 `ssh.agent.run` / `ssh.agent.done`。
+
+### POST /ssh/agent/approvals/{id}（operator+）
+
+```json
+{ "decision": "approve" }
+```
+
+- `decision` 为 `approve` 或 `reject`；审批不存在或已失效返回 `404 not_found`。
+
+### GET /ssh/agent/runs?hostId=1&limit=20（viewer+）
+
+```json
+{ "items": [
+  { "id": "55b9…", "hostId": 1, "hostName": "web-01", "actor": "王浩", "role": "operator",
+    "goal": "检查磁盘…", "mode": "safe", "status": "completed", "steps": 8,
+    "summary": "…", "error": "", "startedAt": "…", "endedAt": "…" }
+] }
+```
+
+### GET /ssh/agent/runs/{id}（viewer+）
+
+返回 `{ "run": {…}, "steps": [ { "index": 0, "thought": "…", "command": "df -h", "output": "…", "risk": "normal", "approved": "auto", "exitCode": 0, "createdAt": "…" } ] }`，用于审计与复盘。

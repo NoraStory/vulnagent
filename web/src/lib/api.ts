@@ -30,7 +30,11 @@ import type {
   SshHostInput,
   SshHostTestResult,
   SshSessionItem,
-  SshAssistantReply
+  SshAssistantReply,
+  SshAgentEvent,
+  SshAgentMode,
+  SshAgentRun,
+  SshAgentRunDetail
 } from "./types";
 
 const BASE = "/api/v1";
@@ -605,6 +609,31 @@ export const api = {
     sessionId?: string;
   }): Promise<SshAssistantReply> {
     return request("/ssh/assistant", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  sshAgentRun(
+    hostId: number,
+    goal: string,
+    mode: SshAgentMode,
+    onEvent: (event: SshAgentEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    return streamSSE("/ssh/agent/run", { hostId, goal, mode }, onEvent, signal);
+  },
+
+  sshAgentDecision(approvalId: string, decision: "approve" | "reject"): Promise<{ ok: boolean }> {
+    return request(`/ssh/agent/approvals/${encodeURIComponent(approvalId)}`, {
+      method: "POST",
+      body: JSON.stringify({ decision })
+    });
+  },
+
+  sshAgentRuns(params: { hostId?: number; limit?: number } = {}): Promise<{ items: SshAgentRun[] }> {
+    return request(`/ssh/agent/runs${query(params)}`);
+  },
+
+  sshAgentRunDetail(id: string): Promise<SshAgentRunDetail> {
+    return request(`/ssh/agent/runs/${encodeURIComponent(id)}`);
   }
 };
 

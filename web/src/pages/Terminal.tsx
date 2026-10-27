@@ -12,6 +12,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
   ArrowRight,
+  Bot,
   Check,
   ChevronDown,
   CircleAlert,
@@ -22,8 +23,10 @@ import {
   RefreshCw,
   Send,
   Server,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Square,
   SquareTerminal,
   Trash2,
   Wand2,
@@ -34,7 +37,14 @@ import { timeAgo } from "../lib/format";
 import { useToast } from "../lib/toast";
 import { Markdown } from "../components/Markdown";
 import { Skeleton } from "../components/ui";
-import type { SshAssistantReply, SshHost, SshHostInput, SshSessionItem } from "../lib/types";
+import type {
+  SshAgentEvent,
+  SshAgentMode,
+  SshAssistantReply,
+  SshHost,
+  SshHostInput,
+  SshSessionItem
+} from "../lib/types";
 
 type ConnStatus = "connecting" | "connected" | "closed" | "failed";
 
@@ -55,6 +65,42 @@ interface AiMessage {
   content: string;
   commands?: string[];
 }
+
+type AgentStepView = {
+  index: number;
+  thought: string;
+  command: string;
+  risk: string;
+  approval: string;
+  approved?: boolean;
+  output?: string;
+  exitCode?: number;
+};
+
+type AgentPending = {
+  id: string;
+  index: number;
+  command: string;
+  risk: string;
+  reason: string;
+};
+
+type AgentRunView = {
+  runId: string;
+  status: "running" | "done" | "error";
+  goal: string;
+  mode: SshAgentMode;
+  steps: AgentStepView[];
+  summary: string;
+  error: string;
+  pending?: AgentPending;
+};
+
+const agentRiskMeta: Record<string, { label: string; className: string }> = {
+  normal: { label: "只读", className: "bg-signal-soft text-signal" },
+  high: { label: "需确认", className: "bg-warnSoft text-warn" },
+  critical: { label: "高风险", className: "bg-dangerSoft text-danger" }
+};
 
 const quickPrompts = [
   { label: "解释最近输出", prompt: "解释最近一段终端输出的含义，并指出是否存在异常。" },
@@ -288,16 +334,24 @@ export function TerminalPage() {
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeKey, setActiveKey] = useState("");
   const [aiOpen, setAiOpen] = useState(false);
+  const [aiMode, setAiMode] = useState<"chat" | "agent">("chat");
   const [aiByTab, setAiByTab] = useState<Record<string, AiMessage[]>>({});
   const [aiInput, setAiInput] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [agentByTab, setAgentByTab] = useState<Record<string, AgentRunView>>({});
+  const [agentGoal, setAgentGoal] = useState("");
+  const [agentMode, setAgentMode] = useState<SshAgentMode>("safe");
+  const [agentDeciding, setAgentDeciding] = useState(false);
   const [pendingRun, setPendingRun] = useState<{ key: string; id: string; command: string } | null>(null);
   const [showSessions, setShowSessions] = useState(false);
 
   const paneRefs = useRef(new Map<string, PaneHandle>());
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
+  const agentScrollRef = useRef<HTMLDivElement | null>(null);
+  const agentAbort = useRef(new Map<string, AbortController>());
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null;
   const activeAi = activeTab ? aiByTab[activeTab.key] ?? [] : [];
+  const agentState = activeTab ? agentByTab[activeTab.key] : undefined;
 
   const loadHosts = useCallback(async () => {
     try {
@@ -329,6 +383,11 @@ export function TerminalPage() {
     const el = aiScrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [activeAi, aiBusy]);
+
+  useEffect(() => {
+    const el = agentScrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [agentState]);
 
   const filteredHosts = useMemo(() => {
     const keyword = filter.trim().toLowerCase();
@@ -449,6 +508,139 @@ export function TerminalPage() {
     toast.push("已在终端执行命令", "success");
   }
 
+  function updateAgentState(key: string, patch: (prev: AgentRunView) => AgentRunView) {
+    setAgentByTab((prev) => (prev[key] ? { ...prev, [key]: patch(prev[key]) } : prev));
+  }
+
+  async function startAgent() {
+    if (!activeTab || agentState?.status === "running") return;
+    const goal = agentGoal.trim();
+    if (!goal) return;
+    const key = activeTab.key;
+    const controller = new AbortController();
+    agentAbort.current.set(key, controller);
+    setAgentByTab((prev) => ({
+      ...prev,
+      [key]: {
+        runId: "",
+        status: "running",
+        goal,
+        mode: agentMode,
+        steps: [],
+        summary: "",
+        error: ""
+      }
+    }));
+
+    const handle = (event: SshAgentEvent) => {
+      updateAgentState(key, (current) => {
+        const data = event.data ?? {};
+        const next: AgentRunView = { ...current, steps: [...current.steps] };
+        switch (event.type) {
+          case "status":
+            next.runId = String(data.runId ?? "");
+            break;
+          case "step": {
+            const index = Number(data.index ?? next.steps.length);
+            const step: AgentStepView = {
+              index,
+              thought: String(data.thought ?? ""),
+              command: String(data.command ?? ""),
+              risk: String(data.risk ?? "normal"),
+              approval: String(data.approval ?? "")
+            };
+            next.steps = [...next.steps.filter((item) => item.index !== index), step].sort(
+              (a, b) => a.index - b.index
+            );
+            break;
+          }
+          case "await_approval":
+            next.pending = {
+              id: String(data.approvalId ?? ""),
+              index: Number(data.index ?? 0),
+              command: String(data.command ?? ""),
+              risk: String(data.risk ?? ""),
+              reason: String(data.reason ?? "")
+            };
+            break;
+          case "approval_result": {
+            const index = Number(data.index ?? 0);
+            next.pending = undefined;
+            next.steps = next.steps.map((item) =>
+              item.index === index ? { ...item, approved: Boolean(data.approved) } : item
+            );
+            break;
+          }
+          case "output": {
+            const index = Number(data.index ?? 0);
+            next.steps = next.steps.map((item) =>
+              item.index === index
+                ? { ...item, output: String(data.output ?? ""), exitCode: Number(data.exitCode ?? 0) }
+                : item
+            );
+            break;
+          }
+          case "done":
+            next.status = "done";
+            next.summary = String(data.summary ?? "");
+            next.pending = undefined;
+            break;
+          case "error":
+            next.status = "error";
+            next.error = String(data.message ?? "运行失败");
+            next.pending = undefined;
+            break;
+          default:
+            break;
+        }
+        return next;
+      });
+    };
+
+    try {
+      await api.sshAgentRun(activeTab.host.id, goal, agentMode, handle, controller.signal);
+      void loadSessions();
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        updateAgentState(key, (current) => ({
+          ...current,
+          status: "error",
+          error: err instanceof ApiError ? err.message : "Agent 运行失败"
+        }));
+      }
+    } finally {
+      agentAbort.current.delete(key);
+      updateAgentState(key, (current) =>
+        current.status === "running"
+          ? { ...current, status: "error", error: current.error || "运行中断" }
+          : current
+      );
+    }
+  }
+
+  function stopAgent() {
+    if (!activeTab) return;
+    const key = activeTab.key;
+    agentAbort.current.get(key)?.abort();
+    agentAbort.current.delete(key);
+    updateAgentState(key, (current) => ({ ...current, status: "error", error: "已手动停止", pending: undefined }));
+  }
+
+  async function decideAgent(decision: "approve" | "reject") {
+    if (!activeTab || !agentState?.pending || agentDeciding) return;
+    const key = activeTab.key;
+    const pending = agentState.pending;
+    setAgentDeciding(true);
+    try {
+      await api.sshAgentDecision(pending.id, decision);
+      updateAgentState(key, (current) => ({ ...current, pending: undefined }));
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "审批失败", "error");
+    } finally {
+      setAgentDeciding(false);
+    }
+  }
+
   async function removeHost(host: SshHost) {
     if (!window.confirm(`确认删除主机「${host.name}」？已保存的凭据会一并删除。`)) return;
     try {
@@ -498,6 +690,28 @@ export function TerminalPage() {
         </button>
       </div>
 
+      <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
+        {[
+          { key: "chat" as const, label: "问答", icon: <Sparkles size={11} /> },
+          { key: "agent" as const, label: "Agent 自动执行", icon: <Bot size={11} /> }
+        ].map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setAiMode(item.key)}
+            className={`inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[10.5px] transition-colors ${
+              aiMode === item.key ? "bg-brand-soft font-medium text-brand-strong" : "text-ink3 hover:text-ink"
+            }`}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        ))}
+        <span className="ml-auto text-[9px] text-ink3">逐步留痕</span>
+      </div>
+
+      {aiMode === "chat" ? (
+        <>
       <div ref={aiScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3">
         {!activeTab && (
           <p className="rounded-[10px] border border-dashed border-line px-3 py-6 text-center text-[11.5px] text-ink3">
@@ -618,6 +832,179 @@ export function TerminalPage() {
         </div>
         <p className="mt-1.5 text-[10px] text-ink3">只读取最近终端输出；命令执行前需要二次确认，操作写入审计。</p>
       </div>
+        </>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="space-y-2 border-b border-line px-3 py-2.5">
+            <div className="flex items-center gap-1.5 text-[10px] text-ink3">
+              <Bot size={11} className="text-brand" />
+              目标由 AI 拆解为命令并自动执行，危险操作按模式确认
+            </div>
+            <textarea
+              rows={2}
+              value={agentGoal}
+              onChange={(event) => setAgentGoal(event.target.value)}
+              disabled={!activeTab || agentState?.status === "running"}
+              placeholder="例如：检查磁盘使用率并找出占用最大的目录"
+              className="input min-h-[52px] resize-none py-2 text-[11.5px] leading-[17px]"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={agentMode}
+                onChange={(event) => setAgentMode(event.target.value as SshAgentMode)}
+                disabled={agentState?.status === "running"}
+                className="input h-7 w-[128px] text-[10.5px]"
+              >
+                <option value="safe">仅危险确认</option>
+                <option value="confirm">逐条确认</option>
+                <option value="auto">全自动执行</option>
+              </select>
+              {agentState?.status === "running" ? (
+                <button type="button" className="btn btn-secondary h-7 px-2.5 text-[11px]" onClick={stopAgent}>
+                  <Square size={11} />
+                  停止
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary h-7 px-2.5 text-[11px]"
+                  onClick={() => void startAgent()}
+                  disabled={!activeTab || !agentGoal.trim()}
+                >
+                  <Play size={11} />
+                  开始执行
+                </button>
+              )}
+              {agentState?.runId && (
+                <span className="ml-auto font-mono text-[9px] text-ink3">运行 {agentState.runId.slice(0, 8)}</span>
+              )}
+            </div>
+            {agentMode === "auto" && (
+              <p className="rounded-[6px] bg-dangerSoft px-2 py-1 text-[9.5px] leading-[14px] text-danger">
+                全自动模式仅 critical 命令需要确认，其余命令会直接执行；所有命令与输出均留痕。
+              </p>
+            )}
+          </div>
+
+          <div ref={agentScrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
+            {!activeTab && (
+              <p className="rounded-[10px] border border-dashed border-line px-3 py-6 text-center text-[10.5px] text-ink3">
+                先连接一台主机，再启动 Agent。
+              </p>
+            )}
+            {activeTab && !agentState && (
+              <div className="space-y-2">
+                <p className="text-[10.5px] leading-[17px] text-ink3">
+                  Agent 会先做只读侦察，再根据输出决定下一步；每个命令、输出与审批都会留痕。
+                </p>
+                {[
+                  "检查磁盘使用率并找出占用最大的目录",
+                  "排查最近异常登录与失败的系统服务",
+                  "检查系统安全基线并给出修复建议"
+                ].map((goal) => (
+                  <button
+                    key={goal}
+                    type="button"
+                    onClick={() => setAgentGoal(goal)}
+                    className="flex w-full items-center gap-2 rounded-[8px] border border-line bg-surface px-2.5 py-2 text-left text-[10.5px] text-ink2 transition-colors hover:border-lineStrong hover:text-ink"
+                  >
+                    <Wand2 size={11} className="shrink-0 text-brand" />
+                    {goal}
+                    <ArrowRight size={11} className="ml-auto text-ink3" />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {agentState?.steps.map((step) => (
+              <div key={step.index} className="rounded-[9px] border border-line bg-surface px-2.5 py-2">
+                <div className="flex items-center gap-1.5 text-[9.5px] text-ink3">
+                  <span className="font-mono">#{step.index + 1}</span>
+                  <span className={`pill h-[18px] px-1.5 text-[9px] ${agentRiskMeta[step.risk]?.className ?? ""}`}>
+                    {agentRiskMeta[step.risk]?.label ?? step.risk}
+                  </span>
+                  {step.approved === false && <span className="text-danger">已拒绝</span>}
+                  {step.approved === true && <span className="text-ok">已确认</span>}
+                  {step.exitCode !== undefined && (
+                    <span className="ml-auto font-mono">exit {step.exitCode}</span>
+                  )}
+                </div>
+                {step.thought && (
+                  <p className="mt-1 text-[10.5px] leading-[16px] text-ink2">{step.thought}</p>
+                )}
+                <pre className="mt-1.5 overflow-x-auto rounded-[6px] bg-[#0B1220] px-2 py-1.5 font-mono text-[10.5px] leading-[15px] text-[#D7DEEA]">
+                  {step.command}
+                </pre>
+                {step.output !== undefined && (
+                  <details className="mt-1.5">
+                    <summary className="cursor-pointer text-[10px] text-ink3">查看输出</summary>
+                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-[6px] bg-subtle px-2 py-1.5 font-mono text-[10px] leading-[15px] text-ink2">
+                      {step.output || "（无输出）"}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            ))}
+
+            {agentState?.status === "running" && !agentState.pending && (
+              <div className="flex items-center gap-2 text-[10.5px] text-ink3">
+                <Loader2 size={12} className="animate-spin" />
+                {agentState.steps.length === 0 ? "正在读取主机现场并规划下一步…" : "Agent 执行中，等待命令输出…"}
+              </div>
+            )}
+
+            {agentState?.pending && (
+              <div className="rounded-[9px] border border-[#F5D9B8] bg-warnSoft/70 px-2.5 py-2">
+                <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-ink">
+                  <ShieldAlert size={12} className="text-warn" />
+                  等待你确认执行
+                </div>
+                <p className="mt-1 text-[9.5px] leading-[14px] text-ink3">{agentState.pending.reason}</p>
+                <pre className="mt-1.5 whitespace-pre-wrap break-all rounded-[6px] bg-surface px-2 py-1.5 font-mono text-[10px] text-ink2">
+                  {agentState.pending.command}
+                </pre>
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="btn btn-primary h-7 px-2.5 text-[10.5px]"
+                    onClick={() => void decideAgent("approve")}
+                    disabled={agentDeciding}
+                  >
+                    <Check size={11} />
+                    批准执行
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary h-7 px-2.5 text-[10.5px]"
+                    onClick={() => void decideAgent("reject")}
+                    disabled={agentDeciding}
+                  >
+                    <X size={11} />
+                    拒绝
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {agentState?.status === "done" && (
+              <div className="rounded-[9px] border border-line bg-subtle/70 px-2.5 py-2">
+                <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-ink">
+                  <Check size={12} className="text-ok" />
+                  执行完成
+                </div>
+                <p className="mt-1 text-[10.5px] leading-[17px] text-ink2">
+                  {agentState.summary || "目标已完成"}
+                </p>
+              </div>
+            )}
+            {agentState?.status === "error" && (
+              <div className="rounded-[9px] bg-dangerSoft px-2.5 py-2 text-[10.5px] leading-[16px] text-danger">
+                {agentState.error}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 

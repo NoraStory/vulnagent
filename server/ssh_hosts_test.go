@@ -148,7 +148,8 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig) {
 		go func() {
 			defer channel.Close()
 			for req := range requests {
-				if req.Type == "shell" {
+				switch req.Type {
+				case "shell":
 					_ = req.Reply(true, nil)
 					_, _ = channel.Write([]byte("ready\n"))
 					buf := make([]byte, 512)
@@ -161,7 +162,26 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig) {
 							return
 						}
 					}
-				} else {
+				case "exec":
+					var payload struct{ Command string }
+					_ = ssh.Unmarshal(req.Payload, &payload)
+					_ = req.Reply(true, nil)
+					output := "ok\n"
+					exit := uint32(0)
+					switch {
+					case strings.HasPrefix(payload.Command, "echo "):
+						output = strings.TrimPrefix(payload.Command, "echo ") + "\n"
+					case payload.Command == "false":
+						output = ""
+						exit = 1
+					}
+					if output != "" {
+						_, _ = channel.Write([]byte(output))
+					}
+					status := struct{ Status uint32 }{exit}
+					_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(&status))
+					return
+				default:
 					_ = req.Reply(false, nil)
 				}
 			}

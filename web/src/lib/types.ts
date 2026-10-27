@@ -549,3 +549,50 @@ export interface SshAssistantReply {
   model: string;
 }
 
+export type SshAgentMode = "confirm" | "safe" | "auto";
+
+export interface SshAgentRun {
+  id: string;
+  hostId: number;
+  hostName: string;
+  actor: string;
+  role: Role;
+  goal: string;
+  mode: SshAgentMode;
+  status: string;
+  steps: number;
+  summary: string;
+  error: string;
+  startedAt: string;
+  endedAt: string;
+}
+
+export interface SshAgentStepRecord {
+  index: number;
+  thought: string;
+  command: string;
+  output: string;
+  risk: string;
+  approved: string;
+  exitCode: number;
+  createdAt: string;
+}
+
+export interface SshAgentRunDetail {
+  run: SshAgentRun;
+  steps: SshAgentStepRecord[];
+}
+
+export interface SshAgentEvent {
+  type:
+    | "status"
+    | "step"
+    | "output"
+    | "await_approval"
+    | "approval_result"
+    | "done"
+    | "error"
+    | string;
+  data?: any;
+}
+

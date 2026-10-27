@@ -84,6 +84,10 @@ type App struct {
 	sshOnce   sync.Once
 	sshAEAD   cipher.AEAD
 	sshKeyErr error
+
+	// SSH Agent 自动执行：命令审批等待队列
+	sshApprovalMu sync.Mutex
+	sshApprovals  map[string]chan bool
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -132,6 +136,10 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
 	mux.HandleFunc("GET /api/v1/ssh/terminal", a.handleSSHTerminal)
 	mux.HandleFunc("POST /api/v1/ssh/assistant", a.handleSSHAssistant)
+	mux.HandleFunc("POST /api/v1/ssh/agent/run", a.handleSSHAgentRun)
+	mux.HandleFunc("POST /api/v1/ssh/agent/approvals/{id}", a.handleSSHAgentApproval)
+	mux.HandleFunc("GET /api/v1/ssh/agent/runs", a.handleSSHAgentRuns)
+	mux.HandleFunc("GET /api/v1/ssh/agent/runs/{id}", a.handleSSHAgentRunDetail)
 
 	mux.HandleFunc("GET /api/v1/assets", a.handleAssets)
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)
@@ -229,8 +237,14 @@ func runServer() {
 	webDist := cfg.WebDist
 	app := &App{db: db, sessions: newSessionStore(), dataDir: dataDir, webDist: webDist,
 		selfDigest: computeSelfSBOMDigest(), scanDebounce: scanDebounceFromEnv(),
-		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter(), jobKey: []byte(agentToken)}
+		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter(), jobKey: []byte(agentToken),
+		sshApprovals: make(map[string]chan bool)}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
+	// 上次进程退出时仍在运行的 SSH Agent 任务标记为中断，避免长期停留在 running
+	if _, err := db.Exec(`UPDATE ssh_agent_runs SET status='failed', error='服务重启，运行中断', finished_at=? WHERE status='running'`,
+		fmtT(nowT())); err != nil {
+		slog.Warn("清理中断的 SSH Agent 运行失败", "err", err)
+	}
 	app.skills = loadSkills()
 	slog.Info("运维技能已加载", "count", len(app.skills.List()), "dir", app.skills.root)
 	app.initHarness(cfg)
@@ -309,8 +323,21 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter {
 	return s.ResponseWriter
 }
 
+// Flush 透传 http.Flusher，保证 SSE（助手对话、SSH Agent）逐条实时下发
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Agent 作业轮询与健康检查频率高，跳过访问日志避免刷屏
+		if r.Method == http.MethodGet &&
+			(strings.HasPrefix(r.URL.Path, "/api/v1/agent/jobs") || r.URL.Path == "/api/v1/healthz") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
