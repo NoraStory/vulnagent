@@ -8,20 +8,24 @@ import {
   useState
 } from "react";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
   ArrowRight,
+  BookOpen,
   Bot,
   Check,
   ChevronDown,
   CircleAlert,
   FolderOpen,
+  History,
   Loader2,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  Search,
   Send,
   Server,
   ShieldAlert,
@@ -35,9 +39,13 @@ import {
 } from "lucide-react";
 import { api, ApiError, sshTerminalURL } from "../lib/api";
 import { timeAgo } from "../lib/format";
+import { terminalTheme } from "../lib/terminalTheme";
 import { useToast } from "../lib/toast";
 import { Markdown } from "../components/Markdown";
 import { SftpPanel } from "../components/SftpPanel";
+import { SnippetPanel } from "../components/SnippetPanel";
+import { SessionReplay } from "../components/SessionReplay";
+import { AgentHistory } from "../components/AgentHistory";
 import { Skeleton } from "../components/ui";
 import type {
   SshAgentEvent,
@@ -117,30 +125,6 @@ const statusMeta: Record<ConnStatus, { label: string; dot: string; text: string 
   failed: { label: "失败", dot: "#B42318", text: "text-danger" }
 };
 
-const terminalTheme = {
-  background: "#0B1220",
-  foreground: "#D7DEEA",
-  cursor: "#5B8CFF",
-  cursorAccent: "#0B1220",
-  selectionBackground: "rgba(91,140,255,0.28)",
-  black: "#0B1220",
-  red: "#FF6B6B",
-  green: "#3DDC97",
-  yellow: "#FFC857",
-  blue: "#5B8CFF",
-  magenta: "#C792EA",
-  cyan: "#5AD4E6",
-  white: "#D7DEEA",
-  brightBlack: "#5A6B85",
-  brightRed: "#FF8A8A",
-  brightGreen: "#62E8AE",
-  brightYellow: "#FFD98A",
-  brightBlue: "#84A9FF",
-  brightMagenta: "#D7A8F5",
-  brightCyan: "#7FE3F0",
-  brightWhite: "#FFFFFF"
-};
-
 type PaneHandle = {
   send: (text: string) => void;
   focus: () => void;
@@ -160,8 +144,12 @@ const TerminalPane = forwardRef<
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const statusRef = useRef<ConnStatus>("connecting");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
 
   useImperativeHandle(ref, () => ({
     send(text: string) {
@@ -210,6 +198,17 @@ const TerminalPane = forwardRef<
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    const search = new SearchAddon();
+    term.loadAddon(search);
+    searchRef.current = search;
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        setSearchOpen(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        return false;
+      }
+      return true;
+    });
     term.open(container);
     termRef.current = term;
     fitRef.current = fit;
@@ -303,6 +302,7 @@ const TerminalPane = forwardRef<
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      searchRef.current = null;
       wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -321,7 +321,68 @@ const TerminalPane = forwardRef<
     return () => window.clearTimeout(timer);
   }, [active]);
 
-  return <div ref={containerRef} className="h-full w-full overflow-hidden bg-[#0B1220] px-2 py-2" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full overflow-hidden bg-[#0B1220] px-2 py-2" />
+      {searchOpen && active && (
+        <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-[7px] border border-line bg-surface px-1.5 py-1 shadow-float">
+          <Search size={11} className="shrink-0 text-ink3" />
+          <input
+            ref={searchInputRef}
+            value={searchText}
+            onChange={(event) => {
+              setSearchText(event.target.value);
+              if (event.target.value) searchRef.current?.findNext(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (event.shiftKey) searchRef.current?.findPrevious(searchText);
+                else searchRef.current?.findNext(searchText);
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setSearchOpen(false);
+                termRef.current?.focus();
+              }
+            }}
+            autoFocus
+            spellCheck={false}
+            placeholder="搜索终端输出"
+            className="h-6 w-40 bg-transparent text-[11px] text-ink outline-none placeholder:text-ink3"
+          />
+          <button
+            type="button"
+            className="rounded px-1 text-[10px] text-ink3 hover:bg-subtle hover:text-ink"
+            onClick={() => searchRef.current?.findPrevious(searchText)}
+            title="上一个（Shift+Enter）"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className="rounded px-1 text-[10px] text-ink3 hover:bg-subtle hover:text-ink"
+            onClick={() => searchRef.current?.findNext(searchText)}
+            title="下一个（Enter）"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            className="rounded p-0.5 text-ink3 hover:bg-subtle hover:text-ink"
+            onClick={() => {
+              setSearchOpen(false);
+              termRef.current?.focus();
+            }}
+            aria-label="关闭搜索"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 });
 
 export function TerminalPage() {
@@ -347,6 +408,11 @@ export function TerminalPage() {
   const [agentDeciding, setAgentDeciding] = useState(false);
   const [pendingRun, setPendingRun] = useState<{ key: string; id: string; command: string } | null>(null);
   const [showSessions, setShowSessions] = useState(false);
+  const [snippetOpen, setSnippetOpen] = useState(false);
+  const [replaySession, setReplaySession] = useState<SshSessionItem | null>(null);
+  const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
+  const [broadcastInput, setBroadcastInput] = useState("");
+  const [broadcastAll, setBroadcastAll] = useState(false);
 
   const paneRefs = useRef(new Map<string, PaneHandle>());
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
@@ -512,6 +578,22 @@ export function TerminalPage() {
     pane?.focus();
     setPendingRun(null);
     toast.push("已在终端执行命令", "success");
+  }
+
+  function sendCommand(command: string, broadcast: boolean) {
+    const text = command.trim();
+    if (!text) return;
+    const connected = tabs.filter((tab) => tab.status === "connected");
+    const targets = broadcast ? connected : activeTab ? [activeTab] : [];
+    if (targets.length === 0) {
+      toast.push("没有已连接的会话", "error");
+      return;
+    }
+    for (const tab of targets) {
+      paneRefs.current.get(tab.key)?.send(`${text}\r`);
+    }
+    paneRefs.current.get(targets[targets.length - 1].key)?.focus();
+    toast.push(broadcast ? `已广播到 ${targets.length} 个会话` : "命令已发送", "success");
   }
 
   function updateAgentState(key: string, patch: (prev: AgentRunView) => AgentRunView) {
@@ -713,7 +795,15 @@ export function TerminalPage() {
             {item.label}
           </button>
         ))}
-        <span className="ml-auto text-[9px] text-ink3">逐步留痕</span>
+        <button
+          type="button"
+          className="ml-auto inline-flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-[9.5px] text-ink3 hover:bg-subtle hover:text-ink"
+          onClick={() => setAgentHistoryOpen(true)}
+          title="查看 Agent 历史运行与逐步轨迹"
+        >
+          <History size={10} />
+          历史运行
+        </button>
       </div>
 
       {aiMode === "chat" ? (
@@ -1032,11 +1122,26 @@ export function TerminalPage() {
           <button
             type="button"
             className="btn btn-secondary h-8 px-2.5 text-[12px]"
-            onClick={() => setFileOpen(true)}
+            onClick={() => {
+              setFileOpen(true);
+              setSnippetOpen(false);
+            }}
             disabled={!activeTab}
           >
             <FolderOpen size={13} />
             文件
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary h-8 px-2.5 text-[12px]"
+            onClick={() => {
+              setSnippetOpen(true);
+              setFileOpen(false);
+            }}
+            title="快捷命令与团队脚本库"
+          >
+            <BookOpen size={13} />
+            快捷命令
           </button>
           <button
             type="button"
@@ -1187,9 +1292,23 @@ export function TerminalPage() {
                       <span className="truncate text-[10.5px] text-ink">{item.hostName}</span>
                       <span className="ml-auto shrink-0 text-[9.5px] text-ink3">{timeAgo(item.startedAt)}</span>
                     </div>
-                    <p className="mt-0.5 truncate text-[9.5px] text-ink3">
-                      {item.actor} · {item.addr}
-                    </p>
+                    <div className="mt-0.5 flex items-center gap-1">
+                      <p className="truncate text-[9.5px] text-ink3">
+                        {item.actor} · {item.addr}
+                        {item.hasRecording ? ` · 录制 ${Math.max(1, Math.round(item.recordingMs / 1000))}s` : ""}
+                      </p>
+                      {item.hasRecording && (
+                        <button
+                          type="button"
+                          className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] text-brand hover:bg-surface"
+                          onClick={() => setReplaySession(item)}
+                          title="回放本次会话"
+                        >
+                          <Play size={9} />
+                          回放
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1293,6 +1412,56 @@ export function TerminalPage() {
             ))}
           </div>
 
+          {tabs.length > 0 && (
+            <div className="flex shrink-0 items-center gap-1.5 border-t border-line bg-surface px-2 py-1.5">
+              <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-ink3">
+                <BookOpen size={11} />
+                快捷命令
+              </span>
+              <input
+                value={broadcastInput}
+                onChange={(event) => setBroadcastInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    sendCommand(broadcastInput, broadcastAll);
+                    setBroadcastInput("");
+                  }
+                }}
+                spellCheck={false}
+                placeholder={
+                  broadcastAll
+                    ? `广播到 ${tabs.filter((tab) => tab.status === "connected").length} 个已连接会话`
+                    : "输入命令，Enter 发送到当前会话"
+                }
+                aria-label="快捷命令输入"
+                className="input h-7 flex-1 font-mono text-[10.5px]"
+              />
+              <label className="flex shrink-0 items-center gap-1 text-[10px] text-ink3">
+                <input
+                  type="checkbox"
+                  checked={broadcastAll}
+                  onChange={(event) => setBroadcastAll(event.target.checked)}
+                  className="h-3 w-3"
+                />
+                广播
+              </label>
+              <button
+                type="button"
+                className="btn btn-primary h-7 shrink-0 px-2 text-[10.5px]"
+                onClick={() => {
+                  sendCommand(broadcastInput, broadcastAll);
+                  setBroadcastInput("");
+                }}
+                disabled={!broadcastInput.trim()}
+              >
+                <Send size={11} />
+                发送
+              </button>
+            </div>
+          )}
+
           <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-surface px-3 py-1.5 text-[10px] text-ink3">
             {activeTab ? (
               <>
@@ -1348,14 +1517,29 @@ export function TerminalPage() {
       )}
 
       {fileOpen && activeTab && (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setFileOpen(false)}>
-          <div
-            className="relative h-full w-[440px] max-w-[94vw] border-l border-line bg-surface shadow-float"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <SftpPanel key={activeTab.host.id} host={activeTab.host} onClose={() => setFileOpen(false)} />
-          </div>
+        <div className="fixed right-0 top-0 z-40 h-full w-[440px] max-w-[94vw] border-l border-line bg-surface shadow-float">
+          <SftpPanel key={activeTab.host.id} host={activeTab.host} onClose={() => setFileOpen(false)} />
         </div>
+      )}
+
+      {snippetOpen && (
+        <div className="fixed right-0 top-0 z-40 h-full w-[420px] max-w-[94vw] border-l border-line bg-surface shadow-float">
+          <SnippetPanel
+            connected={tabs
+              .filter((tab) => tab.status === "connected")
+              .map((tab) => ({ hostId: tab.host.id, name: tab.host.name }))}
+            activeHostId={activeTab?.host.id}
+            onClose={() => setSnippetOpen(false)}
+            onInsert={insertCommand}
+            onRun={sendCommand}
+          />
+        </div>
+      )}
+
+      {replaySession && <SessionReplay session={replaySession} onClose={() => setReplaySession(null)} />}
+
+      {agentHistoryOpen && (
+        <AgentHistory onClose={() => setAgentHistoryOpen(false)} onReuseGoal={(goal) => setAgentGoal(goal)} />
       )}
 
       {dialog}

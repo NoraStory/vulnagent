@@ -35,6 +35,9 @@ import type {
   SshAgentMode,
   SshAgentRun,
   SshAgentRunDetail,
+  SshRecording,
+  SshSnippet,
+  SshSnippetInput,
   SftpList,
   SftpPreview
 } from "./types";
@@ -602,6 +605,33 @@ export const api = {
 
   sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {
     return request(`/ssh/sessions${query({ limit })}`);
+  },
+
+  sshRecording(sessionId: string): Promise<SshRecording> {
+    return request(`/ssh/sessions/${encodeURIComponent(sessionId)}/recording`);
+  },
+
+  sshSnippets(limit = 100): Promise<{ items: SshSnippet[] }> {
+    return request(`/ssh/snippets${query({ limit })}`);
+  },
+
+  sshCreateSnippet(input: SshSnippetInput): Promise<{ snippet: SshSnippet }> {
+    return request("/ssh/snippets", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  sshUpdateSnippet(id: number, input: SshSnippetInput): Promise<{ snippet: SshSnippet }> {
+    return request(`/ssh/snippets/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  sshDeleteSnippet(id: number): Promise<{ ok: boolean }> {
+    return request(`/ssh/snippets/${id}`, { method: "DELETE" });
+  },
+
+  sshUseSnippet(id: number, hostNames: string[], broadcast: boolean): Promise<{ ok: boolean; usageCount: number }> {
+    return request(`/ssh/snippets/${id}/use`, {
+      method: "POST",
+      body: JSON.stringify({ hostNames, broadcast })
+    });
   },
 
   sshAssistant(input: {

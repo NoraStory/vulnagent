@@ -979,6 +979,17 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 审计：`ssh.file.read|download|upload|save|mkdir|rename|delete` 记录主机名与目标路径，上传附带字节数。
 - 验收：单元测试覆盖路径归一化、根目录拒删、真实 SSH+SFTP fixture 的建删改查；端到端通过 curl 与浏览器验证列表、预览、上传、重命名、保存、下载、递归删除、非空目录 409 与 UI 模态交互。
 
+#### 7.6.6 会话录制、脚本库与检索
+
+- 录制管道：PTY 输出在转发 WebSocket 的同一路径上进入 `sshRecorder`，按通道缓冲（256）非阻塞投递，后台协程每 250ms 或每 24 个分片批量写库；单会话原始输出上限 2MB，超限或拥塞时标记 `truncated`，不阻塞终端。
+- 数据表：`ssh_recordings`（会话、主机、操作人、起止时间、时长、分片数、字节数、截断标记）与 `ssh_recording_chunks`（`seq`、相对偏移 `offset_ms`、base64 输出），迁移见 `sqlite/migrations/0012_ssh_workspace.sql`；无输出的会话在结束时删除空记录。
+- 回放：`GET /ssh/sessions/{id}/recording` 返回分片，前端用独立 xterm 按偏移与倍速重放，支持暂停、重播与 1x/2x/4x；单次间隔超过 3 秒时按 3 秒处理，避免长时间空转。
+- 脚本库：`ssh_snippets` 保存名称、单行命令、说明、标签、创建人与使用次数；命令禁止换行以便安全广播，名称/命令/说明/标签均有长度上限；列表按使用次数与更新时间排序。
+- 广播：前端把命令逐条写入每个已连接会话的 WebSocket；`POST /ssh/snippets/{id}/use` 记录主机名与是否广播并累加使用次数，审计 `ssh.snippet.use`。
+- 终端检索：`@xterm/addon-search`，`Ctrl/Cmd + F` 唤起浮层，Enter / Shift+Enter 跳转，Esc 关闭。
+- Agent 运行历史：`GET /ssh/agent/runs` 与 `/{id}` 已在 7.6.4 落库，前端新增历史对话框，支持查看步骤、输出与结论，并可复用目标重新执行。
+- 验收：单元测试覆盖录制分片写入/空录制清理、脚本 CRUD 与多行命令拒绝、会话列表录制标记与回放接口；浏览器端到端验证录制→回放、脚本执行/计数、双会话广播、Agent 历史与终端搜索。
+
 ---
 
 ## 8. 部署方案

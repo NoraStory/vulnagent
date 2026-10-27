@@ -541,6 +541,46 @@ export interface SshSessionItem {
   endedAt: string;
   bytesIn: number;
   bytesOut: number;
+  hasRecording: boolean;
+  recordingBytes: number;
+  recordingMs: number;
+  recordingTruncated: boolean;
+}
+
+export interface SshRecordingChunk {
+  offsetMs: number;
+  data: string;
+}
+
+export interface SshRecording {
+  sessionId: string;
+  hostName: string;
+  actor: string;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  bytes: number;
+  truncated: boolean;
+  chunks: SshRecordingChunk[];
+}
+
+export interface SshSnippet {
+  id: number;
+  name: string;
+  command: string;
+  description: string;
+  tags: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  usageCount: number;
+}
+
+export interface SshSnippetInput {
+  name: string;
+  command: string;
+  description: string;
+  tags: string;
 }
 
 export interface SshAssistantReply {

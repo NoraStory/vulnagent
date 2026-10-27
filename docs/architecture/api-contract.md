@@ -1193,3 +1193,77 @@ vulnagent_selfcheck_failed 0
 - 200：`{ "ok": true, "path": "…", "size": 1234 }`。
 
 > 所有 SFTP 操作都会写审计：`ssh.file.list` 不记录，`ssh.file.read` / `ssh.file.download` / `ssh.file.upload` / `ssh.file.save` / `ssh.file.mkdir` / `ssh.file.rename` / `ssh.file.delete` 记录主机名与目标路径（上传附带字节数）。
+
+### 12.2 会话录制与回放
+
+终端会话的输出会按时间偏移异步写入 `ssh_recordings`（元数据）与 `ssh_recording_chunks`（分片，`data` 为 base64），单会话原始输出上限 2MB，超出后 `truncated=true`。
+
+`GET /ssh/sessions` 的每条记录新增：
+
+| 字段 | 说明 |
+|---|---|
+| `hasRecording` | 是否有可回放分片 |
+| `recordingBytes` | 录制的原始输出字节数 |
+| `recordingMs` | 会话时长（毫秒） |
+| `recordingTruncated` | 是否因超过上限被截断 |
+
+#### GET /ssh/sessions/{id}/recording（viewer+）
+
+```json
+{
+  "sessionId": "0f5d52af…",
+  "hostName": "web-01",
+  "actor": "王浩",
+  "startedAt": "2026-10-28T00:21:30+08:00",
+  "endedAt": "2026-10-28T00:23:06+08:00",
+  "durationMs": 96000,
+  "bytes": 307,
+  "truncated": false,
+  "chunks": [
+    { "offsetMs": 0, "data": "G1sySj4…" },
+    { "offsetMs": 420, "data": "ZWNobyBoaQ==" }
+  ]
+}
+```
+
+- `chunks` 按 `seq` 升序返回，`offsetMs` 为相对会话开始的毫秒偏移，前端按偏移与播放倍速重放。
+- 无录制返回 `404 not_found`；只有产生过输出的会话才会保留记录（空会话在结束时删除）。
+
+### 12.3 快捷命令（脚本库）
+
+#### GET /ssh/snippets?limit=100（viewer+）
+
+```json
+{ "items": [
+  { "id": 1, "name": "磁盘巡检", "command": "df -hT", "description": "查看磁盘使用率",
+    "tags": "disk", "createdBy": "va-admin", "createdAt": "…", "updatedAt": "…", "usageCount": 12 }
+] }
+```
+
+按 `usageCount` 降序、`updatedAt` 降序返回，最多 200 条。
+
+#### POST /ssh/snippets（operator+）
+
+```json
+{ "name": "磁盘巡检", "command": "df -hT", "description": "查看磁盘使用率", "tags": "disk" }
+```
+
+- 名称 1–64 字符；命令必填、≤2000 字节且必须为单行；说明 ≤200 字符；标签 ≤120 字符。
+- 200：`{ "snippet": {…} }`；写审计 `ssh.snippet.create`。
+
+#### PATCH /ssh/snippets/{id}（operator+）
+
+请求体同上，整体覆盖；不存在返回 `404 not_found`；写审计 `ssh.snippet.update`。
+
+#### DELETE /ssh/snippets/{id}（operator+）
+
+200：`{ "ok": true }`；写审计 `ssh.snippet.delete`。
+
+#### POST /ssh/snippets/{id}/use（operator+）
+
+```json
+{ "hostNames": ["web-01", "web-02"], "broadcast": true }
+```
+
+- 累加 `usage_count` 并写审计 `ssh.snippet.use`（目标包含主机名与是否广播），用于排序与追溯。
+- 200：`{ "ok": true, "usageCount": 13 }`。

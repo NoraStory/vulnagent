@@ -89,7 +89,8 @@ func (a *App) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := newSSHSessionID()
-	startedAt := fmtT(nowT())
+	startedTime := nowT()
+	startedAt := fmtT(startedTime)
 	clientIP := clientIP(r)
 
 	fail := func(message string) {
@@ -138,9 +139,12 @@ func (a *App) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bytesIn, bytesOut atomic.Int64
+	recorder := newSSHRecorder(a, sessionID, host, u.Username, startedTime)
+	defer recorder.Stop()
 	writer := sshStreamWriter{
 		bytes: &bytesOut,
 		send: func(p []byte) {
+			recorder.Record(p)
 			send(sshTerminalFrame{Type: "output", Data: base64.StdEncoding.EncodeToString(p)})
 		},
 	}
@@ -305,8 +309,11 @@ func (a *App) handleSSHSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := clampInt(queryInt(r, "limit", 50), 1, 200)
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id, host_id, host_name, addr, actor, role, status, error,
-		client_ip, started_at, ended_at, bytes_in, bytes_out FROM ssh_sessions ORDER BY started_at DESC LIMIT ?`, limit)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT s.id, s.host_id, s.host_name, s.addr, s.actor, s.role, s.status, s.error,
+		s.client_ip, s.started_at, s.ended_at, s.bytes_in, s.bytes_out,
+		COALESCE(r.chunks,0), COALESCE(r.bytes,0), COALESCE(r.duration_ms,0), COALESCE(r.truncated,0)
+		FROM ssh_sessions s LEFT JOIN ssh_recordings r ON r.session_id = s.id
+		ORDER BY s.started_at DESC LIMIT ?`, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "读取 SSH 会话失败")
 		return
@@ -318,9 +325,11 @@ func (a *App) handleSSHSessions(w http.ResponseWriter, r *http.Request) {
 			id, hostName, addr, actor, role, status, errText, ip, startedAt, endedAt string
 			hostID                                                                   int64
 			bytesIn, bytesOut                                                        int64
+			recordingChunks, recordingBytes, recordingMs, recordingTruncated         int64
 		)
 		if err := rows.Scan(&id, &hostID, &hostName, &addr, &actor, &role, &status, &errText, &ip,
-			&startedAt, &endedAt, &bytesIn, &bytesOut); err != nil {
+			&startedAt, &endedAt, &bytesIn, &bytesOut,
+			&recordingChunks, &recordingBytes, &recordingMs, &recordingTruncated); err != nil {
 			continue
 		}
 		items = append(items, map[string]any{
@@ -328,6 +337,8 @@ func (a *App) handleSSHSessions(w http.ResponseWriter, r *http.Request) {
 			"actor": actor, "role": role, "status": status, "error": errText,
 			"clientIp": ip, "startedAt": startedAt, "endedAt": endedAt,
 			"bytesIn": bytesIn, "bytesOut": bytesOut,
+			"hasRecording": recordingChunks > 0, "recordingBytes": recordingBytes,
+			"recordingMs": recordingMs, "recordingTruncated": recordingTruncated == 1,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
