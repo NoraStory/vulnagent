@@ -484,3 +484,68 @@ export interface HarnessEvent {
   data?: any;
 }
 
+// ---------- SSH 终端面板 ----------
+
+export type SshAuthType = "password" | "key";
+
+export interface SshHost {
+  id: number;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: SshAuthType;
+  hostKey: string;
+  note: string;
+  tags: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  lastConnectedAt: string;
+  hasSecret: boolean;
+}
+
+export interface SshHostInput {
+  name?: string;
+  host?: string;
+  port?: number;
+  username?: string;
+  authType?: SshAuthType;
+  password?: string;
+  privateKey?: string;
+  passphrase?: string;
+  note?: string;
+  tags?: string;
+  clearHostKey?: boolean;
+}
+
+export interface SshHostTestResult {
+  ok: boolean;
+  fingerprint: string;
+  serverVersion: string;
+  elapsedMs: number;
+  trusted: boolean;
+}
+
+export interface SshSessionItem {
+  id: string;
+  hostId: number;
+  hostName: string;
+  addr: string;
+  actor: string;
+  role: Role;
+  status: "connecting" | "connected" | "closed" | "failed" | string;
+  error: string;
+  clientIp: string;
+  startedAt: string;
+  endedAt: string;
+  bytesIn: number;
+  bytesOut: number;
+}
+
+export interface SshAssistantReply {
+  answer: string;
+  commands: string[];
+  model: string;
+}
+

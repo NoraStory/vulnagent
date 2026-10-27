@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/cipher"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -78,6 +79,11 @@ type App struct {
 
 	// skills 运维技能注册表（从 skill/*.zip 解压到 skills/）
 	skills *SkillRegistry
+
+	// SSH 终端面板：凭据加密密钥（首次使用时生成）
+	sshOnce   sync.Once
+	sshAEAD   cipher.AEAD
+	sshKeyErr error
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -116,6 +122,16 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/findings/{id}/ticket", a.handleFindingTicket)
 	mux.HandleFunc("POST /api/v1/findings/{id}/rescan", a.handleFindingRescan)
 	mux.HandleFunc("GET /api/v1/tickets", a.handleTickets)
+
+	// SSH 终端面板：主机凭据、会话桥接与智能助手
+	mux.HandleFunc("GET /api/v1/ssh/hosts", a.handleSSHHosts)
+	mux.HandleFunc("POST /api/v1/ssh/hosts", a.handleSSHHostCreate)
+	mux.HandleFunc("PATCH /api/v1/ssh/hosts/{id}", a.handleSSHHostUpdate)
+	mux.HandleFunc("DELETE /api/v1/ssh/hosts/{id}", a.handleSSHHostDelete)
+	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/test", a.handleSSHHostTest)
+	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
+	mux.HandleFunc("GET /api/v1/ssh/terminal", a.handleSSHTerminal)
+	mux.HandleFunc("POST /api/v1/ssh/assistant", a.handleSSHAssistant)
 
 	mux.HandleFunc("GET /api/v1/assets", a.handleAssets)
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)
@@ -286,6 +302,11 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap 让 WebSocket 等需要 http.Hijacker 的处理器能穿透日志包装
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
 }
 
 func withLogging(next http.Handler) http.Handler {

@@ -956,3 +956,103 @@ vulnagent_selfcheck_failed 0
 - 批准后立即执行工具并写入工具结果消息，前端再调用 `resume` 让模型汇总。
 
 九道执行闸门：静态工具表 → 参数 JSON ≤ 64KB → 角色最小权限 → 每会话 20 次/分钟 → 风险分级 → 参数指纹绑定 → 一次性消费 + TTL → 高风险口令再认证 → 每轮最多 6 步。所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals` 并记审计。
+
+---
+
+## 12. SSH 智能终端
+
+主机凭据使用 AES-256-GCM 加密保存在数据目录，密钥文件 `<数据目录>/ssh.key` 首次使用时自动生成（0600），可用 `VA_SSH_KEY`（32 字节 base64）覆盖。所有接口只返回 `hasSecret`，永不回显口令、私钥与私钥口令。
+
+### GET /ssh/hosts（viewer+）
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "name": "web-01",
+      "host": "10.0.0.12",
+      "port": 22,
+      "username": "root",
+      "authType": "password",
+      "hostKey": "SHA256:…",
+      "note": "生产 Web",
+      "tags": "prod, web",
+      "createdBy": "va-admin",
+      "createdAt": "2026-10-27T10:30:00+08:00",
+      "updatedAt": "2026-10-27T10:30:00+08:00",
+      "lastConnectedAt": "2026-10-27T10:36:00+08:00",
+      "hasSecret": true
+    }
+  ]
+}
+```
+
+### POST /ssh/hosts（operator+）
+
+```json
+{ "name": "web-01", "host": "10.0.0.12", "port": 22, "username": "root",
+  "authType": "password", "password": "…", "privateKey": "", "passphrase": "",
+  "note": "生产 Web", "tags": "prod, web" }
+```
+
+- `authType=password` 需要 `password`；`authType=key` 需要 `privateKey`，可选 `passphrase`。
+- 同一 `host + port + username` 重复时返回 `409 host_exists`。
+
+### PATCH /ssh/hosts/{id}（operator+）
+
+字段均可选；`password` / `privateKey` 留空表示保持原值；切换认证方式必须同时提供新凭据；地址或端口变化会清空已信任指纹；`clearHostKey=true` 可主动清除指纹。
+
+### DELETE /ssh/hosts/{id}（operator+）
+
+`{ "ok": true }`。删除主机不会删除历史审计与会话记录。
+
+### POST /ssh/hosts/{id}/test（operator+）
+
+```json
+{ "ok": true, "fingerprint": "SHA256:…", "serverVersion": "SSH-2.0-OpenSSH_9.6",
+  "elapsedMs": 42, "trusted": true }
+```
+
+首次连接记录 TOFU 指纹；指纹不匹配或连接失败返回 `502 ssh_failed`。
+
+### GET /ssh/sessions?limit=50（viewer+）
+
+```json
+{ "items": [
+  { "id": "9f2c…", "hostId": 1, "hostName": "web-01", "addr": "10.0.0.12:22",
+    "actor": "王浩", "role": "operator", "status": "connected", "error": "",
+    "clientIp": "127.0.0.1", "startedAt": "…", "endedAt": "",
+    "bytesIn": 128, "bytesOut": 4096 }
+] }
+```
+
+`status` 取值：`connected | closed | failed`。
+
+### GET /ssh/terminal?hostId=1&cols=120&rows=32（WebSocket，operator+）
+
+同源 Cookie 会话鉴权后升级为 WebSocket。
+
+| 方向 | 消息 |
+|---|---|
+| 客户端 → 服务端 | `{"type":"input","data":"ls\r"}`、`{"type":"resize","cols":140,"rows":40}`、`{"type":"ping"}` |
+| 服务端 → 客户端 | `{"type":"status","status":"connected","sessionId":"…","fingerprint":"SHA256:…","serverVersion":"…"}` |
+| 服务端 → 客户端 | `{"type":"output","data":"<base64>"}` |
+| 服务端 → 客户端 | `{"type":"exit","code":0}`、`{"type":"error","message":"…"}`、`{"type":"pong"}` |
+
+输出使用 base64 以保留二进制字节。连接、断开与用户输入的命令分别写入 `ssh_sessions`、`ssh_events` 与审计日志。
+
+### POST /ssh/assistant（operator+）
+
+```json
+{ "hostId": 1, "question": "解释最近输出",
+  "context": "$ df -h\nFilesystem …", "sessionId": "9f2c…" }
+```
+
+```json
+{ "answer": "根分区使用率 88%，建议…", "commands": ["df -i", "journalctl --disk-usage"], "model": "deepseek-v4-1-flash-261017" }
+```
+
+- `question` 上限 2000 字符，`context` 上限 8000 字符（前端只发送最近终端输出）。
+- 模型未配置返回 `503 llm_unavailable`；调用失败返回 `502 llm_failed`。
+- 返回命令只是建议，前端默认仅插入终端，执行前需要人工二次确认。

@@ -25,7 +25,12 @@ import type {
   SyncSource,
   Ticket,
   TrajectoryItem,
-  User
+  User,
+  SshHost,
+  SshHostInput,
+  SshHostTestResult,
+  SshSessionItem,
+  SshAssistantReply
 } from "./types";
 
 const BASE = "/api/v1";
@@ -565,5 +570,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ decision, password: password ?? "" })
     });
+  },
+
+  // ---------- SSH 终端面板 ----------
+
+  sshHosts(): Promise<{ items: SshHost[] }> {
+    return request("/ssh/hosts");
+  },
+
+  sshCreateHost(input: SshHostInput): Promise<{ host: SshHost }> {
+    return request("/ssh/hosts", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  sshUpdateHost(id: number, input: SshHostInput): Promise<{ host: SshHost }> {
+    return request(`/ssh/hosts/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  sshDeleteHost(id: number): Promise<{ ok: boolean }> {
+    return request(`/ssh/hosts/${id}`, { method: "DELETE" });
+  },
+
+  sshTestHost(id: number): Promise<SshHostTestResult> {
+    return request(`/ssh/hosts/${id}/test`, { method: "POST", body: "{}" });
+  },
+
+  sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {
+    return request(`/ssh/sessions${query({ limit })}`);
+  },
+
+  sshAssistant(input: {
+    hostId: number;
+    question: string;
+    context: string;
+    sessionId?: string;
+  }): Promise<SshAssistantReply> {
+    return request("/ssh/assistant", { method: "POST", body: JSON.stringify(input) });
   }
 };
+
+// sshTerminalURL 生成终端 WebSocket 地址，生产与开发代理共用同源路径
+export function sshTerminalURL(hostId: number, cols: number, rows: number): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/v1/ssh/terminal?hostId=${hostId}&cols=${cols}&rows=${rows}`;
+}

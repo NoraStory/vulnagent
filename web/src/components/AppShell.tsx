@@ -11,7 +11,8 @@ import {
   ScrollText,
   Server,
   ShieldAlert,
-  Sparkles
+  Sparkles,
+  SquareTerminal
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
@@ -31,6 +32,7 @@ const navGroups = [
     label: "智能",
     items: [
       { to: "/assistant", label: "助手", icon: Sparkles },
+      { to: "/terminal", label: "终端", icon: SquareTerminal },
       { to: "/trajectory", label: "轨迹", icon: History }
     ]
   },
@@ -48,6 +50,7 @@ const pageMeta: Record<string, { title: string; subtitle: string; crumb: string 
   "/findings": { title: "漏洞清单", subtitle: "按风险优先级排序，可解释、可闭环", crumb: "漏洞" },
   "/assets": { title: "资产与组件", subtitle: "主机清单、SBOM 与暴露面权重", crumb: "资产" },
   "/assistant": { title: "Agent 助手", subtitle: "只读工具直接执行，写操作需审批", crumb: "助手" },
+  "/terminal": { title: "SSH 智能终端", subtitle: "多主机会话、AI 现场解读与命令审批", crumb: "终端" },
   "/trajectory": { title: "操作轨迹", subtitle: "审计、主机作业与工具调用的统一时间线", crumb: "轨迹" },
   "/selfcheck": { title: "平台自检", subtitle: "数据库、情报同步、采集链路与平台自身", crumb: "自检" },
   "/settings": { title: "审计与设置", subtitle: "风险策略、账号权限与操作留痕", crumb: "审计与设置" }
