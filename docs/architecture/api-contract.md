@@ -1267,3 +1267,63 @@ vulnagent_selfcheck_failed 0
 
 - 累加 `usage_count` 并写审计 `ssh.snippet.use`（目标包含主机名与是否广播），用于排序与追溯。
 - 200：`{ "ok": true, "usageCount": 13 }`。
+
+### 12.4 会话协同
+
+分享链接只对**在线会话**有效，令牌使用 SHA-256 存储、明文只返回一次；所有接口要求登录，可写权限仅对 operator 及以上角色生效（viewer 打开可写链接自动降级为只读）。
+
+#### POST /ssh/sessions/{id}/share（operator+）
+
+```json
+{ "permission": "read", "ttlMinutes": 60 }
+```
+
+- `permission`：`read` | `write`；`ttlMinutes` 默认 60，范围 5–1440。
+- 200：
+
+```json
+{ "token": "P9RUhHHU…", "path": "/share/P9RUhHHU…", "permission": "read",
+  "expiresAt": "2026-10-28T02:03:00+08:00", "sessionId": "ed58e39c…", "hostName": "web-01" }
+```
+
+- 会话不在线返回 `409 session_not_live`；写审计 `ssh.share.create`。
+
+#### GET /ssh/sessions/{id}/shares（operator+）
+
+```json
+{ "items": [
+  { "id": 3, "permission": "read", "createdBy": "va-admin",
+    "createdAt": "2026-10-28T01:03:00+08:00", "expiresAt": "2026-10-28T02:03:00+08:00" }
+] }
+```
+
+- 只返回未过期的链接，不含令牌明文。
+
+#### DELETE /ssh/shares/{id}（operator+）
+
+200：`{ "ok": true }`；立即失效并写审计 `ssh.share.revoke`。
+
+#### GET /ssh/shared/{token}/info（viewer+）
+
+```json
+{ "sessionId": "ed58e39c…", "hostName": "web-01", "addr": "10.0.0.1:22", "owner": "va-admin",
+  "permission": "read", "canWrite": false, "expiresAt": "…", "viewers": 1, "serverVersion": "SSH-2.0-OpenSSH_9.6" }
+```
+
+- 链接不存在 `404 not_found`，过期 `410 share_expired`，会话已结束 `410 session_ended`。
+- `canWrite` 是结合链接权限与当前用户角色后的实际能力。
+
+#### GET /ssh/shared/{token}（WebSocket，viewer+）
+
+帧格式与终端一致：
+
+| type | 方向 | 说明 |
+|---|---|---|
+| `status` | 服务端 | `{sessionId, hostName, permission, canWrite, serverVersion, viewers}` |
+| `output` | 服务端 | 当前输出（base64）；加入时先发送最近 16KB 快照 |
+| `viewers` | 服务端 | 协作者人数变化 |
+| `exit` | 服务端 | 主会话结束 |
+| `input` | 客户端 | 仅 `canWrite=true` 时写入远端 PTY，并记录 `ssh_events`（kind=`shared_input`） |
+| `ping/pong` | 双向 | 保活 |
+
+- 加入与退出写审计 `ssh.share.join`；只读连接丢弃所有输入。

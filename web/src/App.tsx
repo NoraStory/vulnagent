@@ -10,6 +10,9 @@ const AssetsPage = lazy(() => import("./pages/Assets").then((m) => ({ default: m
 const AssetDetailPage = lazy(() => import("./pages/AssetDetail").then((m) => ({ default: m.AssetDetailPage })));
 const AssistantPage = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.AssistantPage })));
 const TerminalPage = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.TerminalPage })));
+const SharedTerminalPage = lazy(() =>
+  import("./pages/SharedTerminal").then((m) => ({ default: m.SharedTerminalPage }))
+);
 const TrajectoryPage = lazy(() => import("./pages/Trajectory").then((m) => ({ default: m.TrajectoryPage })));
 const SelfCheckPage = lazy(() => import("./pages/SelfCheck").then((m) => ({ default: m.SelfCheckPage })));
 const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
@@ -53,6 +56,7 @@ export default function App() {
           <Route path="/assets/:id" element={<AssetDetailPage />} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/terminal" element={<TerminalPage />} />
+          <Route path="/share/:token" element={<SharedTerminalPage />} />
           <Route path="/trajectory" element={<TrajectoryPage />} />
           <Route path="/selfcheck" element={<SelfCheckPage />} />
           <Route path="/settings" element={<SettingsPage />} />

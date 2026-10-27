@@ -36,6 +36,10 @@ import type {
   SshAgentRun,
   SshAgentRunDetail,
   SshRecording,
+  SshShareCreated,
+  SshShareInfo,
+  SshShareLink,
+  SshSharePermission,
   SshSnippet,
   SshSnippetInput,
   SftpList,
@@ -611,6 +615,29 @@ export const api = {
     return request(`/ssh/sessions/${encodeURIComponent(sessionId)}/recording`);
   },
 
+  sshCreateShare(
+    sessionId: string,
+    permission: SshSharePermission,
+    ttlMinutes: number
+  ): Promise<SshShareCreated> {
+    return request(`/ssh/sessions/${encodeURIComponent(sessionId)}/share`, {
+      method: "POST",
+      body: JSON.stringify({ permission, ttlMinutes })
+    });
+  },
+
+  sshShares(sessionId: string): Promise<{ items: SshShareLink[] }> {
+    return request(`/ssh/sessions/${encodeURIComponent(sessionId)}/shares`);
+  },
+
+  sshRevokeShare(id: number): Promise<{ ok: boolean }> {
+    return request(`/ssh/shares/${id}`, { method: "DELETE" });
+  },
+
+  sshShareInfo(token: string): Promise<SshShareInfo> {
+    return request(`/ssh/shared/${encodeURIComponent(token)}/info`);
+  },
+
   sshSnippets(limit = 100): Promise<{ items: SshSnippet[] }> {
     return request(`/ssh/snippets${query({ limit })}`);
   },
@@ -720,4 +747,9 @@ export const api = {
 export function sshTerminalURL(hostId: number, cols: number, rows: number): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/api/v1/ssh/terminal?hostId=${hostId}&cols=${cols}&rows=${rows}`;
+}
+
+export function sshSharedTerminalURL(token: string, cols: number, rows: number): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/v1/ssh/shared/${encodeURIComponent(token)}?cols=${cols}&rows=${rows}`;
 }

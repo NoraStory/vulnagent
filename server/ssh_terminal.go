@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -33,6 +32,10 @@ type sshTerminalFrame struct {
 	Fingerprint   string `json:"fingerprint,omitempty"`
 	ServerVersion string `json:"serverVersion,omitempty"`
 	Code          int    `json:"code,omitempty"`
+	HostName      string `json:"hostName,omitempty"`
+	Permission    string `json:"permission,omitempty"`
+	CanWrite      bool   `json:"canWrite,omitempty"`
+	Viewers       int    `json:"viewers,omitempty"`
 }
 
 func newSSHSessionID() string {
@@ -139,12 +142,15 @@ func (a *App) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bytesIn, bytesOut atomic.Int64
+	live := a.registerLiveSession(sessionID, host.Name, host.addr(), u.Username, string(client.ServerVersion()), stdin)
+	defer a.releaseLiveSession(sessionID)
 	recorder := newSSHRecorder(a, sessionID, host, u.Username, startedTime)
 	defer recorder.Stop()
 	writer := sshStreamWriter{
 		bytes: &bytesOut,
 		send: func(p []byte) {
 			recorder.Record(p)
+			live.broadcast(p)
 			send(sshTerminalFrame{Type: "output", Data: base64.StdEncoding.EncodeToString(p)})
 		},
 	}
@@ -219,7 +225,7 @@ func (a *App) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 					slog.Warn("记录 SSH 输入失败", "session", sessionID, "err", err)
 				}
 			}
-			if _, err := io.WriteString(stdin, msg.Data); err != nil {
+			if err := live.write([]byte(msg.Data)); err != nil {
 				break
 			}
 		case "resize":

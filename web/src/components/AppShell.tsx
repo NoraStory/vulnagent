@@ -90,11 +90,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, [location.pathname]);
 
-  const meta = pageMeta[location.pathname] ?? {
-    title: "资产详情",
-    subtitle: "组件清单与关联漏洞",
-    crumb: "资产"
-  };
+  const meta = location.pathname.startsWith("/share/")
+    ? { title: "协同会话", subtitle: "通过分享链接接入的实时终端", crumb: "终端" }
+    : pageMeta[location.pathname] ?? {
+        title: "资产详情",
+        subtitle: "组件清单与关联漏洞",
+        crumb: "资产"
+      };
 
   return (
     <div className="flex h-full min-h-screen bg-page">

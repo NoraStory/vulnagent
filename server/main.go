@@ -88,6 +88,10 @@ type App struct {
 	// SSH Agent 自动执行：命令审批等待队列
 	sshApprovalMu sync.Mutex
 	sshApprovals  map[string]chan bool
+
+	// SSH 会话协同：在线会话与分享链接
+	liveMu sync.Mutex
+	live   map[string]*sshLiveSession
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -135,6 +139,11 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/test", a.handleSSHHostTest)
 	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
 	mux.HandleFunc("GET /api/v1/ssh/sessions/{id}/recording", a.handleSSHRecording)
+	mux.HandleFunc("POST /api/v1/ssh/sessions/{id}/share", a.handleSSHShareCreate)
+	mux.HandleFunc("GET /api/v1/ssh/sessions/{id}/shares", a.handleSSHShares)
+	mux.HandleFunc("DELETE /api/v1/ssh/shares/{id}", a.handleSSHShareRevoke)
+	mux.HandleFunc("GET /api/v1/ssh/shared/{token}/info", a.handleSSHShareInfo)
+	mux.HandleFunc("GET /api/v1/ssh/shared/{token}", a.handleSharedTerminal)
 	mux.HandleFunc("GET /api/v1/ssh/terminal", a.handleSSHTerminal)
 	mux.HandleFunc("POST /api/v1/ssh/assistant", a.handleSSHAssistant)
 	mux.HandleFunc("GET /api/v1/ssh/snippets", a.handleSSHSnippets)

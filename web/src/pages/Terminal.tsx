@@ -28,6 +28,7 @@ import {
   Search,
   Send,
   Server,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -46,6 +47,7 @@ import { SftpPanel } from "../components/SftpPanel";
 import { SnippetPanel } from "../components/SnippetPanel";
 import { SessionReplay } from "../components/SessionReplay";
 import { AgentHistory } from "../components/AgentHistory";
+import { ShareDialog } from "../components/ShareDialog";
 import { Skeleton } from "../components/ui";
 import type {
   SshAgentEvent,
@@ -413,6 +415,7 @@ export function TerminalPage() {
   const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
   const [broadcastInput, setBroadcastInput] = useState("");
   const [broadcastAll, setBroadcastAll] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const paneRefs = useRef(new Map<string, PaneHandle>());
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
@@ -481,6 +484,7 @@ export function TerminalPage() {
     setTabs((prev) => [...prev, tab]);
     setActiveKey(key);
     setPendingRun(null);
+    setShareOpen(false);
   }
 
   function closeTab(key: string) {
@@ -496,6 +500,7 @@ export function TerminalPage() {
       return next;
     });
     setPendingRun(null);
+    setShareOpen(false);
   }
 
   function reconnect(key: string) {
@@ -1367,6 +1372,17 @@ export function TerminalPage() {
                   >
                     <RefreshCw size={12} />
                   </button>
+                  {activeTab.sessionId && (
+                    <button
+                      type="button"
+                      className="rounded p-1 text-ink3 hover:bg-surface hover:text-ink"
+                      title="分享当前会话"
+                      aria-label="分享当前会话"
+                      onClick={() => setShareOpen(true)}
+                    >
+                      <Share2 size={12} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="rounded p-1 text-ink3 hover:bg-surface hover:text-ink"
@@ -1537,6 +1553,14 @@ export function TerminalPage() {
       )}
 
       {replaySession && <SessionReplay session={replaySession} onClose={() => setReplaySession(null)} />}
+
+      {shareOpen && activeTab?.sessionId && (
+        <ShareDialog
+          sessionId={activeTab.sessionId}
+          hostName={activeTab.host.name}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
 
       {agentHistoryOpen && (
         <AgentHistory onClose={() => setAgentHistoryOpen(false)} onReuseGoal={(goal) => setAgentGoal(goal)} />

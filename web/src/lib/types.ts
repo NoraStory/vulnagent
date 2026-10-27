@@ -583,6 +583,37 @@ export interface SshSnippetInput {
   tags: string;
 }
 
+export type SshSharePermission = "read" | "write";
+
+export interface SshShareLink {
+  id: number;
+  permission: SshSharePermission;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface SshShareCreated {
+  token: string;
+  path: string;
+  permission: SshSharePermission;
+  expiresAt: string;
+  sessionId: string;
+  hostName: string;
+}
+
+export interface SshShareInfo {
+  sessionId: string;
+  hostName: string;
+  addr: string;
+  owner: string;
+  permission: SshSharePermission;
+  canWrite: boolean;
+  expiresAt: string;
+  viewers: number;
+  serverVersion: string;
+}
+
 export interface SshAssistantReply {
   answer: string;
   commands: string[];
