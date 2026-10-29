@@ -18,13 +18,18 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  ExternalLink,
   FolderOpen,
   History,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  ScanLine,
   Search,
   Send,
   Server,
@@ -48,13 +53,16 @@ import { SnippetPanel } from "../components/SnippetPanel";
 import { SessionReplay } from "../components/SessionReplay";
 import { AgentHistory } from "../components/AgentHistory";
 import { ShareDialog } from "../components/ShareDialog";
+import { ScanResultDialog } from "../components/ScanResultDialog";
 import { Skeleton } from "../components/ui";
 import type {
   SshAgentEvent,
   SshAgentMode,
   SshAssistantReply,
+  SshCommandReference,
   SshHost,
   SshHostInput,
+  SshHostScanResult,
   SshSessionItem
 } from "../lib/types";
 
@@ -76,6 +84,8 @@ interface AiMessage {
   role: "user" | "assistant";
   content: string;
   commands?: string[];
+  references?: SshCommandReference[];
+  referenceError?: string;
 }
 
 type AgentStepView = {
@@ -106,6 +116,8 @@ type AgentRunView = {
   summary: string;
   error: string;
   pending?: AgentPending;
+  references?: SshCommandReference[];
+  referenceError?: string;
 };
 
 const agentRiskMeta: Record<string, { label: string; className: string }> = {
@@ -416,6 +428,23 @@ export function TerminalPage() {
   const [broadcastInput, setBroadcastInput] = useState("");
   const [broadcastAll, setBroadcastAll] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [aiSearch, setAiSearch] = useState(true);
+  const [hostsCollapsed, setHostsCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("va.ssh.hostsCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [aiCollapsed, setAiCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("va.ssh.aiCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [scanningHost, setScanningHost] = useState<number | null>(null);
+  const [scanResult, setScanResult] = useState<SshHostScanResult | null>(null);
 
   const paneRefs = useRef(new Map<string, PaneHandle>());
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
@@ -450,6 +479,15 @@ export function TerminalPage() {
     void loadHosts();
     void loadSessions();
   }, [loadHosts, loadSessions]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("va.ssh.hostsCollapsed", hostsCollapsed ? "1" : "0");
+      localStorage.setItem("va.ssh.aiCollapsed", aiCollapsed ? "1" : "0");
+    } catch {
+      /* 隐私模式下忽略持久化失败 */
+    }
+  }, [hostsCollapsed, aiCollapsed]);
 
   useEffect(() => {
     const el = aiScrollRef.current;
@@ -546,13 +584,16 @@ export function TerminalPage() {
         hostId: activeTab.host.id,
         question: text,
         context: pane?.recent() ?? "",
-        sessionId: activeTab.sessionId
+        sessionId: activeTab.sessionId,
+        search: aiSearch
       });
       pushAi(key, {
         id: `a-${Date.now()}`,
         role: "assistant",
         content: reply.answer,
-        commands: reply.commands
+        commands: reply.commands,
+        references: reply.references,
+        referenceError: reply.referenceError
       });
     } catch (err) {
       pushAi(key, {
@@ -632,6 +673,10 @@ export function TerminalPage() {
         switch (event.type) {
           case "status":
             next.runId = String(data.runId ?? "");
+            if (Array.isArray(data.references)) {
+              next.references = data.references as SshCommandReference[];
+            }
+            next.referenceError = data.referenceError ? String(data.referenceError) : undefined;
             break;
           case "step": {
             const index = Number(data.index ?? next.steps.length);
@@ -746,6 +791,20 @@ export function TerminalPage() {
     }
   }
 
+  async function scanHost(host: SshHost) {
+    if (scanningHost) return;
+    setScanningHost(host.id);
+    try {
+      const result = await api.sshScanHost(host.id);
+      setScanResult(result);
+      toast.push(`扫描完成：${result.components} 个组件，新增 ${result.created} 条漏洞`, "success");
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "漏洞扫描失败", "error");
+    } finally {
+      setScanningHost(null);
+    }
+  }
+
   const dialog = dialogOpen ? (
     <HostDialog
       host={editing}
@@ -780,6 +839,15 @@ export function TerminalPage() {
           aria-label="关闭 AI 面板"
         >
           <X size={14} />
+        </button>
+        <button
+          type="button"
+          className="hidden rounded p-1 text-ink3 hover:bg-subtle hover:text-ink xl:block"
+          onClick={() => setAiCollapsed(true)}
+          aria-label="收起 AI 面板"
+          title="收起 AI 面板"
+        >
+          <PanelRightClose size={14} />
         </button>
       </div>
 
@@ -893,6 +961,33 @@ export function TerminalPage() {
                   })}
                 </div>
               )}
+              {((message.references && message.references.length > 0) || message.referenceError) && (
+                <details className="mt-2 rounded-[8px] border border-line bg-subtle/50 px-2 py-1.5">
+                  <summary className="cursor-pointer text-[10px] text-ink3">
+                    命令参考
+                    {message.references && message.references.length > 0
+                      ? ` · ${message.references.map((item) => item.topic).join(", ")}`
+                      : ""}
+                    {message.referenceError ? " · 检索失败" : ""}
+                  </summary>
+                  {message.referenceError && (
+                    <p className="mt-1 text-[9.5px] text-warn">{message.referenceError}</p>
+                  )}
+                  {message.references?.map((ref) => (
+                    <a
+                      key={ref.url}
+                      href={ref.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block rounded bg-surface px-2 py-1 text-[9.5px] leading-[14px] text-ink2 hover:text-brand"
+                    >
+                      <span className="font-mono text-brand">{ref.topic}</span>{" "}
+                      {ref.snippet}
+                      <ExternalLink size={9} className="ml-1 inline" />
+                    </a>
+                  ))}
+                </details>
+              )}
             </div>
           )
         )}
@@ -931,7 +1026,18 @@ export function TerminalPage() {
             {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
           </button>
         </div>
-        <p className="mt-1.5 text-[10px] text-ink3">只读取最近终端输出；命令执行前需要二次确认，操作写入审计。</p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ink3">
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={aiSearch}
+              onChange={(event) => setAiSearch(event.target.checked)}
+              className="h-3 w-3"
+            />
+            联网检索命令参考
+          </label>
+          <span>只读最近终端输出；执行前需二次确认，操作写入审计。</span>
+        </div>
       </div>
         </>
       ) : (
@@ -984,6 +1090,24 @@ export function TerminalPage() {
               <p className="rounded-[6px] bg-dangerSoft px-2 py-1 text-[9.5px] leading-[14px] text-danger">
                 全自动模式仅 critical 命令需要确认，其余命令会直接执行；所有命令与输出均留痕。
               </p>
+            )}
+            {agentState && ((agentState.references && agentState.references.length > 0) || agentState.referenceError) && (
+              <div className="flex flex-wrap items-center gap-1 text-[9px] text-ink3">
+                <BookOpen size={9} className="text-brand" />
+                命令参考
+                {agentState.references?.map((ref) => (
+                  <a
+                    key={ref.url}
+                    href={ref.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded bg-subtle px-1 py-0.5 font-mono text-brand hover:underline"
+                  >
+                    {ref.topic}
+                  </a>
+                ))}
+                {agentState.referenceError && <span className="text-warn">{agentState.referenceError}</span>}
+              </div>
             )}
           </div>
 
@@ -1109,6 +1233,14 @@ export function TerminalPage() {
     </div>
   );
 
+  const terminalGridClass = hostsCollapsed
+    ? aiCollapsed
+      ? "grid-cols-1"
+      : "grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]"
+    : aiCollapsed
+      ? "grid-cols-1 md:grid-cols-[236px_minmax(0,1fr)]"
+      : "grid-cols-1 md:grid-cols-[236px_minmax(0,1fr)] xl:grid-cols-[236px_minmax(0,1fr)_340px]";
+
   return (
     <div className="flex h-[calc(100dvh-170px)] min-h-[520px] flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1124,6 +1256,15 @@ export function TerminalPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-secondary hidden h-8 w-8 px-0 md:inline-flex"
+            title={hostsCollapsed ? "展开主机列表" : "收起主机列表"}
+            aria-label={hostsCollapsed ? "展开主机列表" : "收起主机列表"}
+            onClick={() => setHostsCollapsed((value) => !value)}
+          >
+            {hostsCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          </button>
           <button
             type="button"
             className="btn btn-secondary h-8 px-2.5 text-[12px]"
@@ -1150,12 +1291,38 @@ export function TerminalPage() {
           </button>
           <button
             type="button"
+            className="btn btn-secondary h-8 px-2.5 text-[12px]"
+            title="采集目标主机软件清单并匹配漏洞"
+            onClick={() => {
+              if (activeTab) void scanHost(activeTab.host);
+            }}
+            disabled={!activeTab || scanningHost !== null}
+          >
+            {scanningHost !== null && scanningHost === activeTab?.host.id ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <ScanLine size={13} />
+            )}
+            漏洞扫描
+          </button>
+          <button
+            type="button"
             className="btn btn-secondary h-8 px-2.5 text-[12px] xl:hidden"
             onClick={() => setAiOpen(true)}
           >
             <Sparkles size={13} />
             AI
           </button>
+          {aiCollapsed && (
+            <button
+              type="button"
+              className="btn btn-secondary hidden h-8 px-2.5 text-[12px] xl:inline-flex"
+              onClick={() => setAiCollapsed(false)}
+            >
+              <Sparkles size={13} />
+              AI 面板
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-secondary h-8 px-2.5 text-[12px]"
@@ -1170,8 +1337,8 @@ export function TerminalPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[236px_minmax(0,1fr)] xl:grid-cols-[236px_minmax(0,1fr)_340px]">
-        <aside className="card hidden min-h-0 flex-col overflow-hidden md:flex">
+      <div className={`grid min-h-0 flex-1 gap-3 ${terminalGridClass}`}>
+        <aside className={`card min-h-0 flex-col overflow-hidden ${hostsCollapsed ? "hidden" : "hidden md:flex"}`}>
           <div className="border-b border-line px-3 py-2.5">
             <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink2">
               <Server size={12} />
@@ -1237,6 +1404,20 @@ export function TerminalPage() {
                       {host.lastConnectedAt ? `最近 ${timeAgo(host.lastConnectedAt)}` : "从未连接"}
                     </span>
                     <span className="ml-auto flex opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <button
+                        type="button"
+                        className="rounded p-0.5 text-ink3 hover:bg-surface hover:text-brand disabled:opacity-40"
+                        onClick={() => void scanHost(host)}
+                        disabled={scanningHost !== null}
+                        aria-label="漏洞扫描"
+                        title="漏洞扫描"
+                      >
+                        {scanningHost === host.id ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <ScanLine size={11} />
+                        )}
+                      </button>
                       <button
                         type="button"
                         className="rounded p-0.5 text-ink3 hover:bg-surface hover:text-ink"
@@ -1518,7 +1699,7 @@ export function TerminalPage() {
           </div>
         </section>
 
-        <aside className="card hidden min-h-0 flex-col overflow-hidden xl:flex">{aiPanel}</aside>
+        <aside className={`card min-h-0 flex-col overflow-hidden ${aiCollapsed ? "hidden" : "hidden xl:flex"}`}>{aiPanel}</aside>
       </div>
 
       {aiOpen && (
@@ -1565,6 +1746,8 @@ export function TerminalPage() {
       {agentHistoryOpen && (
         <AgentHistory onClose={() => setAgentHistoryOpen(false)} onReuseGoal={(goal) => setAgentGoal(goal)} />
       )}
+
+      {scanResult && <ScanResultDialog result={scanResult} onClose={() => setScanResult(null)} />}
 
       {dialog}
     </div>

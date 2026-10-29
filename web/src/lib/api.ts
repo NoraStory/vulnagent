@@ -28,6 +28,7 @@ import type {
   User,
   SshHost,
   SshHostInput,
+  SshHostScanResult,
   SshHostTestResult,
   SshSessionItem,
   SshAssistantReply,
@@ -607,6 +608,10 @@ export const api = {
     return request(`/ssh/hosts/${id}/test`, { method: "POST", body: "{}" });
   },
 
+  sshScanHost(id: number): Promise<SshHostScanResult> {
+    return request(`/ssh/hosts/${id}/scan`, { method: "POST", body: "{}" });
+  },
+
   sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {
     return request(`/ssh/sessions${query({ limit })}`);
   },
@@ -666,6 +671,7 @@ export const api = {
     question: string;
     context: string;
     sessionId?: string;
+    search?: boolean;
   }): Promise<SshAssistantReply> {
     return request("/ssh/assistant", { method: "POST", body: JSON.stringify(input) });
   },

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"vulnagent/server/internal/application/ports"
 )
@@ -14,12 +16,15 @@ type sshAIRequest struct {
 	Question  string `json:"question"`
 	Context   string `json:"context"`
 	SessionID string `json:"sessionId"`
+	Search    *bool  `json:"search"`
 }
 
 type sshAIResponse struct {
-	Answer   string   `json:"answer"`
-	Commands []string `json:"commands"`
-	Model    string   `json:"model"`
+	Answer         string                `json:"answer"`
+	Commands       []string              `json:"commands"`
+	Model          string                `json:"model"`
+	References     []sshCommandReference `json:"references"`
+	ReferenceError string                `json:"referenceError,omitempty"`
 }
 
 const sshAISystemPrompt = `你是 VulnAgent 的 SSH 终端智能助手，面向运维与安全工程师。
@@ -30,7 +35,9 @@ const sshAISystemPrompt = `你是 VulnAgent 的 SSH 终端智能助手，面向�
 2. 需要执行的命令必须放在 ` + "```sh" + ` 代码块中，每行一条、可直接粘贴执行。
 3. 涉及删除、覆盖、重启、停止服务、批量变更等高风险操作时，明确标注「危险」并给出更安全的替代方案。
 4. 如果终端输出不足以判断，先说明缺少什么信息，再给出下一步取证命令。
-5. 不要输出与当前终端任务无关的内容，不要输出密码、密钥或令牌。`
+5. 不要输出与当前终端任务无关的内容，不要输出密码、密钥或令牌。
+6. 若提供了「命令参考资料」，命令与参数必须优先采用资料中的写法；资料未覆盖的参数不得臆造，先给出 ` + "`command -v`" + ` / ` + "`--help`" + ` 验证命令。
+7. 不确定的发行版差异、路径或参数必须明确说明「需在目标机验证」，禁止编造命令输出。`
 
 // handleSSHAssistant 基于主机信息与终端上下文生成诊断建议与可执行命令
 func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
@@ -61,17 +68,32 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 			hostLine = "目标主机：" + host.Name + "（" + host.Username + "@" + host.addr() + "）"
 		}
 	}
-	context := strings.TrimSpace(req.Context)
-	context = truncateRunes(context, 8000)
+	terminalContext := strings.TrimSpace(req.Context)
+	terminalContext = truncateRunes(terminalContext, 8000)
+
+	searchEnabled := req.Search == nil || *req.Search
+	var (
+		references []sshCommandReference
+		refErr     string
+	)
+	if searchEnabled {
+		refCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		references, refErr = a.commandReferences(refCtx, question)
+		cancel()
+	}
 
 	var user strings.Builder
 	if hostLine != "" {
 		user.WriteString(hostLine)
 		user.WriteString("\n")
 	}
-	if context != "" {
+	if referenceBlock := commandReferencePrompt(references); referenceBlock != "" {
+		user.WriteString(referenceBlock)
+		user.WriteString("\n")
+	}
+	if terminalContext != "" {
 		user.WriteString("最近终端输出（可能包含敏感信息，请勿外泄）：\n```\n")
-		user.WriteString(context)
+		user.WriteString(terminalContext)
 		user.WriteString("\n```\n")
 	} else {
 		user.WriteString("当前没有可用的终端输出。\n")
@@ -90,11 +112,13 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	answer := strings.TrimSpace(resp.Content)
 	commands := extractShellCommands(answer)
 	a.audit(r, "ssh.ai.ask", hostName,
-		fmt.Sprintf("%s（会话 %s，命令 %d 条）", truncateRunes(question, 120), req.SessionID, len(commands)))
+		fmt.Sprintf("%s（会话 %s，命令 %d 条，参考 %d 条）", truncateRunes(question, 120), req.SessionID, len(commands), len(references)))
 	writeJSON(w, http.StatusOK, sshAIResponse{
-		Answer:   answer,
-		Commands: commands,
-		Model:    a.harness.LLM.Model(),
+		Answer:         answer,
+		Commands:       commands,
+		Model:          a.harness.LLM.Model(),
+		References:     references,
+		ReferenceError: refErr,
 	})
 }
 

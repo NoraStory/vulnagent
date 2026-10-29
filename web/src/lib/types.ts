@@ -618,6 +618,35 @@ export interface SshAssistantReply {
   answer: string;
   commands: string[];
   model: string;
+  references: SshCommandReference[];
+  referenceError?: string;
+}
+
+export interface SshCommandReference {
+  topic: string;
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export interface SshHostScanResult {
+  ok: boolean;
+  assetId: number;
+  hostId: number;
+  hostName: string;
+  host: string;
+  username: string;
+  scanUser: string;
+  components: number;
+  created: number;
+  updated: number;
+  verified: number;
+  closed: number;
+  reopened: number;
+  os: string;
+  osVersion: string;
+  hostKeyFingerprint: string;
+  elapsedMs: number;
 }
 
 export type SshAgentMode = "confirm" | "safe" | "auto";

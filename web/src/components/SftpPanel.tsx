@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   ChevronRight,
+  Copy,
   Download,
   File as FileIcon,
   FileText,
@@ -112,6 +113,29 @@ export function SftpPanel({ host, onClose }: Props) {
       setPreview(result);
       setEditContent(result.content);
     });
+  }
+
+  async function copyPath(target: string) {
+    try {
+      await navigator.clipboard.writeText(target);
+      toast.push("路径已复制", "success");
+      return;
+    } catch {
+      /* 回退到 execCommand，兼容非安全上下文与自动化环境 */
+    }
+    try {
+      const helper = document.createElement("textarea");
+      helper.value = target;
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      document.execCommand("copy");
+      helper.remove();
+      toast.push("路径已复制", "success");
+    } catch {
+      toast.push("复制失败，请手动选择路径", "error");
+    }
   }
 
   async function savePreview() {
@@ -294,6 +318,15 @@ export function SftpPanel({ host, onClose }: Props) {
           aria-label="路径"
           className="input h-7 flex-1 font-mono text-[10.5px]"
         />
+        <button
+          type="button"
+          className="btn btn-secondary h-7 w-7 shrink-0 px-0"
+          onClick={() => void copyPath(pathInput || path)}
+          title="复制当前路径"
+          aria-label="复制当前路径"
+        >
+          <Copy size={11} />
+        </button>
         <button type="submit" className="btn btn-secondary h-7 px-2 text-[10.5px]">
           跳转
         </button>
@@ -367,6 +400,15 @@ export function SftpPanel({ host, onClose }: Props) {
                 <button
                   type="button"
                   className="rounded p-1 text-ink3 hover:bg-surface hover:text-ink"
+                  onClick={() => void copyPath(entry.path)}
+                  title="复制路径"
+                  aria-label={`复制路径 ${entry.name}`}
+                >
+                  <Copy size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="rounded p-1 text-ink3 hover:bg-surface hover:text-ink"
                   onClick={() => openRename(entry)}
                   title="重命名"
                 >
@@ -397,6 +439,15 @@ export function SftpPanel({ host, onClose }: Props) {
           <header className="flex items-center gap-2 border-b border-line px-3 py-2">
             <FileText size={14} className="text-brand" />
             <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink">{preview.path}</span>
+            <button
+              type="button"
+              className="rounded p-1 text-ink3 hover:bg-subtle hover:text-ink"
+              onClick={() => void copyPath(preview.path)}
+              title="复制路径"
+              aria-label="复制文件路径"
+            >
+              <Copy size={13} />
+            </button>
             <button
               type="button"
               className="rounded p-1 text-ink3 hover:bg-subtle hover:text-ink"

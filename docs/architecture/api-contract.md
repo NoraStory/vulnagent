@@ -1327,3 +1327,61 @@ vulnagent_selfcheck_failed 0
 | `ping/pong` | 双向 | 保活 |
 
 - 加入与退出写审计 `ssh.share.join`；只读连接丢弃所有输入。
+
+### 12.5 命令参考检索（AI 与 Agent）
+
+为避免模型臆造命令参数，AI 问答与 Agent 会先从公共命令示例库 `cheat.sh` 检索相关命令（常见命令白名单 + 中文关键词映射，最多 3 个主题），清洗 HTML/ANSI 后作为「命令参考资料」注入提示，并明确要求先在目标机用 `command -v` / `--help` 验证。
+
+- 缓存：主题级内存缓存 10 分钟，单次检索 8 秒超时，最多 3 个并发主题。
+- 失败降级：检索失败不阻塞回答，返回 `referenceError` 并在界面提示。
+- 参考内容仅用于提示，不直接执行；命令执行仍走原有的插入/确认/审批流程。
+
+`POST /ssh/assistant` 请求新增可选字段：
+
+```json
+{ "hostId": 1, "question": "tar 如何解压到指定目录", "context": "…", "search": true }
+```
+
+`search` 缺省为 `true`；响应新增：
+
+```json
+{
+  "answer": "…",
+  "commands": ["tar -xf a.tar -C /tmp/out"],
+  "model": "…",
+  "references": [
+    { "topic": "tar", "title": "tar", "url": "https://cheat.sh/tar", "snippet": "GNU version of the tar archiving utility · …" }
+  ],
+  "referenceError": ""
+}
+```
+
+Agent 的 `status` 事件新增：
+
+```json
+{ "type": "status", "data": { "runId": "…", "host": "web-01", "references": [ … ], "referenceError": "" } }
+```
+
+### 12.6 SSH 主机漏洞扫描
+
+复用已保存的 SSH 主机凭据执行只读软件清单采集（deb/rpm/apk），结果直接写入资产与漏洞流水线，让终端主机可以参与现有漏洞运营。
+
+#### POST /ssh/hosts/{id}/scan（operator+）
+
+无请求体（`{}` 即可）。连接使用主机已保存的加密凭据与 TOFU 指纹，采集脚本只读，不修改目标机。
+
+200：
+
+```json
+{
+  "ok": true, "assetId": 653, "hostId": 7, "hostName": "web-01", "host": "10.0.0.1",
+  "username": "root", "scanUser": "va-admin",
+  "components": 3, "created": 2, "updated": 1, "verified": 0, "closed": 0, "reopened": 0,
+  "os": "ubuntu", "osVersion": "22.04",
+  "hostKeyFingerprint": "SHA256:…", "elapsedMs": 135
+}
+```
+
+- 凭据不可用：`400 credential_error`；主机不存在：`404 not_found`。
+- SSH 连接或采集失败：`502 ssh_scan_failed`；未采集到软件包：`422 no_components`。
+- 首次扫描若主机未记录指纹，会回写 TOFU 指纹；写审计 `scan.ssh`（成功/失败均记录）。

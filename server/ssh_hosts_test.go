@@ -178,6 +178,8 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 					output := "ok\n"
 					exit := uint32(0)
 					switch {
+					case strings.Contains(payload.Command, "dpkg-query"):
+						output = "#os\tubuntu\t22.04\ndeb\topenssl\t3.0.2-0ubuntu1.10\tamd64\ndeb\tbash\t5.1-6ubuntu1\tamd64\n"
 					case strings.HasPrefix(payload.Command, "echo "):
 						output = strings.TrimPrefix(payload.Command, "echo ") + "\n"
 					case payload.Command == "false":

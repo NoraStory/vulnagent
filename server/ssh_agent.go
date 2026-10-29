@@ -63,7 +63,8 @@ const sshAgentSystemPrompt = `你是 VulnAgent 的 SSH 智能体，直接操作�
 4. 删除、覆盖、重启、停止服务、批量变更等危险操作会被人工确认，不要试图绕过。
 5. 输出不足以判断时继续执行下一条命令；目标完成时返回 {"thought":"...","command":"","done":true,"summary":"结论"}。
 6. 不要输出密码、密钥、令牌；不要执行与目标无关的操作。
-7. 最多执行有限步数，优先用最少命令完成任务。`
+7. 最多执行有限步数，优先用最少命令完成任务。
+8. 不熟悉的命令或参数必须先在目标机验证（command -v、--help），禁止臆造参数；若提供了命令参考资料，优先采用其中的写法。`
 
 var (
 	sshCriticalPatterns = []*regexp.Regexp{
@@ -132,6 +133,11 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	refCtx, cancelRef := context.WithTimeout(r.Context(), 10*time.Second)
+	references, refErr := a.commandReferences(refCtx, goal)
+	cancelRef()
+	referenceBlock := commandReferencePrompt(references)
+
 	stream := newSSEStream(w)
 	defer stream.close()
 
@@ -162,10 +168,12 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("运行 %s，状态 %s，步骤 %d：%s", runID, status, stepsDone, truncateRunes(goal, 80)))
 	}()
 
-	a.audit(r, "ssh.agent.run", host.Name, truncateRunes(goal, 120))
+	a.audit(r, "ssh.agent.run", host.Name,
+		fmt.Sprintf("%s（参考 %d 条）", truncateRunes(goal, 100), len(references)))
 	slog.Info("SSH Agent 启动", "run", runID, "host", host.Name, "mode", mode, "goal", truncateRunes(goal, 80))
 	stream.emit(harnessapp.Event{Type: "status", Data: map[string]any{
 		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "host": host.Name,
+		"references": referenceMeta(references), "referenceError": refErr,
 	}})
 
 	ctx := r.Context()
@@ -190,7 +198,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		remaining := sshAgentMaxSteps - index
-		decision, err := a.askSSHAgent(ctx, host, goal, history, remaining)
+		decision, err := a.askSSHAgent(ctx, host, goal, referenceBlock, history, remaining)
 		if err != nil {
 			errText = "模型调用失败：" + err.Error()
 			stream.emit(harnessapp.Event{Type: "error", Data: map[string]any{"message": errText}})
@@ -326,7 +334,7 @@ func sshRiskReason(risk string) string {
 	}
 }
 
-func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal string, history []sshAgentStep, remaining int) (sshAgentDecision, error) {
+func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference string, history []sshAgentStep, remaining int) (sshAgentDecision, error) {
 	var user strings.Builder
 	user.WriteString("目标主机：")
 	user.WriteString(host.Name)
@@ -336,6 +344,10 @@ func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal string, histor
 	user.WriteString(host.addr())
 	user.WriteString("）\n目标：")
 	user.WriteString(goal)
+	if reference != "" {
+		user.WriteString("\n")
+		user.WriteString(reference)
+	}
 	user.WriteString("\n剩余可执行步数：")
 	user.WriteString(strconv.Itoa(remaining))
 	user.WriteString("\n")
