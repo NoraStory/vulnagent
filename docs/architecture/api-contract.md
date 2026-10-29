@@ -437,6 +437,7 @@ Webhook 请求体：
 ### POST /assets/import（operator+）
 
 `multipart/form-data`：`file`（CSV，≤5MB / ≤5000 行）、`strategy`（`update` 默认 / `skip` / `create`）、`dryRun`（`true` 时只预览不写入）。
+`update` 命中则更新字段；`skip` 只跳过已存在资产，新资产仍会创建；`create` 命中已有资产时记为该行冲突。
 
 表头支持中文或英文别名（如 主机名 / hostname、业务系统 / businessSystem）。身份匹配优先级：云实例 ID → 序列号 → MAC → 主机名 → IP；同一行命中多个资产时返回该行错误，需先人工合并。
 

@@ -151,6 +151,14 @@ func TestAssetImportSkipStrategy(t *testing.T) {
 	if detail.IP != "10.0.0.11" {
 		t.Fatalf("跳过策略不应修改资产，实际 IP=%s", detail.IP)
 	}
+
+	// skip 策略只跳过已存在资产，新主机仍然创建
+	req3, rec3 := newAssetImportRequest(t, "主机名,IP\nweb-02,10.0.0.12\n", "skip", false)
+	app.handleAssetImport(rec3, req3)
+	report3 := decodeAssetImportReport(t, rec3)
+	if report3.Created != 1 || report3.Skipped != 0 {
+		t.Fatalf("skip 策略应新建未纳管资产：%+v", report3)
+	}
 }
 
 func TestAssetImportRejectsUnknownHeader(t *testing.T) {

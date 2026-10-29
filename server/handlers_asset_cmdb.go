@@ -525,11 +525,6 @@ func (a *App) importAssetRow(r *http.Request, fields map[string]string, strategy
 			row.Message = "缺少主机名，无法新建资产"
 			return row
 		}
-		if strategy == "skip" {
-			row.Action = "skipped"
-			row.Message = "按策略跳过新资产"
-			return row
-		}
 		if dryRun {
 			row.Action = "created"
 			row.Message = "将新建资产"
