@@ -341,9 +341,42 @@ npm run build
 
 ## 部署
 
-- **systemd**：`deploy/systemd/`（server / agent 服务单元、agent timer、helper sudoers 与 env 示例）
+### 一键安装（推荐）
+
+**Windows（PowerShell 7）**
+
+```powershell
+# 在仓库根目录执行；自动检查 Go/Node/端口/磁盘/网络，构建并安装
+pwsh -File deploy\windows\install.ps1 -InstallDeps
+
+# 可选：同时配置模型、放行防火墙、自定义目录与端口
+pwsh -File deploy\windows\install.ps1 `
+  -InstallDir E:\VulnAgent -Port 8787 -OpenFirewall `
+  -LLMBaseUrl https://ark.cn-beijing.volces.com/api/v3 `
+  -LLMApiKey "<key>" -LLMModel deepseek-v4-1-flash-261017
+```
+
+安装脚本会完成：环境与端口检查 → （可选）通过 winget 安装 Go/Node → `npm ci` 与 `go build` → 部署到安装目录 → 生成 `.env`（首次初始化管理员口令）→ 注册 `VulnAgentServer` / `VulnAgentAgent` 计划任务 → 健康检查 → 输出 `install-summary.txt`。
+重复执行即为升级：保留数据与已有 `.env`，先停止旧实例并备份数据库。安装目录默认优先 `E:\VulnAgent`、`D:\VulnAgent`，避免占用系统盘。
+
+**Linux（systemd）**
+
+```bash
+sudo bash deploy/linux/install.sh --install-deps
+# 可选
+sudo bash deploy/linux/install.sh --port 8787 --open-firewall \
+  --llm-base-url https://ark.cn-beijing.volces.com/api/v3 \
+  --llm-api-key "<key>" --llm-model deepseek-v4-1-flash-261017
+```
+
+脚本会检查系统/磁盘/端口/外网，缺少 Go/Node 时从官方源下载校验后放入安装目录工具链，完成构建、创建 `vulnagent` 系统用户、写入 `/etc/vulnagent/server.env`（0600）、安装并启动 `vulnagent-server.service` 与本机 Agent，健康检查失败自动回滚上一版二进制。
+配置、数据、日志分别位于 `/etc/vulnagent`、`/var/lib/vulnagent`、`/opt/vulnagent/logs`；运维脚本在 `/opt/vulnagent/scripts/`（status/start/stop/backup/uninstall）。
+
+### 其他方式
+
+- **systemd 手工部署**：`deploy/systemd/`（server / agent 服务单元、agent timer、helper sudoers 与 env 示例）
 - **Kubernetes**：`deploy/k8s/`（server 与 agent CronJob 清单）
-- **Windows**：`deploy/windows/start-prod.ps1`（生产启动、日志与进程管理）
+- **Windows 手工启动**：`deploy/windows/start-prod.ps1`
 - **容器**：仓库根目录 `Dockerfile`
 
 生产建议：`VA_SEED_DEMO=off`、设置强口令、HTTPS 前置并开启 `VA_COOKIE_SECURE=1`、定期 `vulnagent backup`。
