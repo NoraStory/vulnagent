@@ -169,6 +169,8 @@ export interface AssetItem {
   ip: string;
   os: string;
   osVersion: string;
+  osArch: string;
+  kernel: string;
   env: string;
   exposure: string;
   tier: string;
@@ -176,10 +178,74 @@ export interface AssetItem {
   source: Source;
   agentStatus: AgentStatus;
   lastSeen: string;
+  assetType: string;
+  status: string;
+  businessSystem: string;
+  department: string;
+  ownerEmail: string;
+  location: string;
+  cloudProvider: string;
+  cloudAccount: string;
+  region: string;
+  instanceId: string;
+  mac: string;
+  serial: string;
+  virtualized: string;
+  mergedInto: number;
+  tags: string[];
   components: number;
   findings: number;
   p0: number;
   risk: number;
+}
+
+export interface AssetIdentifier {
+  id: number;
+  assetId: number;
+  kind: string;
+  value: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface AssetChange {
+  id: number;
+  assetId: number;
+  field: string;
+  oldValue: string;
+  newValue: string;
+  actor: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface AssetImportRow {
+  row: number;
+  action: "created" | "updated" | "skipped" | "error";
+  assetId?: number;
+  hostname: string;
+  message?: string;
+  changed?: string[];
+}
+
+export interface AssetImportReport {
+  dryRun: boolean;
+  strategy: string;
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  items: AssetImportRow[];
+}
+
+export interface AssetMergeStats {
+  components: number;
+  findings: number;
+  tickets: number;
+  identifiers: number;
+  tags: number;
+  relations: number;
 }
 
 export interface AssetComponent {
@@ -329,6 +395,8 @@ export interface AssetDetail {
   asset: AssetItem;
   components: AssetComponent[];
   findings: Finding[];
+  identifiers: AssetIdentifier[];
+  changes: AssetChange[];
 }
 
 export interface CheckItem {

@@ -130,8 +130,8 @@ func (a *App) toolListAssets() harness.Tool {
 			if err := decodeArgs(raw, &in); err != nil {
 				return nil, err
 			}
-			items, total, err := a.readAssets().List(context.Background(), strings.TrimSpace(in.Q),
-				limitOf(in.Limit, 20, 50), 0)
+			items, total, err := a.readAssets().List(context.Background(),
+				ports.AssetFilter{Query: strings.TrimSpace(in.Q)}, limitOf(in.Limit, 20, 50), 0)
 			if err != nil {
 				return nil, err
 			}

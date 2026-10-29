@@ -80,19 +80,34 @@ func (r *AssetRepo) Components(ctx context.Context, assetID int64) ([]asset.Comp
 // UpsertReported 按主机名写入或刷新资产，返回资产 ID
 func (r *AssetRepo) UpsertReported(ctx context.Context, hostname, ip, osFamily, osVersion, source, agentStatus, seenAt string) (int64, error) {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO assets(hostname, ip, os_family, os_version, env, exposure, tier, owner,
-		source, agent_status, last_seen_at) VALUES(?,?,?,?, 'prod', 'internal', 'normal', '', ?, ?, ?)
+		source, agent_status, last_seen_at, created_at, updated_at)
+		VALUES(?,?,?,?, 'prod', 'internal', 'normal', '', ?, ?, ?, ?, ?)
 		ON CONFLICT(hostname) DO UPDATE SET ip = excluded.ip, os_family = excluded.os_family,
 		os_version = excluded.os_version,
 		source = CASE WHEN assets.source = 'agent' THEN 'agent' ELSE excluded.source END,
 		agent_status = CASE WHEN excluded.agent_status = 'online' THEN 'online' ELSE assets.agent_status END,
-		last_seen_at = excluded.last_seen_at`,
-		hostname, ip, osFamily, osVersion, source, agentStatus, seenAt)
+		last_seen_at = excluded.last_seen_at,
+		updated_at = excluded.updated_at`,
+		hostname, ip, osFamily, osVersion, source, agentStatus, seenAt, seenAt, seenAt)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
 	if err := r.db.QueryRowContext(ctx, `SELECT id FROM assets WHERE hostname = ?`, hostname).Scan(&id); err != nil {
 		return 0, err
+	}
+	if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
+		VALUES(?, 'hostname', ?, ?, ?)`, id, hostname, source, seenAt); err != nil {
+		return 0, err
+	}
+	if ip != "" {
+		if _, err := r.db.ExecContext(ctx, `DELETE FROM asset_identifiers WHERE asset_id = ? AND kind = 'ip' AND value <> ?`, id, ip); err != nil {
+			return 0, err
+		}
+		if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
+			VALUES(?, 'ip', ?, ?, ?)`, id, ip, source, seenAt); err != nil {
+			return 0, err
+		}
 	}
 	return id, nil
 }

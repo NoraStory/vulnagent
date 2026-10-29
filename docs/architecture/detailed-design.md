@@ -483,6 +483,53 @@ CREATE TABLE agent_approvals (
 `cves(epss DESC)`、`audit_logs(created_at DESC)`、`tickets(finding_id)`、`tickets(status, updated_at DESC)`、
 `agent_sessions(owner, updated_at DESC)`、`agent_messages(session_id, id)`、`agent_approvals(session_id, status)`。
 
+### 5.1.1 资产 CMDB（已落地，迁移 0014）
+
+`assets` 在原有字段上追加档案字段：`asset_type`、`status`、`business_system`、`department`、`owner_email`、
+`location`、`cloud_provider`、`cloud_account`、`region`、`instance_id`、`mac`、`serial`、`os_arch`、
+`kernel`、`virtualized`、`merged_into`、`created_at`、`updated_at`。
+
+```sql
+-- 资产标识：全局唯一 (kind, value)，用于跨来源身份解析
+CREATE TABLE asset_identifiers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL,
+  kind TEXT NOT NULL, value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',
+  created_at TEXT NOT NULL DEFAULT '', UNIQUE(kind, value)
+);
+
+-- 资产标签
+CREATE TABLE asset_tags (asset_id INTEGER NOT NULL, tag TEXT NOT NULL, PRIMARY KEY(asset_id, tag));
+
+-- 资产关系（合并、依赖等）
+CREATE TABLE asset_relations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, from_asset_id INTEGER NOT NULL,
+  to_asset_id INTEGER NOT NULL, relation TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '',
+  UNIQUE(from_asset_id, to_asset_id, relation)
+);
+
+-- 档案字段变更历史（逐字段 old/new + 操作人 + 来源）
+CREATE TABLE asset_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL, field TEXT NOT NULL,
+  old_value TEXT NOT NULL DEFAULT '', new_value TEXT NOT NULL DEFAULT '',
+  actor TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT ''
+);
+
+-- 7B 网段发现（表已建，扫描引擎待实现）
+CREATE TABLE discovery_jobs (...);
+CREATE TABLE discovery_results (...);
+```
+
+**身份解析**：Agent/SSH 上报时自动登记 `hostname` 与 `ip` 标识；CSV 导入按
+`cloud_instance → serial → mac → hostname → ip` 顺序匹配，一行命中多个资产时拒绝写入并要求先合并。
+迁移会为存量资产回填主机名与 IP 标识。
+
+**导入**：CSV ≤5MB / ≤5000 行，支持 `dryRun` 预览；冲突策略 `skip | update | create`。
+更新只覆盖 CSV 中非空字段，标签为增量合并，每次写入产生 `asset_changes` 与审计。
+
+**合并**：`POST /assets/merge` 在单个事务内迁移组件、漏洞、工单、标识、标签与关系，
+源资产标记 `status=merged` + `merged_into=target`，写入 `merged_into` 关系与两端变更历史；
+列表默认过滤已合并资产（`includeArchived=1` 可见）。合并仅限 admin。
+
 ### 5.2 目标模型（规划中，尚未实现）
 
 > 以下为后续演进方向（Agent 注册/心跳、SBOM 快照版本化、EPSS 历史、API Token、多租户）。
@@ -813,8 +860,14 @@ CREATE TABLE sync_cursors (
 | PATCH | `/api/v1/users/{username}` | admin | 改姓名、角色、停用启用 |
 | POST | `/api/v1/users/{username}/reset-password` | admin | 重置口令并踢下线 |
 | POST | `/api/v1/agent/token/rotate` | admin | 轮换 Agent 接入令牌 |
-| GET | `/api/v1/assets` | viewer+ | 分页、按环境/暴露面筛选 |
-| GET | `/api/v1/assets/{id}/sbom` | viewer+ | 最近快照组件清单 |
+| GET | `/api/v1/assets` | viewer+ | 分页、按环境/暴露面/状态/类型/业务系统筛选 |
+| GET | `/api/v1/assets/{id}` | viewer+ | 资产 360：档案、组件、漏洞、标识与变更历史 |
+| PATCH | `/api/v1/assets/{id}` | operator+ | 更新 CMDB 字段（逐字段变更留痕） |
+| PUT | `/api/v1/assets/{id}/tags` | operator+ | 整体替换资产标签 |
+| GET | `/api/v1/assets/{id}/changes` | viewer+ | 资产字段变更历史 |
+| GET | `/api/v1/assets/export` | operator+ | 按筛选导出资产 CSV（UTF-8 BOM） |
+| POST | `/api/v1/assets/import` | operator+ | CSV 导入，支持 dryRun 与冲突策略 |
+| POST | `/api/v1/assets/merge` | admin | 合并重复资产（保留源资产审计记录） |
 | POST | `/api/v1/assets/ssh-scan` | operator+ | SSH 兜底采集（只读脚本，凭据不落库） |
 | GET | `/api/v1/findings` | viewer+ | 按 priority/status/asset/时间筛选 |
 | GET | `/api/v1/findings/{id}` | viewer+ | 含 score_breakdown、POC、修复建议 |
@@ -1148,7 +1201,7 @@ deploy/           systemd/  compose/  helm/  install.sh
 | PURL → CPE 映射准确率 | 直接决定误报率 | 先覆盖 Top 2000 常用组件，其余标 `inferred` 降级处理 |
 | Windows 补丁 KB 与 CVE 映射 | Windows 场景容易漏报 | v1 只做软件版本维度，KB 级别后续接微软 MSRC API |
 | 是否需要 PDF 报告 | 影响前端实现量 | 已实现 PDF / CSV / JSON 导出 |
-| 是否需要 CMDB 同步 | 影响资产权重准确度 | 接口已预留（`assets.owner/business_tier`），v1 支持 CSV 导入 |
+| 是否需要 CMDB 同步 | 影响资产权重准确度 | 已落地内部 CMDB 字段、标签、标识、CSV 导入导出与人工合并；云厂商只读同步（7D）待实现 |
 | 多租户/多环境隔离 | 影响数据模型 | 已预留 `tenant_id`，v1 单租户 |
 
 ---

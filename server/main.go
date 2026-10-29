@@ -166,7 +166,13 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/ssh/files/save", a.handleSFTPSave)
 
 	mux.HandleFunc("GET /api/v1/assets", a.handleAssets)
+	mux.HandleFunc("GET /api/v1/assets/export", a.handleAssetExport)
+	mux.HandleFunc("POST /api/v1/assets/import", a.handleAssetImport)
+	mux.HandleFunc("POST /api/v1/assets/merge", a.handleAssetMerge)
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)
+	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.handleAssetPatch)
+	mux.HandleFunc("GET /api/v1/assets/{id}/changes", a.handleAssetChanges)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/tags", a.handleAssetTags)
 	mux.HandleFunc("GET /api/v1/assets/{id}/telemetry", a.handleAssetTelemetry)
 	mux.HandleFunc("GET /api/v1/assets/{id}/jobs", a.handleAssetJobs)
 	mux.HandleFunc("POST /api/v1/assets/ssh-scan", a.handleSSHScan)

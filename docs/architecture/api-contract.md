@@ -331,7 +331,7 @@ Webhook 请求体：
 
 ## 4. 资产
 
-### GET /assets?q=&page=1&pageSize=20
+### GET /assets?q=&env=&status=&assetType=&businessSystem=&tier=&exposure=&owner=&cloudProvider=&includeArchived=&page=1&pageSize=20
 
 ```json
 {
@@ -346,6 +346,8 @@ Webhook 请求体：
       "ip": "10.20.1.11",
       "os": "debian",
       "osVersion": "12",
+      "osArch": "amd64",
+      "kernel": "6.1.0-18-amd64",
       "env": "prod",
       "exposure": "public",
       "tier": "core",
@@ -353,6 +355,21 @@ Webhook 请求体：
       "source": "agent",
       "agentStatus": "online",
       "lastSeen": "2026-10-22T09:58:00+08:00",
+      "assetType": "server",
+      "status": "active",
+      "businessSystem": "交易系统",
+      "department": "基础架构",
+      "ownerEmail": "ops@example.com",
+      "location": "A机房 3F",
+      "cloudProvider": "aliyun",
+      "cloudAccount": "prod-main",
+      "region": "cn-hangzhou",
+      "instanceId": "i-bp1xxxx",
+      "mac": "00:50:56:AA:BB:CC",
+      "serial": "SN-001",
+      "virtualized": "virtual",
+      "mergedInto": 0,
+      "tags": ["prod", "核心"],
       "components": 214,
       "findings": 11,
       "p0": 2,
@@ -363,6 +380,8 @@ Webhook 请求体：
 ```
 
 `agentStatus`：`online | offline | stale | none`；`source`：`agent | ssh | container | self`。
+`status`：`active | maintenance | retired | merged`；`assetType`：`server | vm | container | network | database | other`。
+默认不返回已合并资产（`mergedInto > 0`），`includeArchived=1` 时包含。
 
 ### GET /assets/{id}
 
@@ -373,8 +392,80 @@ Webhook 请求体：
   "components": [
     { "purl": "pkg:deb/debian/openssl@3.0.11", "name": "openssl", "version": "3.0.11", "ecosystem": "deb", "vendor": "openssl", "product": "openssl", "inferred": false, "findings": 1 }
   ],
-  "findings": [ ...同 /findings item ]
+  "findings": [ ...同 /findings item ],
+  "identifiers": [
+    { "id": 1, "assetId": 3, "kind": "hostname", "value": "web-01", "source": "agent", "createdAt": "2026-10-29T10:00:00+08:00" }
+  ],
+  "changes": [
+    { "id": 8, "assetId": 3, "field": "businessSystem", "oldValue": "", "newValue": "交易系统", "actor": "管理员", "source": "manual", "createdAt": "2026-10-29T10:05:00+08:00" }
+  ]
 }
+```
+
+`identifiers.kind`：`hostname | ip | mac | serial | cloud_instance`。`changes` 最多返回最近 100 条。
+
+### PATCH /assets/{id}（operator+）
+
+请求体为稀疏字段，未出现的字段不修改；值会 trim，单字段上限 512 字符。实际发生变化的字段会写入 `asset_changes` 并记录审计 `asset.update`。
+
+```json
+{ "businessSystem": "交易系统", "owner": "张三", "ownerEmail": "zhangsan@example.com", "status": "maintenance", "tags": ["prod", "核心"] }
+```
+
+```json
+{ "ok": true, "asset": { ...同上 item }, "changes": [ { ...同上 change } ] }
+```
+
+主机名冲突返回 `409 conflict`；`hostname` 为空返回 `400 bad_request`。
+
+### PUT /assets/{id}/tags（operator+）
+
+```json
+{ "tags": ["prod", "核心", "等保三级"] }
+```
+
+整体替换标签，返回 `{ "ok": true, "tags": [...] }`；标签会去重、排序，单标签上限 64 字符。
+
+### GET /assets/{id}/changes?limit=100
+
+返回 `{ "items": [ ...同上 change ] }`，`limit` 默认 100、上限 500。
+
+### GET /assets/export（operator+）
+
+按当前列表筛选条件导出 CSV（UTF-8 BOM，最多 5000 行）。表头为中文：主机名、IP、操作系统、系统版本、架构、内核、环境、暴露面、业务等级、资产类型、状态、责任人、责任人邮箱、部门、业务系统、机房位置、云厂商、云账号、区域、实例ID、MAC、序列号、虚拟化、标签、来源。
+
+### POST /assets/import（operator+）
+
+`multipart/form-data`：`file`（CSV，≤5MB / ≤5000 行）、`strategy`（`update` 默认 / `skip` / `create`）、`dryRun`（`true` 时只预览不写入）。
+
+表头支持中文或英文别名（如 主机名 / hostname、业务系统 / businessSystem）。身份匹配优先级：云实例 ID → 序列号 → MAC → 主机名 → IP；同一行命中多个资产时返回该行错误，需先人工合并。
+
+```json
+{
+  "dryRun": false,
+  "strategy": "update",
+  "total": 2,
+  "created": 1,
+  "updated": 1,
+  "skipped": 0,
+  "errors": 0,
+  "items": [
+    { "row": 2, "action": "created", "assetId": 8, "hostname": "web-01", "message": "已新建资产" },
+    { "row": 3, "action": "updated", "assetId": 9, "hostname": "db-01", "message": "已更新 2 个字段", "changed": ["businessSystem", "owner"] }
+  ]
+}
+```
+
+### POST /assets/merge（admin）
+
+```json
+{ "sourceId": 9, "targetId": 3 }
+```
+
+把源资产的组件、漏洞、工单、标识、标签与关系迁移到目标资产，源资产标记为 `status=merged`、`mergedInto=targetId`，并写入 `merged_into` 关系与两端变更历史；不物理删除源资产。
+
+```json
+{ "ok": true, "stats": { "components": 12, "findings": 4, "tickets": 1, "identifiers": 3, "tags": 2, "relations": 0 } }
 ```
 
 ### GET /assets/{id}/telemetry

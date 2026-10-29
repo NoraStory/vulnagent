@@ -1,7 +1,10 @@
 import type {
+  AssetChange,
   AssetDetail,
+  AssetImportReport,
   AssetItem,
   AssetJobs,
+  AssetMergeStats,
   AssetTelemetry,
   AuditItem,
   Finding,
@@ -353,8 +356,79 @@ export const api = {
     return request("/sync/epss/refresh", { method: "POST" });
   },
 
-  assets(params: { q?: string; page?: number; pageSize?: number }): Promise<Paged<AssetItem>> {
+  assets(params: {
+    q?: string;
+    env?: string;
+    exposure?: string;
+    tier?: string;
+    status?: string;
+    assetType?: string;
+    businessSystem?: string;
+    owner?: string;
+    cloudProvider?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<Paged<AssetItem>> {
     return request(`/assets${query(params)}`);
+  },
+
+  updateAsset(
+    id: number | string,
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; asset: AssetItem; changes?: AssetChange[] }> {
+    return request(`/assets/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+  },
+
+  setAssetTags(id: number | string, tags: string[]): Promise<{ ok: boolean; tags: string[] }> {
+    return request(`/assets/${id}/tags`, { method: "PUT", body: JSON.stringify({ tags }) });
+  },
+
+  assetChanges(id: number | string, limit = 100): Promise<{ items: AssetChange[] }> {
+    return request(`/assets/${id}/changes${query({ limit })}`);
+  },
+
+  mergeAsset(sourceId: number, targetId: number): Promise<{ ok: boolean; stats: AssetMergeStats }> {
+    return request("/assets/merge", {
+      method: "POST",
+      body: JSON.stringify({ sourceId, targetId })
+    });
+  },
+
+  async importAssets(
+    file: File,
+    params: { strategy: "skip" | "update" | "create"; dryRun?: boolean }
+  ): Promise<AssetImportReport> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("strategy", params.strategy);
+    if (params.dryRun) form.append("dryRun", "true");
+    const response = await fetch(`${BASE}/assets/import`, {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    if (!response.ok) {
+      throw await toApiError(response, "导入失败");
+    }
+    return (await response.json()) as AssetImportReport;
+  },
+
+  async exportAssets(params: {
+    q?: string;
+    env?: string;
+    status?: string;
+    assetType?: string;
+    businessSystem?: string;
+    tier?: string;
+    exposure?: string;
+  }): Promise<Blob> {
+    const response = await fetch(`${BASE}/assets/export${query(params)}`, {
+      credentials: "include"
+    });
+    if (!response.ok) {
+      throw await toApiError(response, "导出失败");
+    }
+    return response.blob();
   },
 
   asset(id: number | string): Promise<AssetDetail> {

@@ -14,6 +14,8 @@ type assetItem struct {
 	IP          string `json:"ip"`
 	OS          string `json:"os"`
 	OSVersion   string `json:"osVersion"`
+	OSArch      string `json:"osArch"`
+	Kernel      string `json:"kernel"`
 	Env         string `json:"env"`
 	Exposure    string `json:"exposure"`
 	Tier        string `json:"tier"`
@@ -21,10 +23,27 @@ type assetItem struct {
 	Source      string `json:"source"`
 	AgentStatus string `json:"agentStatus"`
 	LastSeen    string `json:"lastSeen"`
-	Components  int    `json:"components"`
-	Findings    int    `json:"findings"`
-	P0          int    `json:"p0"`
-	Risk        int    `json:"risk"`
+
+	AssetType      string   `json:"assetType"`
+	Status         string   `json:"status"`
+	BusinessSystem string   `json:"businessSystem"`
+	Department     string   `json:"department"`
+	OwnerEmail     string   `json:"ownerEmail"`
+	Location       string   `json:"location"`
+	CloudProvider  string   `json:"cloudProvider"`
+	CloudAccount   string   `json:"cloudAccount"`
+	Region         string   `json:"region"`
+	InstanceID     string   `json:"instanceId"`
+	MAC            string   `json:"mac"`
+	Serial         string   `json:"serial"`
+	Virtualized    string   `json:"virtualized"`
+	MergedInto     int64    `json:"mergedInto"`
+	Tags           []string `json:"tags"`
+
+	Components int `json:"components"`
+	Findings   int `json:"findings"`
+	P0         int `json:"p0"`
+	Risk       int `json:"risk"`
 }
 
 type assetComponent struct {
@@ -39,29 +58,67 @@ type assetComponent struct {
 }
 
 func toAssetItem(it ports.AssetListItem) assetItem {
+	tags := it.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	return assetItem{
-		ID:          it.ID,
-		Hostname:    it.Hostname,
-		IP:          it.IP,
-		OS:          it.OSFamily,
-		OSVersion:   it.OSVersion,
-		Env:         it.Env,
-		Exposure:    it.Exposure,
-		Tier:        it.Tier,
-		Owner:       it.Owner,
-		Source:      it.Source,
-		AgentStatus: it.AgentStatus,
-		LastSeen:    it.LastSeen,
-		Components:  it.Components,
-		Findings:    it.Findings,
-		P0:          it.P0,
-		Risk:        it.Risk,
+		ID:             it.ID,
+		Hostname:       it.Hostname,
+		IP:             it.IP,
+		OS:             it.OSFamily,
+		OSVersion:      it.OSVersion,
+		OSArch:         it.OSArch,
+		Kernel:         it.Kernel,
+		Env:            it.Env,
+		Exposure:       it.Exposure,
+		Tier:           it.Tier,
+		Owner:          it.Owner,
+		Source:         it.Source,
+		AgentStatus:    it.AgentStatus,
+		LastSeen:       it.LastSeen,
+		AssetType:      it.AssetType,
+		Status:         it.Status,
+		BusinessSystem: it.BusinessSystem,
+		Department:     it.Department,
+		OwnerEmail:     it.OwnerEmail,
+		Location:       it.Location,
+		CloudProvider:  it.CloudProvider,
+		CloudAccount:   it.CloudAccount,
+		Region:         it.Region,
+		InstanceID:     it.InstanceID,
+		MAC:            it.MAC,
+		Serial:         it.Serial,
+		Virtualized:    it.Virtualized,
+		MergedInto:     it.MergedInto,
+		Tags:           tags,
+		Components:     it.Components,
+		Findings:       it.Findings,
+		P0:             it.P0,
+		Risk:           it.Risk,
+	}
+}
+
+// assetFilterFromQuery 解析资产列表筛选参数
+func assetFilterFromQuery(r *http.Request) ports.AssetFilter {
+	q := r.URL.Query()
+	return ports.AssetFilter{
+		Query:           strings.TrimSpace(q.Get("q")),
+		Env:             strings.TrimSpace(q.Get("env")),
+		Exposure:        strings.TrimSpace(q.Get("exposure")),
+		Tier:            strings.TrimSpace(q.Get("tier")),
+		Status:          strings.TrimSpace(q.Get("status")),
+		AssetType:       strings.TrimSpace(q.Get("assetType")),
+		BusinessSystem:  strings.TrimSpace(q.Get("businessSystem")),
+		Owner:           strings.TrimSpace(q.Get("owner")),
+		CloudProvider:   strings.TrimSpace(q.Get("cloudProvider")),
+		IncludeArchived: q.Get("includeArchived") == "1" || q.Get("includeArchived") == "true",
 	}
 }
 
 func (a *App) handleAssets(w http.ResponseWriter, r *http.Request) {
 	page, size, offset := pageParams(r)
-	list, total, err := a.assetRepo().List(r.Context(), strings.TrimSpace(r.URL.Query().Get("q")), size, offset)
+	list, total, err := a.assetRepo().List(r.Context(), assetFilterFromQuery(r), size, offset)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产列表失败")
 		return
@@ -120,10 +177,24 @@ func (a *App) handleAssetDetail(w http.ResponseWriter, r *http.Request) {
 		findings = append(findings, toFindingItem(it))
 	}
 
+	identifiers, err := a.assetRepo().Identifiers(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产标识失败")
+		return
+	}
+	changes, err := a.assetRepo().Changes(r.Context(), id, 100)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产变更失败")
+		return
+	}
+
+	item := toAssetItem(detail)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"demo":       a.demoMode(),
-		"asset":      toAssetItem(detail),
-		"components": components,
-		"findings":   findings,
+		"demo":        a.demoMode(),
+		"asset":       item,
+		"components":  components,
+		"findings":    findings,
+		"identifiers": identifiers,
+		"changes":     changes,
 	})
 }

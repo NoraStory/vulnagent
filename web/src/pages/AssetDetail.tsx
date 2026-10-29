@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   Copy,
   Cpu,
+  FileText,
   HardDrive,
   Network,
   Server,
@@ -25,6 +26,7 @@ import {
   StatusPill
 } from "../components/ui";
 import { FindingDrawer } from "../components/FindingDrawer";
+import { AssetCmdbPanel } from "../components/AssetCmdbPanel";
 import {
   agentMeta,
   envMeta,
@@ -35,7 +37,7 @@ import {
 } from "../lib/format";
 import { useToast } from "../lib/toast";
 
-type Tab = "components" | "findings" | "performance" | "hardware" | "services" | "ports" | "jobs";
+type Tab = "components" | "findings" | "cmdb" | "performance" | "hardware" | "services" | "ports" | "jobs";
 
 export function AssetDetailPage() {
   const { id } = useParams();
@@ -61,6 +63,16 @@ export function AssetDetailPage() {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
       setLoading(false);
+    }
+  }, [id]);
+
+  const reloadAsset = useCallback(async () => {
+    if (!id) return;
+    try {
+      const result = await api.asset(id);
+      setData(result);
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "刷新资产失败", "error");
     }
   }, [id]);
 
@@ -159,9 +171,13 @@ export function AssetDetailPage() {
               <Badge>{exposureMeta[asset.exposure] ?? asset.exposure}</Badge>
               <Badge>{asset.tier === "core" ? "核心业务" : asset.tier === "important" ? "重要业务" : "一般业务"}</Badge>
               <Badge>{sourceMeta[asset.source] ?? asset.source}</Badge>
+              {asset.businessSystem && <Badge>{asset.businessSystem}</Badge>}
+              {asset.tags.map((tag) => (
+                <span key={tag} className="pill bg-subtle text-[11px] text-ink2">{tag}</span>
+              ))}
               <span className="inline-flex items-center gap-1.5 rounded-full bg-subtle px-2 py-1 text-[11px] text-ink2">
                 <Dot color={agent.color} />
-                Agent {agent.label}
+                {asset.agentStatus === "none" ? "未安装 Agent" : `Agent ${agent.label}`}
               </span>
             </div>
 
@@ -199,6 +215,12 @@ export function AssetDetailPage() {
           </TabButton>
           <TabButton active={tab === "findings"} onClick={() => setTab("findings")}>
             关联漏洞 <span className="text-[11px] text-ink3">{findings.length}</span>
+          </TabButton>
+          <TabButton active={tab === "cmdb"} onClick={() => setTab("cmdb")}>
+            <span className="inline-flex items-center gap-1.5">
+              <FileText size={12.5} />
+              档案
+            </span>
           </TabButton>
           <TabButton active={tab === "performance"} onClick={() => setTab("performance")}>
             <span className="inline-flex items-center gap-1.5">
@@ -354,6 +376,13 @@ export function AssetDetailPage() {
             </div>
           </>
           )
+        ) : tab === "cmdb" ? (
+          <AssetCmdbPanel
+            asset={asset}
+            identifiers={data.identifiers ?? []}
+            changes={data.changes ?? []}
+            onRefresh={() => void reloadAsset()}
+          />
         ) : tab === "jobs" ? (
           <JobsView data={jobs} error={jobsError} onReload={() => void loadJobs()} />
         ) : (
