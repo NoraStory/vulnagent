@@ -26,6 +26,7 @@ type sshAgentRequest struct {
 	HostID int64  `json:"hostId"`
 	Goal   string `json:"goal"`
 	Mode   string `json:"mode"` // confirm | safe | auto
+	Search *bool  `json:"search"`
 }
 
 type sshAgentDecision struct {
@@ -133,10 +134,18 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refCtx, cancelRef := context.WithTimeout(r.Context(), 10*time.Second)
-	references, refErr := a.commandReferences(refCtx, goal)
-	cancelRef()
-	referenceBlock := commandReferencePrompt(references)
+	searchEnabled := req.Search == nil || *req.Search
+	var (
+		references     []sshCommandReference
+		refErr         string
+		referenceBlock string
+	)
+	if searchEnabled {
+		refCtx, cancelRef := context.WithTimeout(r.Context(), 15*time.Second)
+		references, refErr = a.commandReferences(refCtx, goal)
+		cancelRef()
+		referenceBlock = commandReferencePrompt(references)
+	}
 
 	stream := newSSEStream(w)
 	defer stream.close()
@@ -173,7 +182,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	slog.Info("SSH Agent 启动", "run", runID, "host", host.Name, "mode", mode, "goal", truncateRunes(goal, 80))
 	stream.emit(harnessapp.Event{Type: "status", Data: map[string]any{
 		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "host": host.Name,
-		"references": referenceMeta(references), "referenceError": refErr,
+		"references": referenceMeta(references), "referenceError": refErr, "search": searchEnabled,
 	}})
 
 	ctx := r.Context()

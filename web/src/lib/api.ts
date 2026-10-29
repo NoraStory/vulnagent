@@ -680,10 +680,11 @@ export const api = {
     hostId: number,
     goal: string,
     mode: SshAgentMode,
+    search: boolean,
     onEvent: (event: SshAgentEvent) => void,
     signal?: AbortSignal
   ): Promise<void> {
-    return streamSSE("/ssh/agent/run", { hostId, goal, mode }, onEvent, signal);
+    return streamSSE("/ssh/agent/run", { hostId, goal, mode, search }, onEvent, signal);
   },
 
   sshAgentDecision(approvalId: string, decision: "approve" | "reject"): Promise<{ ok: boolean }> {

@@ -118,6 +118,7 @@ type AgentRunView = {
   pending?: AgentPending;
   references?: SshCommandReference[];
   referenceError?: string;
+  search?: boolean;
 };
 
 const agentRiskMeta: Record<string, { label: string; className: string }> = {
@@ -677,6 +678,7 @@ export function TerminalPage() {
               next.references = data.references as SshCommandReference[];
             }
             next.referenceError = data.referenceError ? String(data.referenceError) : undefined;
+            next.search = typeof data.search === "boolean" ? data.search : undefined;
             break;
           case "step": {
             const index = Number(data.index ?? next.steps.length);
@@ -736,7 +738,7 @@ export function TerminalPage() {
     };
 
     try {
-      await api.sshAgentRun(activeTab.host.id, goal, agentMode, handle, controller.signal);
+      await api.sshAgentRun(activeTab.host.id, goal, agentMode, aiSearch, handle, controller.signal);
       void loadSessions();
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -1086,29 +1088,64 @@ export function TerminalPage() {
                 <span className="ml-auto font-mono text-[9px] text-ink3">运行 {agentState.runId.slice(0, 8)}</span>
               )}
             </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ink3">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={aiSearch}
+                  onChange={(event) => setAiSearch(event.target.checked)}
+                  disabled={agentState?.status === "running"}
+                  className="h-3 w-3"
+                />
+                联网检索命令参考
+              </label>
+              <span>运行前按目标检索命令示例，失败自动回退</span>
+            </div>
             {agentMode === "auto" && (
               <p className="rounded-[6px] bg-dangerSoft px-2 py-1 text-[9.5px] leading-[14px] text-danger">
                 全自动模式仅 critical 命令需要确认，其余命令会直接执行；所有命令与输出均留痕。
               </p>
             )}
-            {agentState && ((agentState.references && agentState.references.length > 0) || agentState.referenceError) && (
-              <div className="flex flex-wrap items-center gap-1 text-[9px] text-ink3">
-                <BookOpen size={9} className="text-brand" />
-                命令参考
-                {agentState.references?.map((ref) => (
-                  <a
-                    key={ref.url}
-                    href={ref.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded bg-subtle px-1 py-0.5 font-mono text-brand hover:underline"
-                  >
-                    {ref.topic}
-                  </a>
-                ))}
-                {agentState.referenceError && <span className="text-warn">{agentState.referenceError}</span>}
-              </div>
-            )}
+            {agentState &&
+              (agentState.search !== undefined ||
+                (agentState.references && agentState.references.length > 0) ||
+                agentState.referenceError) && (
+                <details className="rounded-[8px] border border-line bg-subtle/50 px-2 py-1.5">
+                  <summary className="cursor-pointer text-[9.5px] text-ink3">
+                    联网检索：
+                    {agentState.search === false ? "已关闭" : "已开启"}
+                    {agentState.references && agentState.references.length > 0
+                      ? ` · ${agentState.references.map((item) => item.topic).join(", ")}`
+                      : agentState.search
+                        ? " · 未匹配到主题"
+                        : ""}
+                    {agentState.referenceError ? " · 检索失败" : ""}
+                  </summary>
+                  {agentState.referenceError && (
+                    <p className="mt-1 text-[9.5px] text-warn">{agentState.referenceError}</p>
+                  )}
+                  {agentState.references?.map((ref) => (
+                    <a
+                      key={ref.url}
+                      href={ref.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block rounded bg-surface px-2 py-1 text-[9.5px] leading-[14px] text-ink2 hover:text-brand"
+                    >
+                      <span className="font-mono text-brand">{ref.topic}</span>{" "}
+                      <span className="line-clamp-2">{ref.snippet}</span>
+                      <ExternalLink size={9} className="ml-1 inline" />
+                    </a>
+                  ))}
+                  {agentState.search !== false &&
+                    (!agentState.references || agentState.references.length === 0) &&
+                    !agentState.referenceError && (
+                      <p className="mt-1 text-[9.5px] text-ink3">
+                        未匹配到命令主题，Agent 仍会先验证命令再执行。
+                      </p>
+                    )}
+                </details>
+              )}
           </div>
 
           <div ref={agentScrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">

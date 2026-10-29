@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vulnagent/server/internal/application/ports"
 )
 
 // sshCommandReference 一条来自公共命令参考库（cheat.sh）的检索结果。
@@ -46,6 +49,7 @@ var commandRefCache = struct {
 }{items: make(map[string]cachedCommandRef)}
 
 var commandTokenPattern = regexp.MustCompile(`[a-z][a-z0-9_-]{1,20}`)
+var commandTopicPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,24}$`)
 
 var (
 	htmlPrePattern = regexp.MustCompile(`(?is)<pre[^>]*>(.*?)</pre>`)
@@ -84,16 +88,17 @@ var keywordTopics = []struct {
 	keyword string
 	topic   string
 }{
-	{"磁盘空间", "df"}, {"磁盘使用", "df"}, {"挂载", "df"}, {"目录大小", "du"},
-	{"内存", "free"}, {"负载", "uptime"}, {"进程", "ps"}, {"端口", "ss"}, {"监听", "ss"},
+	{"磁盘空间", "df"}, {"磁盘使用", "df"}, {"挂载", "df"}, {"目录大小", "du"}, {"占用最大", "du"},
+	{"大文件", "find"}, {"内存", "free"}, {"负载", "uptime"}, {"进程", "ps"}, {"端口", "ss"}, {"监听", "ss"},
 	{"网络连接", "ss"}, {"路由", "ip"}, {"网卡", "ip"}, {"防火墙", "iptables"},
-	{"服务", "systemctl"}, {"日志", "journalctl"}, {"开机启动", "systemctl"},
-	{"定时任务", "crontab"}, {"权限", "chmod"}, {"属主", "chown"}, {"用户", "useradd"},
-	{"压缩", "tar"}, {"解压", "tar"}, {"打包", "tar"}, {"查找文件", "find"}, {"搜索文件", "find"},
-	{"文本替换", "sed"}, {"文本处理", "awk"}, {"过滤", "grep"}, {"容器", "docker"},
-	{"kubernetes", "kubectl"}, {"k8s", "kubectl"}, {"证书", "openssl"}, {"抓包", "tcpdump"},
-	{"磁盘分区", "fdisk"}, {"分区", "fdisk"}, {"软件包", "apt"}, {"安装包", "apt"},
-	{"安全基线", "auditctl"}, {"审计", "ausearch"}, {"文件句柄", "lsof"}, {"端口占用", "lsof"},
+	{"服务", "systemctl"}, {"开机自启", "systemctl"}, {"日志", "journalctl"}, {"异常登录", "lastb"},
+	{"登录失败", "lastb"}, {"最近登录", "last"}, {"定时任务", "crontab"}, {"计划任务", "crontab"},
+	{"权限", "chmod"}, {"属主", "chown"}, {"用户", "useradd"}, {"压缩", "tar"}, {"解压", "tar"},
+	{"打包", "tar"}, {"查找文件", "find"}, {"搜索文件", "find"}, {"文本替换", "sed"}, {"文本处理", "awk"},
+	{"过滤", "grep"}, {"容器", "docker"}, {"kubernetes", "kubectl"}, {"k8s", "kubectl"},
+	{"证书", "openssl"}, {"抓包", "tcpdump"}, {"磁盘分区", "fdisk"}, {"分区", "fdisk"},
+	{"软件包", "apt"}, {"安装包", "apt"}, {"安全基线", "auditctl"}, {"审计", "ausearch"},
+	{"文件句柄", "lsof"}, {"端口占用", "lsof"}, {"内核", "uname"}, {"系统版本", "uname"},
 }
 
 // guessCommandTopics 从自然语言问题中提取最多 3 个可检索的命令主题。
@@ -197,9 +202,67 @@ func summarizeCommandReference(text string) (title, snippet, content string) {
 	return title, snippet, content
 }
 
-// commandReferences 并发检索命令参考；失败信息用于在 UI 提示「检索服务不可用」。
+// parseCommandTopicList 解析模型输出的命令名数组，限制字符集与数量。
+func parseCommandTopicList(raw string) []string {
+	text := strings.TrimSpace(raw)
+	if start := strings.Index(text, "["); start >= 0 {
+		if end := strings.LastIndex(text, "]"); end > start {
+			text = text[start : end+1]
+		}
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(text), &items); err != nil {
+		cleaned := strings.NewReplacer("[", "", "]", "", "\"", "", "`", "").Replace(text)
+		items = strings.FieldsFunc(cleaned, func(r rune) bool { return r == ',' || r == '\n' || r == '，' })
+	}
+	out := make([]string, 0, commandRefMaxTopics)
+	seen := make(map[string]bool, commandRefMaxTopics)
+	for _, item := range items {
+		topic := strings.ToLower(strings.TrimSpace(item))
+		topic = strings.Trim(topic, "`'\" .")
+		if topic == "" || seen[topic] || !commandTopicPattern.MatchString(topic) {
+			continue
+		}
+		seen[topic] = true
+		out = append(out, topic)
+		if len(out) >= commandRefMaxTopics {
+			break
+		}
+	}
+	return out
+}
+
+// modelCommandTopics 在本地关键词无法判断时，让模型给出 1-3 个候选命令名。
+func (a *App) modelCommandTopics(ctx context.Context, question string) []string {
+	if a.harness == nil || a.harness.LLM == nil {
+		return nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Messages: []ports.LLMMessage{
+		{
+			Role: "system",
+			Content: "你是 Linux 命令检索助手。根据用户任务列出最相关的 1-3 个命令名，" +
+				"只输出 JSON 字符串数组，例如 [\"df\",\"du\"]；不要输出解释、参数或 Markdown。",
+		},
+		{Role: "user", Content: truncateRunes(question, 500)},
+	}})
+	if err != nil {
+		return nil
+	}
+	return parseCommandTopicList(resp.Content)
+}
+
+// commandReferences 检索命令参考：本地关键词优先，无法判断时用模型提取命令名。
 func (a *App) commandReferences(ctx context.Context, question string) ([]sshCommandReference, string) {
 	topics := guessCommandTopics(question)
+	if len(topics) == 0 {
+		topics = a.modelCommandTopics(ctx, question)
+	}
+	return a.fetchCommandReferences(ctx, topics)
+}
+
+func (a *App) fetchCommandReferences(ctx context.Context, topics []string) ([]sshCommandReference, string) {
 	if len(topics) == 0 {
 		return nil, ""
 	}

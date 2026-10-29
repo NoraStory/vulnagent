@@ -13,6 +13,7 @@ func TestGuessCommandTopics(t *testing.T) {
 		{"tar 怎么打包并解压目录", []string{"tar"}},
 		{"查看磁盘使用率和端口占用", []string{"df", "ss", "lsof"}},
 		{"如何使用 systemctl 查看服务状态", []string{"systemctl"}},
+		{"排查最近异常登录和大文件", []string{"find", "lastb"}},
 		{"主机名是什么", nil},
 	}
 	for _, item := range cases {
@@ -46,6 +47,30 @@ func TestSummarizeCommandReference(t *testing.T) {
 	}
 	if !strings.Contains(content, "df -h") {
 		t.Fatalf("内容解析异常：%q", content)
+	}
+}
+
+func TestParseCommandTopicList(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		{`["df","du"]`, []string{"df", "du"}},
+		{"```json\n[\"ss\"]\n```", []string{"ss"}},
+		{"df, du\nss", []string{"df", "du", "ss"}},
+		{`["DF", "../etc/passwd", "tar"]`, []string{"df", "tar"}},
+		{`[]`, nil},
+	}
+	for _, item := range cases {
+		got := parseCommandTopicList(item.raw)
+		if len(got) != len(item.want) {
+			t.Fatalf("%q 期望 %v，实际 %v", item.raw, item.want, got)
+		}
+		for index := range item.want {
+			if got[index] != item.want[index] {
+				t.Fatalf("%q 期望 %v，实际 %v", item.raw, item.want, got)
+			}
+		}
 	}
 }
 

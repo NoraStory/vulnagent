@@ -1359,8 +1359,17 @@ vulnagent_selfcheck_failed 0
 Agent 的 `status` 事件新增：
 
 ```json
-{ "type": "status", "data": { "runId": "…", "host": "web-01", "references": [ … ], "referenceError": "" } }
+{ "type": "status", "data": { "runId": "…", "host": "web-01", "search": true, "references": [ … ], "referenceError": "" } }
 ```
+
+`POST /ssh/agent/run` 请求新增可选字段 `search`（缺省 `true`）：
+
+```json
+{ "hostId": 1, "goal": "排查最近异常登录", "mode": "safe", "search": true }
+```
+
+- 本地关键词无法判断命令主题时，会额外调用一次模型提取 1–3 个命令名（只输出 JSON 数组），再检索参考。
+- Agent 在每一步决策前都会携带参考块，并新增「不熟悉参数必须先 `command -v` / `--help` 验证」的约束。
 
 ### 12.6 SSH 主机漏洞扫描
 
