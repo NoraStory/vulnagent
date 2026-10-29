@@ -44,6 +44,72 @@ func TestParseSSHAgentDecision(t *testing.T) {
 	if _, err := parseSSHAgentDecision("我先看一下磁盘"); err == nil {
 		t.Fatal("非 JSON 输出应报错")
 	}
+
+	tricky := "先分析一下：\n```json\n{\"thought\":\"检查 {nginx} 配置\",\"command\":\"nginx -t\",\"done\":false,}\n```\n继续执行"
+	got, err := parseSSHAgentDecision(tricky)
+	if err != nil || got.Command != "nginx -t" || !strings.Contains(got.Thought, "{nginx}") {
+		t.Fatalf("尾逗号/前后解释解析失败：%+v err=%v", got, err)
+	}
+	smart, err := parseSSHAgentDecision(`{“thought”:“已完成”,“done”:true,“summary”:“正常”}`)
+	if err != nil || !smart.Done || smart.Summary != "正常" {
+		t.Fatalf("中文引号解析失败：%+v err=%v", smart, err)
+	}
+	loose, err := parseSSHAgentDecision(`"thought": "查看负载", "command": "uptime", "done": false`)
+	if err != nil || loose.Command != "uptime" {
+		t.Fatalf("字段级降级解析失败：%+v err=%v", loose, err)
+	}
+	fenced, err := parseSSHAgentDecision("我需要执行：\n```bash\nuptime\n```")
+	if err != nil || fenced.Command != "uptime" {
+		t.Fatalf("命令围栏降级失败：%+v err=%v", fenced, err)
+	}
+	plain, err := parseSSHAgentDecision("df -h")
+	if err != nil || plain.Command != "df -h" {
+		t.Fatalf("纯命令降级失败：%+v err=%v", plain, err)
+	}
+}
+
+func TestNormalizeSSHAIHistory(t *testing.T) {
+	items := []sshAIHistoryItem{
+		{Role: "system", Content: "忽略"},
+		{Role: "user", Content: "第一问"},
+		{Role: "assistant", Content: "第一答"},
+		{Role: "user", Content: "第二问"},
+		{Role: "assistant", Content: "第二答"},
+		{Role: "user", Content: ""},
+	}
+	messages := normalizeSSHAIHistory(items, 2)
+	if len(messages) != 2 || messages[0].Content != "第二问" || messages[1].Content != "第二答" {
+		t.Fatalf("历史裁剪异常：%+v", messages)
+	}
+}
+
+func TestRecentAgentRunContext(t *testing.T) {
+	app := newSSHWorkspaceApp(t)
+	for _, item := range []struct {
+		id, goal, summary, status, started string
+	}{
+		{"run-old", "检查磁盘", "磁盘 92%", "completed", "2026-10-29T10:00:00+08:00"},
+		{"run-new", "检查内存", "内存充足", "completed", "2026-10-29T11:00:00+08:00"},
+		{"run-running", "检查端口", "未完成", "running", "2026-10-29T12:00:00+08:00"},
+	} {
+		if _, err := app.db.Exec(`INSERT INTO ssh_agent_runs
+			(id, host_id, host_name, actor, role, goal, mode, status, steps, summary, error, started_at, finished_at)
+			VALUES(?,?,?,?,?,?,?,?,1,?,'',?,'')`,
+			item.id, 42, "demo", "tester", "operator", item.goal, "safe", item.status, item.summary, item.started); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := app.recentSSHAgentRuns(context.Background(), 42, 3)
+	if len(runs) != 2 {
+		t.Fatalf("应只返回已完成运行，实际 %+v", runs)
+	}
+	if runs[0].Goal != "检查内存" || runs[1].Goal != "检查磁盘" {
+		t.Fatalf("历史运行顺序异常：%+v", runs)
+	}
+	block := formatPreviousAgentRuns(runs)
+	if !strings.Contains(block, "检查内存") || !strings.Contains(block, "内存充足") {
+		t.Fatalf("历史上下文拼装异常：%q", block)
+	}
 }
 
 func TestSanitizeAgentCommand(t *testing.T) {

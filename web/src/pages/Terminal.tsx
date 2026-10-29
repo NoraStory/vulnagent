@@ -119,6 +119,8 @@ type AgentRunView = {
   references?: SshCommandReference[];
   referenceError?: string;
   search?: boolean;
+  contextRuns?: number;
+  warnings?: string[];
 };
 
 const agentRiskMeta: Record<string, { label: string; className: string }> = {
@@ -577,6 +579,10 @@ export function TerminalPage() {
     if (!text) return;
     const key = activeTab.key;
     const pane = paneRefs.current.get(key);
+    const history = activeAi
+      .slice(-8)
+      .filter((message) => message.content.trim() !== "")
+      .map((message) => ({ role: message.role, content: message.content }));
     pushAi(key, { id: `u-${Date.now()}`, role: "user", content: text });
     setAiInput("");
     setAiBusy(true);
@@ -586,7 +592,8 @@ export function TerminalPage() {
         question: text,
         context: pane?.recent() ?? "",
         sessionId: activeTab.sessionId,
-        search: aiSearch
+        search: aiSearch,
+        history
       });
       pushAi(key, {
         id: `a-${Date.now()}`,
@@ -679,6 +686,10 @@ export function TerminalPage() {
             }
             next.referenceError = data.referenceError ? String(data.referenceError) : undefined;
             next.search = typeof data.search === "boolean" ? data.search : undefined;
+            next.contextRuns = typeof data.contextRuns === "number" ? data.contextRuns : undefined;
+            break;
+          case "warning":
+            next.warnings = [...(next.warnings ?? []), String(data.message ?? "")].filter(Boolean);
             break;
           case "step": {
             const index = Number(data.index ?? next.steps.length);
@@ -1038,7 +1049,7 @@ export function TerminalPage() {
             />
             联网检索命令参考
           </label>
-          <span>只读最近终端输出；执行前需二次确认，操作写入审计。</span>
+          <span>多轮上下文（最近 8 条）；执行前需二次确认，操作写入审计。</span>
         </div>
       </div>
         </>
@@ -1146,6 +1157,9 @@ export function TerminalPage() {
                     )}
                 </details>
               )}
+            {agentState?.contextRuns ? (
+              <p className="text-[9px] text-ink3">已载入最近 {agentState.contextRuns} 次任务上下文</p>
+            ) : null}
           </div>
 
           <div ref={agentScrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
@@ -1214,6 +1228,15 @@ export function TerminalPage() {
                 {agentState.steps.length === 0 ? "正在读取主机现场并规划下一步…" : "Agent 执行中，等待命令输出…"}
               </div>
             )}
+
+            {agentState?.warnings?.map((message, index) => (
+              <div
+                key={`${index}-${message.slice(0, 24)}`}
+                className="rounded-[8px] bg-warnSoft px-2.5 py-2 text-[10px] leading-[16px] text-warn"
+              >
+                {message}
+              </div>
+            ))}
 
             {agentState?.pending && (
               <div className="rounded-[9px] border border-[#F5D9B8] bg-warnSoft/70 px-2.5 py-2">

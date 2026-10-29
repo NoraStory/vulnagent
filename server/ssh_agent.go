@@ -146,6 +146,8 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		cancelRef()
 		referenceBlock = commandReferencePrompt(references)
 	}
+	previousRuns := a.recentSSHAgentRuns(r.Context(), host.ID, 3)
+	previousBlock := formatPreviousAgentRuns(previousRuns)
 
 	stream := newSSEStream(w)
 	defer stream.close()
@@ -183,6 +185,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	stream.emit(harnessapp.Event{Type: "status", Data: map[string]any{
 		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "host": host.Name,
 		"references": referenceMeta(references), "referenceError": refErr, "search": searchEnabled,
+		"contextRuns": len(previousRuns),
 	}})
 
 	ctx := r.Context()
@@ -201,18 +204,75 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	history := make([]sshAgentStep, 0, sshAgentMaxSteps)
+	gracefulSummary := func(reason string) string {
+		if text := a.summarizeSSHAgent(ctx, host, goal, history); text != "" {
+			return text
+		}
+		if len(history) == 0 {
+			return reason + "。尚未执行命令，可调整目标后重试。"
+		}
+		return fmt.Sprintf("%s。已执行 %d 步，命令与输出已保留，可调整目标后继续。", reason, len(history))
+	}
+	formatFailures, modelFailures := 0, 0
 	for index := 0; index < sshAgentMaxSteps; index++ {
 		if ctx.Err() != nil {
 			errText = "请求已取消"
 			return
 		}
 		remaining := sshAgentMaxSteps - index
-		decision, err := a.askSSHAgent(ctx, host, goal, referenceBlock, history, remaining)
-		if err != nil {
+		var (
+			decision sshAgentDecision
+			command  string
+		)
+		// 单步内对模型格式错误与临时调用失败做有限重试，避免一次异常中断整个任务
+		for {
+			current, err := a.askSSHAgent(ctx, host, goal, referenceBlock, previousBlock, history, remaining)
+			if err == nil {
+				if current.Done {
+					decision = current
+					break
+				}
+				if cmd := sanitizeAgentCommand(current.Command); cmd != "" {
+					decision, command = current, cmd
+					break
+				}
+				err = errAgentDecisionFormat
+			}
+			if errors.Is(err, errAgentDecisionFormat) {
+				formatFailures++
+				if formatFailures <= 2 {
+					stream.emit(harnessapp.Event{Type: "warning", Data: map[string]any{
+						"message": fmt.Sprintf("模型返回格式异常，正在自动重试（%d/2）", formatFailures),
+					}})
+					time.Sleep(400 * time.Millisecond)
+					continue
+				}
+				status = "completed"
+				summary = gracefulSummary("模型连续返回无法解析的决策")
+				errText = "模型格式异常，已提前结束"
+				stream.emit(harnessapp.Event{Type: "warning", Data: map[string]any{
+					"message": "模型连续返回格式异常，任务提前结束；已执行步骤与输出均已保存。",
+				}})
+				stream.emit(harnessapp.Event{Type: "done", Data: map[string]any{
+					"runId": runID, "steps": stepsDone, "summary": summary, "truncated": true,
+				}})
+				return
+			}
+			modelFailures++
+			if modelFailures <= 2 {
+				stream.emit(harnessapp.Event{Type: "warning", Data: map[string]any{
+					"message": "模型调用失败，正在自动重试：" + truncateRunes(err.Error(), 120),
+				}})
+				time.Sleep(800 * time.Millisecond)
+				continue
+			}
 			errText = "模型调用失败：" + err.Error()
-			stream.emit(harnessapp.Event{Type: "error", Data: map[string]any{"message": errText}})
+			stream.emit(harnessapp.Event{Type: "error", Data: map[string]any{
+				"message": errText + "；已执行步骤与输出已保存。",
+			}})
 			return
 		}
+		formatFailures, modelFailures = 0, 0
 		if decision.Done {
 			status = "completed"
 			summary = strings.TrimSpace(decision.Summary)
@@ -222,12 +282,6 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 			stream.emit(harnessapp.Event{Type: "done", Data: map[string]any{
 				"runId": runID, "steps": stepsDone, "summary": summary, "truncated": false,
 			}})
-			return
-		}
-		command := sanitizeAgentCommand(decision.Command)
-		if command == "" {
-			errText = "模型未给出可执行命令"
-			stream.emit(harnessapp.Event{Type: "error", Data: map[string]any{"message": errText}})
 			return
 		}
 		risk := classifySSHCommand(command)
@@ -300,6 +354,50 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+type sshAgentRunBrief struct {
+	Goal      string
+	Summary   string
+	StartedAt string
+}
+
+func (a *App) recentSSHAgentRuns(ctx context.Context, hostID int64, limit int) []sshAgentRunBrief {
+	if limit <= 0 {
+		return nil
+	}
+	rows, err := a.db.QueryContext(ctx, `SELECT goal, summary, started_at FROM ssh_agent_runs
+		WHERE host_id=? AND status='completed' AND summary<>'' ORDER BY started_at DESC LIMIT ?`, hostID, limit)
+	if err != nil {
+		slog.Warn("读取 Agent 历史上下文失败", "hostId", hostID, "err", err)
+		return nil
+	}
+	defer rows.Close()
+	out := make([]sshAgentRunBrief, 0, limit)
+	for rows.Next() {
+		var brief sshAgentRunBrief
+		if err := rows.Scan(&brief.Goal, &brief.Summary, &brief.StartedAt); err != nil {
+			continue
+		}
+		out = append(out, brief)
+	}
+	return out
+}
+
+func formatPreviousAgentRuns(runs []sshAgentRunBrief) string {
+	if len(runs) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("最近任务上下文（同一主机的历史任务，可据此延续，不要重复已验证的步骤）：\n")
+	for _, run := range runs {
+		builder.WriteString("- 目标：")
+		builder.WriteString(truncateRunes(run.Goal, 160))
+		builder.WriteString("\n  结论：")
+		builder.WriteString(truncateRunes(run.Summary, 400))
+		builder.WriteString("\n")
+	}
+	return truncateRunes(builder.String(), 2000)
+}
+
 // summarizeSSHAgent 在达到步数上限时，基于已有观察生成收尾结论
 func (a *App) summarizeSSHAgent(ctx context.Context, host sshHost, goal string, history []sshAgentStep) string {
 	if len(history) == 0 {
@@ -343,7 +441,7 @@ func sshRiskReason(risk string) string {
 	}
 }
 
-func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference string, history []sshAgentStep, remaining int) (sshAgentDecision, error) {
+func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (sshAgentDecision, error) {
 	var user strings.Builder
 	user.WriteString("目标主机：")
 	user.WriteString(host.Name)
@@ -356,6 +454,10 @@ func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference str
 	if reference != "" {
 		user.WriteString("\n")
 		user.WriteString(reference)
+	}
+	if previous != "" {
+		user.WriteString("\n")
+		user.WriteString(previous)
 	}
 	user.WriteString("\n剩余可执行步数：")
 	user.WriteString(strconv.Itoa(remaining))
@@ -377,34 +479,182 @@ func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference str
 
 	callCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Messages: []ports.LLMMessage{
+	messages := []ports.LLMMessage{
 		{Role: "system", Content: sshAgentSystemPrompt},
 		{Role: "user", Content: user.String()},
-	}})
+	}
+	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Messages: messages})
 	if err != nil {
 		return sshAgentDecision{}, err
 	}
-	decision, err := parseSSHAgentDecision(resp.Content)
-	if err != nil {
-		return sshAgentDecision{}, err
+	if decision, parseErr := parseSSHAgentDecision(resp.Content); parseErr == nil {
+		return decision, nil
 	}
-	return decision, nil
-}
-
-// parseSSHAgentDecision 从模型输出中提取 JSON 决策
-func parseSSHAgentDecision(content string) (sshAgentDecision, error) {
-	text := strings.TrimSpace(content)
-	text = strings.Trim(text, "`")
-	if start := strings.Index(text, "{"); start >= 0 {
-		if end := strings.LastIndex(text, "}"); end > start {
-			text = text[start : end+1]
+	// 格式修复：把上一次原始输出回填给模型，要求只输出合法 JSON
+	repairMessages := append(append([]ports.LLMMessage{}, messages...),
+		ports.LLMMessage{Role: "assistant", Content: truncateRunes(resp.Content, 2000)},
+		ports.LLMMessage{
+			Role: "user",
+			Content: "上一次输出无法解析为 JSON。请只输出一个 JSON 对象，不要 Markdown、不要解释、不要代码围栏：\n" +
+				`{"thought":"一句话判断","command":"单条 shell 命令","done":false,"summary":""}`,
+		},
+	)
+	repairCtx, cancelRepair := context.WithTimeout(ctx, 120*time.Second)
+	defer cancelRepair()
+	repairResp, repairErr := a.harness.LLM.Chat(repairCtx, ports.LLMRequest{Messages: repairMessages})
+	if repairErr == nil {
+		if decision, parseErr := parseSSHAgentDecision(repairResp.Content); parseErr == nil {
+			return decision, nil
 		}
 	}
-	var decision sshAgentDecision
-	if err := json.Unmarshal([]byte(text), &decision); err != nil {
-		return sshAgentDecision{}, errors.New("模型返回不是合法 JSON 决策")
+	return sshAgentDecision{}, errAgentDecisionFormat
+}
+
+// errAgentDecisionFormat 表示模型输出无法解析为决策（可重试，不应直接中断任务）
+var errAgentDecisionFormat = errors.New("模型返回不是合法 JSON 决策")
+
+var (
+	trailingCommaPattern = regexp.MustCompile(`,\s*([}\]])`)
+	jsonThoughtPattern   = regexp.MustCompile(`"thought"\s*:\s*("(?:\\.|[^"\\])*")`)
+	jsonCommandPattern   = regexp.MustCompile(`"command"\s*:\s*("(?:\\.|[^"\\])*")`)
+	jsonSummaryPattern   = regexp.MustCompile(`"summary"\s*:\s*("(?:\\.|[^"\\])*")`)
+	jsonDonePattern      = regexp.MustCompile(`"done"\s*:\s*(true|false)`)
+	smartQuoteReplacer   = strings.NewReplacer("“", "\"", "”", "\"", "‘", "'", "’", "'")
+)
+
+// parseSSHAgentDecision 从模型输出中提取 JSON 决策。
+// 兼容 Markdown 围栏、前后解释文字、尾逗号、中文引号与字段级降级解析。
+func parseSSHAgentDecision(content string) (sshAgentDecision, error) {
+	raw := strings.TrimSpace(content)
+	if raw == "" {
+		return sshAgentDecision{}, errAgentDecisionFormat
 	}
-	return decision, nil
+	candidates := make([]string, 0, 4)
+	if object := extractJSONObject(raw); object != "" {
+		candidates = append(candidates, object)
+	}
+	candidates = append(candidates, raw)
+	for _, candidate := range candidates {
+		normalized := smartQuoteReplacer.Replace(candidate)
+		for _, variant := range []string{candidate, normalized, trailingCommaPattern.ReplaceAllString(normalized, "$1")} {
+			var decision sshAgentDecision
+			if err := json.Unmarshal([]byte(variant), &decision); err == nil {
+				if decision.Done || strings.TrimSpace(decision.Command) != "" {
+					return decision, nil
+				}
+			}
+		}
+	}
+	if decision, ok := looseSSHAgentDecision(raw); ok {
+		return decision, nil
+	}
+	return sshAgentDecision{}, errAgentDecisionFormat
+}
+
+// extractJSONObject 从文本中提取第一个括号配平的 JSON 对象，跳过字符串内的括号。
+func extractJSONObject(text string) string {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for index := start; index < len(text); index++ {
+		ch := text[index]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return text[start : index+1]
+			}
+		}
+	}
+	return ""
+}
+
+func decodeJSONField(raw string, pattern *regexp.Regexp) string {
+	match := pattern.FindStringSubmatch(raw)
+	if len(match) < 2 {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal([]byte(match[1]), &value); err != nil {
+		return ""
+	}
+	return value
+}
+
+// looseSSHAgentDecision 在整体 JSON 解析失败时，按字段与命令围栏做降级提取。
+func looseSSHAgentDecision(raw string) (sshAgentDecision, bool) {
+	decision := sshAgentDecision{
+		Thought: decodeJSONField(raw, jsonThoughtPattern),
+		Command: decodeJSONField(raw, jsonCommandPattern),
+		Summary: decodeJSONField(raw, jsonSummaryPattern),
+	}
+	if match := jsonDonePattern.FindStringSubmatch(raw); len(match) > 1 {
+		decision.Done = match[1] == "true"
+	}
+	if decision.Command == "" {
+		if commands := extractShellCommands(raw); len(commands) > 0 {
+			decision.Command = commands[0]
+		}
+	}
+	if decision.Command == "" && !decision.Done {
+		for _, line := range strings.Split(raw, "\n") {
+			line = strings.TrimSpace(strings.Trim(line, "`"))
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+				continue
+			}
+			if isLikelyShellCommand(line) {
+				decision.Command = line
+				break
+			}
+		}
+	}
+	if decision.Command == "" && !decision.Done {
+		return sshAgentDecision{}, false
+	}
+	if decision.Thought == "" {
+		decision.Thought = "模型未按 JSON 输出，已自动解析为可执行决策"
+	}
+	return decision, true
+}
+
+func isLikelyShellCommand(line string) bool {
+	if len(line) > 300 || strings.ContainsAny(line, "：。！？；") {
+		return false
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	if commandTopicSet[fields[0]] {
+		return true
+	}
+	switch fields[0] {
+	case "sudo", "cd", "ls", "cat", "printf", "mkdir", "cp", "mv", "rm", "touch", "chmod", "chown", "export", "test", "read", "source":
+		return true
+	}
+	return false
 }
 
 // sanitizeAgentCommand 清理模型给出的命令：去围栏、去提示符、压缩为单行

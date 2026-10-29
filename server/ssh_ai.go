@@ -11,12 +11,18 @@ import (
 	"vulnagent/server/internal/application/ports"
 )
 
+type sshAIHistoryItem struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type sshAIRequest struct {
-	HostID    int64  `json:"hostId"`
-	Question  string `json:"question"`
-	Context   string `json:"context"`
-	SessionID string `json:"sessionId"`
-	Search    *bool  `json:"search"`
+	HostID    int64              `json:"hostId"`
+	Question  string             `json:"question"`
+	Context   string             `json:"context"`
+	SessionID string             `json:"sessionId"`
+	Search    *bool              `json:"search"`
+	History   []sshAIHistoryItem `json:"history"`
 }
 
 type sshAIResponse struct {
@@ -37,7 +43,8 @@ const sshAISystemPrompt = `你是 VulnAgent 的 SSH 终端智能助手，面向�
 4. 如果终端输出不足以判断，先说明缺少什么信息，再给出下一步取证命令。
 5. 不要输出与当前终端任务无关的内容，不要输出密码、密钥或令牌。
 6. 若提供了「命令参考资料」，命令与参数必须优先采用资料中的写法；资料未覆盖的参数不得臆造，先给出 ` + "`command -v`" + ` / ` + "`--help`" + ` 验证命令。
-7. 不确定的发行版差异、路径或参数必须明确说明「需在目标机验证」，禁止编造命令输出。`
+7. 不确定的发行版差异、路径或参数必须明确说明「需在目标机验证」，禁止编造命令输出。
+8. 这是多轮对话：结合历史消息理解指代与省略；已经确认的结论不要重复询问，除非终端现场发生变化。`
 
 // handleSSHAssistant 基于主机信息与终端上下文生成诊断建议与可执行命令
 func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
@@ -101,10 +108,10 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	user.WriteString("问题：")
 	user.WriteString(question)
 
-	resp, err := a.harness.LLM.Chat(r.Context(), ports.LLMRequest{Messages: []ports.LLMMessage{
-		{Role: "system", Content: sshAISystemPrompt},
-		{Role: "user", Content: user.String()},
-	}})
+	messages := []ports.LLMMessage{{Role: "system", Content: sshAISystemPrompt}}
+	messages = append(messages, normalizeSSHAIHistory(req.History, 8)...)
+	messages = append(messages, ports.LLMMessage{Role: "user", Content: user.String()})
+	resp, err := a.harness.LLM.Chat(r.Context(), ports.LLMRequest{Messages: messages})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "llm_failed", "模型调用失败："+err.Error())
 		return
@@ -112,7 +119,8 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	answer := strings.TrimSpace(resp.Content)
 	commands := extractShellCommands(answer)
 	a.audit(r, "ssh.ai.ask", hostName,
-		fmt.Sprintf("%s（会话 %s，命令 %d 条，参考 %d 条）", truncateRunes(question, 120), req.SessionID, len(commands), len(references)))
+		fmt.Sprintf("%s（会话 %s，命令 %d 条，参考 %d 条，历史 %d 条）",
+			truncateRunes(question, 120), req.SessionID, len(commands), len(references), len(req.History)))
 	writeJSON(w, http.StatusOK, sshAIResponse{
 		Answer:         answer,
 		Commands:       commands,
@@ -151,6 +159,36 @@ func extractShellCommands(answer string) []string {
 				return out
 			}
 		}
+	}
+	return out
+}
+
+// normalizeSSHAIHistory 过滤非法角色、限制条数与总长度，保留最近的对话上下文。
+func normalizeSSHAIHistory(items []sshAIHistoryItem, max int) []ports.LLMMessage {
+	if max <= 0 {
+		max = 8
+	}
+	out := make([]ports.LLMMessage, 0, max)
+	total := 0
+	for index := len(items) - 1; index >= 0 && len(out) < max; index-- {
+		role := strings.ToLower(strings.TrimSpace(items[index].Role))
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(items[index].Content)
+		if content == "" {
+			continue
+		}
+		content = truncateRunes(content, 1500)
+		length := len([]rune(content))
+		if total+length > 6000 {
+			break
+		}
+		total += length
+		out = append(out, ports.LLMMessage{Role: role, Content: content})
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
 	}
 	return out
 }

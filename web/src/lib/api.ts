@@ -672,6 +672,7 @@ export const api = {
     context: string;
     sessionId?: string;
     search?: boolean;
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
   }): Promise<SshAssistantReply> {
     return request("/ssh/assistant", { method: "POST", body: JSON.stringify(input) });
   },

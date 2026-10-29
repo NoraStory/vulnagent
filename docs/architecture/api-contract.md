@@ -1339,10 +1339,19 @@ vulnagent_selfcheck_failed 0
 `POST /ssh/assistant` 请求新增可选字段：
 
 ```json
-{ "hostId": 1, "question": "tar 如何解压到指定目录", "context": "…", "search": true }
+{
+  "hostId": 1,
+  "question": "tar 如何解压到指定目录",
+  "context": "…",
+  "search": true,
+  "history": [
+    { "role": "user", "content": "这台主机的磁盘快满了" },
+    { "role": "assistant", "content": "建议先查看 df -h 与 du 的差异" }
+  ]
+}
 ```
 
-`search` 缺省为 `true`；响应新增：
+`history` 仅接受 `user` / `assistant`，服务端只保留最近 8 条、单条 1500 字、总计 6000 字，用于多轮对话与指代消解；`search` 缺省为 `true`。响应新增：
 
 ```json
 {
@@ -1359,7 +1368,7 @@ vulnagent_selfcheck_failed 0
 Agent 的 `status` 事件新增：
 
 ```json
-{ "type": "status", "data": { "runId": "…", "host": "web-01", "search": true, "references": [ … ], "referenceError": "" } }
+{ "type": "status", "data": { "runId": "…", "host": "web-01", "search": true, "contextRuns": 2, "references": [ … ], "referenceError": "" } }
 ```
 
 `POST /ssh/agent/run` 请求新增可选字段 `search`（缺省 `true`）：
@@ -1370,6 +1379,14 @@ Agent 的 `status` 事件新增：
 
 - 本地关键词无法判断命令主题时，会额外调用一次模型提取 1–3 个命令名（只输出 JSON 数组），再检索参考。
 - Agent 在每一步决策前都会携带参考块，并新增「不熟悉参数必须先 `command -v` / `--help` 验证」的约束。
+- `contextRuns` 表示注入了同一主机最近多少次已完成任务的结论（最多 3 次）。
+
+**模型输出容错**：决策 JSON 解析兼容 Markdown 围栏、前后解释、尾逗号、中文引号；解析失败时会把原始输出回填给模型要求重写，并对临时模型错误自动重试（单步最多 2 次）。连续失败时发送 `warning` 事件并以 `done` 优雅结束（`truncated=true`），已执行步骤与输出全部保留，不再直接中断任务。
+
+| type | data | 说明 |
+|---|---|---|
+| `warning` | `{message}` | 自动重试、格式修复或提前结束提示 |
+| `done` | `{runId, steps, summary, truncated}` | `truncated=true` 表示因模型格式异常提前结束 |
 
 ### 12.6 SSH 主机漏洞扫描
 
