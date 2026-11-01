@@ -59,6 +59,16 @@ type ReconcileRow struct {
 	Eco              string
 }
 
+// StatusUpdate 一次漏洞状态收敛变更（更新状态 + 追加处置事件）
+type StatusUpdate struct {
+	ID     int64
+	Status string
+	Now    string
+	Event  string
+	Actor  string
+	Detail string
+}
+
 // AssetRepository 资产与软件成分读取端口
 type AssetRepository interface {
 	// Get 按 ID 读取资产，不存在时返回 ErrNotFound
@@ -150,10 +160,14 @@ type FindingRepository interface {
 	// UpsertMatch 落库一次匹配命中：已存在则刷新评分字段并保留处置状态，
 	// created 表示本次是否新增。
 	UpsertMatch(ctx context.Context, in MatchInput) (created bool, err error)
+	// UpsertMatches 在一个事务内批量写入匹配结果，返回与输入等长的 created 标记
+	UpsertMatches(ctx context.Context, inputs []MatchInput) ([]bool, error)
 	// ActiveForReconcile 返回仍处于处置流程中的记录
 	ActiveForReconcile(ctx context.Context, assetID int64) ([]ReconcileRow, error)
 	// MarkStatus 更新状态并追加一条处置事件
 	MarkStatus(ctx context.Context, id int64, status, now, event, actor, detail string) error
+	// MarkStatusBatch 在单个事务内批量更新状态并追加处置事件
+	MarkStatusBatch(ctx context.Context, updates []StatusUpdate) error
 	// ListForRecompute 返回重算风险分所需的全部记录
 	ListForRecompute(ctx context.Context) ([]RecomputeRow, error)
 	// BulkUpdateScores 在单个事务内批量刷新评分字段

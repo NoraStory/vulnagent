@@ -91,24 +91,15 @@ func (r *StatsRepo) TopComponents(ctx context.Context, limit int) ([]ports.TopCo
 	return out, rows.Err()
 }
 
-// AgentSummary 统计 Agent 在线情况
+// AgentSummary 统计 Agent 在线情况（单次条件聚合）
 func (r *StatsRepo) AgentSummary(ctx context.Context) (ports.AgentSummary, error) {
 	var s ports.AgentSummary
-	queries := []struct {
-		where string
-		dest  *int
-	}{
-		{"source = 'agent'", &s.Total},
-		{"source = 'agent' AND agent_status = 'online'", &s.Online},
-		{"source = 'agent' AND agent_status = 'offline'", &s.Offline},
-		{"source = 'agent' AND agent_status = 'stale'", &s.Stale},
-	}
-	for _, q := range queries {
-		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE `+q.where).Scan(q.dest); err != nil {
-			return s, err
-		}
-	}
-	return s, nil
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN agent_status = 'online' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN agent_status = 'stale' THEN 1 ELSE 0 END), 0)
+		FROM assets WHERE source = 'agent'`).Scan(&s.Total, &s.Online, &s.Offline, &s.Stale)
+	return s, err
 }
 
 // RecentFindingEvents 返回最近的漏洞处置事件
@@ -134,25 +125,17 @@ func (r *StatsRepo) RecentFindingEvents(ctx context.Context, limit int) ([]ports
 	return out, rows.Err()
 }
 
-// Gauges 返回资产/组件/CVE/Agent/自检的绝对计数
+// Gauges 返回资产/组件/CVE/Agent/自检的绝对计数（单次查询）
 func (r *StatsRepo) Gauges(ctx context.Context) (ports.Gauges, error) {
 	var g ports.Gauges
-	queries := []struct {
-		sql  string
-		dest *int
-	}{
-		{`SELECT COUNT(*) FROM assets`, &g.Assets},
-		{`SELECT COUNT(*) FROM components`, &g.Components},
-		{`SELECT COUNT(*) FROM cves`, &g.CVEs},
-		{`SELECT COUNT(*) FROM assets WHERE source='agent' AND agent_status='online'`, &g.AgentsOnline},
-		{`SELECT COALESCE((SELECT failed FROM selfcheck_runs ORDER BY finished_at DESC LIMIT 1), 0)`, &g.SelfcheckFailed},
-	}
-	for _, q := range queries {
-		if err := r.db.QueryRowContext(ctx, q.sql).Scan(q.dest); err != nil {
-			return g, err
-		}
-	}
-	return g, nil
+	err := r.db.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM assets),
+		(SELECT COUNT(*) FROM components),
+		(SELECT COUNT(*) FROM cves),
+		(SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'online'),
+		COALESCE((SELECT failed FROM selfcheck_runs ORDER BY finished_at DESC LIMIT 1), 0)`).
+		Scan(&g.Assets, &g.Components, &g.CVEs, &g.AgentsOnline, &g.SelfcheckFailed)
+	return g, err
 }
 
 // LatestSelfcheck 返回最近一次自检摘要

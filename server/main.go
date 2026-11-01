@@ -104,6 +104,10 @@ type App struct {
 	// demo 模式由启动时的数据初始化决定，进程内缓存避免每次响应都查库
 	demoOnce sync.Once
 	demoFlag bool
+
+	// 全量情报索引快照，避免每次资产匹配重复加载
+	intelCacheOnce sync.Once
+	intelCache     *intelSnapshotCache
 }
 
 func (a *App) routes(mux *http.ServeMux) {

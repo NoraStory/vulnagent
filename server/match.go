@@ -12,7 +12,7 @@ type AffectedRange = vuln.AffectedRange
 func (a *App) scanService(policy RiskPolicy) *scan.Service {
 	return &scan.Service{
 		Assets:   a.assetRepo(),
-		Intel:    a.intelRepo(),
+		Intel:    a.cachedIntelRepo(),
 		Findings: a.findingRepo(),
 		Policy:   policy,
 		Publish:  a.dispatch,

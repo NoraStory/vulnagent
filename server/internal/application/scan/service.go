@@ -72,6 +72,16 @@ func (s *Service) MatchAsset(assetID int64) (MatchResult, error) {
 	}
 	now := clock.FormatNow()
 	fresh := make([]map[string]any, 0, 4)
+	type pendingFinding struct {
+		input     ports.MatchInput
+		priority  string
+		cveID     string
+		component string
+		version   string
+		fixed     string
+		inferred  bool
+	}
+	pending := make([]pendingFinding, 0, 32)
 
 	for _, comp := range comps {
 		seenCVE := make(map[string]bool)
@@ -93,42 +103,29 @@ func (s *Service) MatchAsset(assetID int64) (MatchResult, error) {
 				if fixed == "" {
 					fixed = meta.Fixed
 				}
-				wasCreated, err := s.Findings.UpsertMatch(ctx, ports.MatchInput{
-					AssetID:      assetID,
-					Component:    comp,
-					CVEID:        r.CveID,
-					CVSS:         meta.Score,
-					EPSS:         meta.EPSS,
-					Exploit:      meta.Exploit,
-					AssetWeight:  risk.AssetWeight(exposure, tier, businessTier),
-					Risk:         riskScore,
-					Priority:     priority,
-					Breakdown:    risk.MarshalBreakdown(breakdown),
-					Inferred:     inferred,
-					FixedVersion: fixed,
-					Now:          now,
+				pending = append(pending, pendingFinding{
+					input: ports.MatchInput{
+						AssetID:      assetID,
+						Component:    comp,
+						CVEID:        r.CveID,
+						CVSS:         meta.Score,
+						EPSS:         meta.EPSS,
+						Exploit:      meta.Exploit,
+						AssetWeight:  risk.AssetWeight(exposure, tier, businessTier),
+						Risk:         riskScore,
+						Priority:     priority,
+						Breakdown:    risk.MarshalBreakdown(breakdown),
+						Inferred:     inferred,
+						FixedVersion: fixed,
+						Now:          now,
+					},
+					priority:  priority,
+					cveID:     r.CveID,
+					component: comp.Name,
+					version:   comp.Version,
+					fixed:     fixed,
+					inferred:  inferred,
 				})
-				if err != nil {
-					return err
-				}
-				if wasCreated {
-					out.Created++
-					if priority == "P0" || priority == "P1" {
-						fresh = append(fresh, map[string]any{
-							"assetId":      assetID,
-							"hostname":     host.Hostname,
-							"cveId":        r.CveID,
-							"priority":     priority,
-							"risk":         riskScore,
-							"component":    comp.Name,
-							"version":      comp.Version,
-							"fixedVersion": fixed,
-							"inferred":     inferred,
-						})
-					}
-				} else {
-					out.Updated++
-				}
 				seenCVE[r.CveID] = true
 			}
 			return nil
@@ -144,6 +141,39 @@ func (s *Service) MatchAsset(assetID int64) (MatchResult, error) {
 		}
 		if err := apply(strings.ToLower(comp.Name), false); err != nil {
 			return out, err
+		}
+	}
+
+	if len(pending) > 0 {
+		inputs := make([]ports.MatchInput, len(pending))
+		for index := range pending {
+			inputs[index] = pending[index].input
+		}
+		createdFlags, err := s.Findings.UpsertMatches(ctx, inputs)
+		if err != nil {
+			return out, err
+		}
+		for index, created := range createdFlags {
+			if !created {
+				out.Updated++
+				continue
+			}
+			out.Created++
+			item := pending[index]
+			if item.priority != "P0" && item.priority != "P1" {
+				continue
+			}
+			fresh = append(fresh, map[string]any{
+				"assetId":      assetID,
+				"hostname":     host.Hostname,
+				"cveId":        item.cveID,
+				"priority":     item.priority,
+				"risk":         item.input.Risk,
+				"component":    item.component,
+				"version":      item.version,
+				"fixedVersion": item.fixed,
+				"inferred":     item.inferred,
+			})
 		}
 	}
 
@@ -226,6 +256,7 @@ func (s *Service) Reconcile(assetID int64, actor string) (ReconcileResult, error
 	}
 
 	now := clock.FormatNow()
+	changes := make([]ports.StatusUpdate, 0, len(items))
 	for _, item := range items {
 		switch {
 		case item.row.Status == "verified":
@@ -242,27 +273,27 @@ func (s *Service) Reconcile(assetID int64, actor string) (ReconcileResult, error
 				out.Kept++
 				continue
 			}
-			if err := s.Findings.MarkStatus(ctx, item.row.ID, "open", now,
-				fmt.Sprintf("rescan: 版本回退，重新命中受影响区间（%s）", item.current.Version),
-				actor, "当前组件版本重新落入受影响区间，自动重新打开"); err != nil {
-				return out, err
-			}
+			changes = append(changes, ports.StatusUpdate{
+				ID: item.row.ID, Status: "open", Now: now, Actor: actor,
+				Event:  fmt.Sprintf("rescan: 版本回退，重新命中受影响区间（%s）", item.current.Version),
+				Detail: "当前组件版本重新落入受影响区间，自动重新打开",
+			})
 			out.Reopened++
 
 		case item.removed:
-			if err := s.Findings.MarkStatus(ctx, item.row.ID, "closed", now,
-				fmt.Sprintf("rescan: 组件 %s 已从资产移除", item.row.ComponentName),
-				actor, "复扫未发现该组件，自动关闭"); err != nil {
-				return out, err
-			}
+			changes = append(changes, ports.StatusUpdate{
+				ID: item.row.ID, Status: "closed", Now: now, Actor: actor,
+				Event:  fmt.Sprintf("rescan: 组件 %s 已从资产移除", item.row.ComponentName),
+				Detail: "复扫未发现该组件，自动关闭",
+			})
 			out.Closed++
 
 		case item.row.FixedVersion != "" && version.Compare(item.current.Eco, item.current.Version, item.row.FixedVersion) >= 0:
-			if err := s.Findings.MarkStatus(ctx, item.row.ID, "verified", now,
-				fmt.Sprintf("rescan: 复扫通过（%s → %s）", item.row.ComponentVersion, item.current.Version),
-				actor, "组件版本已不低于修复版本，自动验证通过"); err != nil {
-				return out, err
-			}
+			changes = append(changes, ports.StatusUpdate{
+				ID: item.row.ID, Status: "verified", Now: now, Actor: actor,
+				Event:  fmt.Sprintf("rescan: 复扫通过（%s → %s）", item.row.ComponentVersion, item.current.Version),
+				Detail: "组件版本已不低于修复版本，自动验证通过",
+			})
 			out.Verified++
 
 		default:
@@ -274,13 +305,16 @@ func (s *Service) Reconcile(assetID int64, actor string) (ReconcileResult, error
 				out.Kept++
 				continue
 			}
-			if err := s.Findings.MarkStatus(ctx, item.row.ID, "verified", now,
-				"rescan: 不再命中受影响区间",
-				actor, "情报区间已更新，当前版本不受影响，自动验证通过"); err != nil {
-				return out, err
-			}
+			changes = append(changes, ports.StatusUpdate{
+				ID: item.row.ID, Status: "verified", Now: now, Actor: actor,
+				Event:  "rescan: 不再命中受影响区间",
+				Detail: "情报区间已更新，当前版本不受影响，自动验证通过",
+			})
 			out.Verified++
 		}
+	}
+	if err := s.Findings.MarkStatusBatch(ctx, changes); err != nil {
+		return ReconcileResult{}, err
 	}
 	return out, nil
 }

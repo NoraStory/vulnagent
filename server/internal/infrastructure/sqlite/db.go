@@ -16,7 +16,7 @@ import (
 func Open(path string) (*sql.DB, error) {
 	dsn := fmt.Sprintf("file:%s?_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"+
 		"&_pragma=synchronous(NORMAL)&_pragma=cache_size(-32768)&_pragma=temp_store(MEMORY)"+
-		"&_pragma=mmap_size(268435456)", filepath.ToSlash(path))
+		"&_pragma=mmap_size(268435456)&_pragma=journal_size_limit(67108864)", filepath.ToSlash(path))
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

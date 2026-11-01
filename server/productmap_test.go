@@ -45,6 +45,7 @@ func TestProductMappingEnablesMatch(t *testing.T) {
 	// 加入映射后应命中，并标记为映射推断
 	mustExec(`INSERT INTO product_map(eco, name, product, confidence, source, updated_at)
 		VALUES('deb','python3-requests','requests',1.0,'manual','')`)
+	app.invalidateIntelCache()
 	created, _, err := app.matchAssetFindings(defaultPolicy(), assetID)
 	if err != nil {
 		t.Fatalf("映射后匹配失败：%v", err)

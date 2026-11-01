@@ -22,38 +22,67 @@ var _ ports.FindingRepository = (*FindingRepo)(nil)
 // UpsertMatch 落库一次匹配命中。已有记录只刷新评分相关字段，
 // 保留处置状态、责任人与工单；inferred 只增不减。
 func (r *FindingRepo) UpsertMatch(ctx context.Context, in ports.MatchInput) (bool, error) {
-	comp := in.Component
-	inferredFlag := 0
-	if in.Inferred {
-		inferredFlag = 1
-	}
-	var existingID int64
-	err := r.db.QueryRowContext(ctx, `SELECT id FROM findings WHERE asset_id = ? AND purl = ? AND cve_id = ?`,
-		in.AssetID, comp.PURL, in.CVEID).Scan(&existingID)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		_, err = r.db.ExecContext(ctx, `INSERT INTO findings(asset_id, purl, component_name, component_version, eco,
-			cve_id, cvss, epss, exploit, asset_weight, risk, priority, score_breakdown, status, inferred,
-			fixed_version, assignee, ticket_id, first_seen, last_seen)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', ?, ?, '', '', ?, ?)`,
-			in.AssetID, comp.PURL, comp.Name, comp.Version, comp.Eco, in.CVEID, in.CVSS, in.EPSS,
-			in.Exploit, in.AssetWeight, in.Risk, in.Priority, in.Breakdown, inferredFlag, in.FixedVersion, in.Now, in.Now)
-		if err != nil {
-			return false, err
-		}
-		return true, nil
-	case err != nil:
-		return false, err
-	}
-	_, err = r.db.ExecContext(ctx, `UPDATE findings SET component_name = ?, component_version = ?, eco = ?,
-		cvss = ?, epss = ?, exploit = ?, asset_weight = ?, risk = ?, priority = ?, score_breakdown = ?,
-		inferred = MAX(inferred, ?), fixed_version = ?, last_seen = ? WHERE id = ?`,
-		comp.Name, comp.Version, comp.Eco, in.CVSS, in.EPSS, in.Exploit,
-		in.AssetWeight, in.Risk, in.Priority, in.Breakdown, inferredFlag, in.FixedVersion, in.Now, existingID)
+	flags, err := r.UpsertMatches(ctx, []ports.MatchInput{in})
 	if err != nil {
 		return false, err
 	}
-	return false, nil
+	return flags[0], nil
+}
+
+// UpsertMatches 在单个事务内批量写入匹配结果，显著降低 Agent 上报时的写入开销。
+func (r *FindingRepo) UpsertMatches(ctx context.Context, inputs []ports.MatchInput) ([]bool, error) {
+	created := make([]bool, len(inputs))
+	if len(inputs) == 0 {
+		return created, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	insert, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO findings(asset_id, purl, component_name,
+		component_version, eco, cve_id, cvss, epss, exploit, asset_weight, risk, priority, score_breakdown,
+		status, inferred, fixed_version, assignee, ticket_id, first_seen, last_seen)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', ?, ?, '', '', ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer insert.Close()
+	update, err := tx.PrepareContext(ctx, `UPDATE findings SET component_name = ?, component_version = ?, eco = ?,
+		cvss = ?, epss = ?, exploit = ?, asset_weight = ?, risk = ?, priority = ?, score_breakdown = ?,
+		inferred = MAX(inferred, ?), fixed_version = ?, last_seen = ? WHERE asset_id = ? AND purl = ? AND cve_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	defer update.Close()
+
+	for index, in := range inputs {
+		comp := in.Component
+		inferredFlag := 0
+		if in.Inferred {
+			inferredFlag = 1
+		}
+		res, err := insert.ExecContext(ctx, in.AssetID, comp.PURL, comp.Name, comp.Version, comp.Eco, in.CVEID,
+			in.CVSS, in.EPSS, in.Exploit, in.AssetWeight, in.Risk, in.Priority, in.Breakdown,
+			inferredFlag, in.FixedVersion, in.Now, in.Now)
+		if err != nil {
+			return nil, err
+		}
+		if affected, _ := res.RowsAffected(); affected > 0 {
+			created[index] = true
+			continue
+		}
+		if _, err := update.ExecContext(ctx, comp.Name, comp.Version, comp.Eco, in.CVSS, in.EPSS, in.Exploit,
+			in.AssetWeight, in.Risk, in.Priority, in.Breakdown, inferredFlag, in.FixedVersion, in.Now,
+			in.AssetID, comp.PURL, in.CVEID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 // ActiveForReconcile 返回仍处于处置流程中的记录
@@ -78,13 +107,43 @@ func (r *FindingRepo) ActiveForReconcile(ctx context.Context, assetID int64) ([]
 
 // MarkStatus 更新状态并追加一条处置事件
 func (r *FindingRepo) MarkStatus(ctx context.Context, id int64, status, now, event, actor, detail string) error {
-	if _, err := r.db.ExecContext(ctx, `UPDATE findings SET status = ?, last_seen = ? WHERE id = ?`,
-		status, now, id); err != nil {
+	return r.MarkStatusBatch(ctx, []ports.StatusUpdate{{
+		ID: id, Status: status, Now: now, Event: event, Actor: actor, Detail: detail,
+	}})
+}
+
+// MarkStatusBatch 在单个事务内批量收敛状态，复扫时避免逐条自动提交。
+func (r *FindingRepo) MarkStatusBatch(ctx context.Context, updates []ports.StatusUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO finding_events(finding_id, event, actor, detail, created_at)
-		VALUES(?,?,?,?,?)`, id, event, actor, detail, now)
-	return err
+	defer func() { _ = tx.Rollback() }()
+
+	update, err := tx.PrepareContext(ctx, `UPDATE findings SET status = ?, last_seen = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer update.Close()
+	event, err := tx.PrepareContext(ctx, `INSERT INTO finding_events(finding_id, event, actor, detail, created_at)
+		VALUES(?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer event.Close()
+
+	for _, u := range updates {
+		if _, err := update.ExecContext(ctx, u.Status, u.Now, u.ID); err != nil {
+			return err
+		}
+		if _, err := event.ExecContext(ctx, u.ID, u.Event, u.Actor, u.Detail, u.Now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ListForRecompute 返回重算风险分所需的全部记录

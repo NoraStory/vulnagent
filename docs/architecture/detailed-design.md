@@ -1023,6 +1023,10 @@ CREATE TABLE sync_cursors (
   `findings(status,risk DESC,id)`、`findings(first_seen)`、`findings(component_name,component_version,eco,risk DESC)`、
   `assets(merged_into,id)`、`assets(env,status,merged_into)`、`audit_logs(actor/action,created_at DESC)` 等）。
 - 概览 14 天趋势改为一次读取 `priority/first_seen` 后在内存按天累计，替代每天一次分组全表扫描。
+- 情报快照进程内缓存（`server/intel_cache.go`，TTL 60s）：`CVEMeta` / `AffectedByProduct` / `ProductMappings` / `AffectedFor`
+  共用同一份只读快照，单资产匹配与复扫不再逐次全表加载；CVE/POC/OSV 同步、产品映射变更与全量重匹配前主动失效。
+- 复扫收敛先完成全部判定，再用单事务批量更新状态与处置事件（`FindingRepository.MarkStatusBatch`），避免逐条提交。
+- 概览的 Agent 在线统计与绝对计数合并为单条条件聚合 SQL（`AgentSummary` / `Gauges`）。
 - HTTP 对 JSON / JS / CSS / HTML / SVG / CSV 启用 gzip（复用压缩器池）；SSE、WebSocket、Range、304 与二进制响应自动跳过。
 - 前端第三方依赖拆分为 `vendor-react` / `vendor-markdown` / `vendor-xterm` 独立缓存块；资产详情的主机遥测与作业改为按标签页懒加载；
   首屏并发的 `/overview` 请求在 1.5s 窗口内复用同一 Promise。

@@ -483,6 +483,7 @@ func (a *App) handleOSVSync(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "osv_scan_failed", err.Error())
 		return
 	}
+	a.invalidateIntelCache()
 	a.audit(r, "sync.osv", "osv",
 		fmt.Sprintf("资产 %d 台，组件 %d 个，命中 %d 条，新增 %d 条，更新 %d 条",
 			res.Assets, res.Components, res.Vulns, res.Created, res.Updated))
@@ -525,6 +526,7 @@ func (a *App) handleSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "sync_failed", err.Error())
 		return
 	}
+	a.invalidateIntelCache()
 	a.audit(r, "sync."+source, source,
 		fmt.Sprintf("同步完成：新增 %d 条，更新 %d 条", res.Inserted, res.Updated))
 	writeJSON(w, http.StatusOK, map[string]any{

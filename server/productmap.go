@@ -65,5 +65,6 @@ func ensureProductMap(db *sql.DB) (int, error) {
 
 // rematchAllAssets 映射变更后重新匹配所有资产（只新增/更新结论，不删除历史）
 func (a *App) rematchAllAssets() (int, error) {
+	a.invalidateIntelCache()
 	return a.scanService(loadPolicy(a.db)).RematchAll("系统")
 }
