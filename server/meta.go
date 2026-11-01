@@ -21,7 +21,11 @@ func getMeta(db *sql.DB, key string) string {
 	return sqlite.NewPolicyRepo(db).Meta(context.Background(), key)
 }
 
-// demoMode 当前库是否使用演示数据（由 seedDemo 写入标记）
+// demoMode 当前库是否使用演示数据（由 seedDemo 写入标记）。
+// 演示标记在进程生命周期内不会变化，缓存一次避免每个响应重复查询。
 func (a *App) demoMode() bool {
-	return getMeta(a.db, "demo_mode") == "1"
+	a.demoOnce.Do(func() {
+		a.demoFlag = getMeta(a.db, "demo_mode") == "1"
+	})
+	return a.demoFlag
 }

@@ -135,32 +135,14 @@ func (a *App) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 近 14 天趋势：按 first_seen 累加当前优先级
+	// 近 14 天趋势：一次查询后在内存聚合，避免每天一条全表统计
 	now := nowT()
-	trend := make([]trendPoint, 0, 14)
-	for i := 13; i >= 0; i-- {
-		day := timeAtMidnight(now.AddDate(0, 0, -i))
-		end := day.AddDate(0, 0, 1)
-		p := trendPoint{Date: day.Format("2006-01-02")}
-		buckets, err := a.statsRepo().PriorityBefore(ctx, fmtT(end))
-		if err != nil {
-			continue
-		}
-		for _, item := range buckets {
-			switch item.Priority {
-			case "P0":
-				p.P0 = item.Count
-			case "P1":
-				p.P1 = item.Count
-			case "P2":
-				p.P2 = item.Count
-			case "P3":
-				p.P3 = item.Count
-			}
-			p.Total += item.Count
-		}
-		trend = append(trend, p)
+	seens, err := a.statsRepo().FindingFirstSeen(ctx)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "统计漏洞趋势失败")
+		return
 	}
+	trend := buildPriorityTrend(seens, now)
 
 	topRows, err := a.statsRepo().TopComponents(ctx, 6)
 	if err != nil {
@@ -221,6 +203,44 @@ func (a *App) handleOverview(w http.ResponseWriter, r *http.Request) {
 func timeAtMidnight(t time.Time) time.Time {
 	t = t.In(cst)
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, cst)
+}
+
+// buildPriorityTrend 在内存中按天累计各优先级数量，替代 14 次分组查询
+func buildPriorityTrend(seens []ports.FindingSeen, now time.Time) []trendPoint {
+	type seenRow struct {
+		priority  string
+		firstSeen time.Time
+		valid     bool
+	}
+	rows := make([]seenRow, 0, len(seens))
+	for _, item := range seens {
+		firstSeen, err := parseT(item.FirstSeen)
+		rows = append(rows, seenRow{priority: item.Priority, firstSeen: firstSeen, valid: err == nil})
+	}
+	trend := make([]trendPoint, 0, 14)
+	for i := 13; i >= 0; i-- {
+		day := timeAtMidnight(now.AddDate(0, 0, -i))
+		end := day.AddDate(0, 0, 1)
+		point := trendPoint{Date: day.Format("2006-01-02")}
+		for _, row := range rows {
+			if row.valid && !row.firstSeen.Before(end) {
+				continue
+			}
+			switch row.priority {
+			case "P0":
+				point.P0++
+			case "P1":
+				point.P1++
+			case "P2":
+				point.P2++
+			case "P3":
+				point.P3++
+			}
+			point.Total++
+		}
+		trend = append(trend, point)
+	}
+	return trend
 }
 
 func (a *App) loadSync() []syncItem {

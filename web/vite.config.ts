@@ -15,6 +15,17 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    emptyOutDir: true
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 700,
+    rollupOptions: {
+      output: {
+        // 第三方依赖单独成块，应用代码更新时可复用浏览器缓存
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-markdown": ["react-markdown", "remark-gfm"],
+          "vendor-xterm": ["@xterm/xterm", "@xterm/addon-fit", "@xterm/addon-search"]
+        }
+      }
+    }
   }
 });

@@ -46,6 +46,24 @@ func (r *StatsRepo) PriorityBefore(ctx context.Context, before string) ([]ports.
 	return r.priorityCount(ctx, `SELECT priority, COUNT(*) FROM findings WHERE first_seen < ? GROUP BY priority`, before)
 }
 
+// FindingFirstSeen 一次性返回全部漏洞的优先级与首次发现时间（趋势聚合）
+func (r *StatsRepo) FindingFirstSeen(ctx context.Context) ([]ports.FindingSeen, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT priority, first_seen FROM findings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ports.FindingSeen, 0, 256)
+	for rows.Next() {
+		var item ports.FindingSeen
+		if err := rows.Scan(&item.Priority, &item.FirstSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 // TopComponents 返回高风险组件聚合
 func (r *StatsRepo) TopComponents(ctx context.Context, limit int) ([]ports.TopComponent, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT f.component_name, f.component_version, f.eco,

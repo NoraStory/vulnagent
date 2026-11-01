@@ -1017,7 +1017,15 @@ CREATE TABLE sync_cursors (
 
 索引与写入要点：
 
-- SQLite 启用 `WAL`、`synchronous=NORMAL`、`mmap_size=256MB`。
+- SQLite 启用 `WAL`、`synchronous=NORMAL`、`cache_size=32MB`、`temp_store=MEMORY`、`mmap_size=256MB`；
+  读写连接池 4 个连接，写事务使用 `_txlock=immediate`，避免延迟升级写锁导致的 `SQLITE_BUSY`。
+- 迁移 0018 为列表排序、趋势统计、资产过滤与审计检索补齐复合索引（`findings(risk DESC,id)`、
+  `findings(status,risk DESC,id)`、`findings(first_seen)`、`findings(component_name,component_version,eco,risk DESC)`、
+  `assets(merged_into,id)`、`assets(env,status,merged_into)`、`audit_logs(actor/action,created_at DESC)` 等）。
+- 概览 14 天趋势改为一次读取 `priority/first_seen` 后在内存按天累计，替代每天一次分组全表扫描。
+- HTTP 对 JSON / JS / CSS / HTML / SVG / CSV 启用 gzip（复用压缩器池）；SSE、WebSocket、Range、304 与二进制响应自动跳过。
+- 前端第三方依赖拆分为 `vendor-react` / `vendor-markdown` / `vendor-xterm` 独立缓存块；资产详情的主机遥测与作业改为按标签页懒加载；
+  首屏并发的 `/overview` 请求在 1.5s 窗口内复用同一 Promise。
 - 批量写入用单事务 + 预编译语句；避免逐条 commit。
 - 匹配阶段只读内存索引，结果批量落库；重算用临时表 + 原子替换，避免读抖动。
 - 迁移：`server/internal/infrastructure/sqlite/migrations/*.sql` 通过 `go:embed` 打包，启动时按文件名顺序执行未应用脚本，执行记录写入 `schema_migrations`；脚本全部使用 `IF NOT EXISTS`，对既有库幂等。

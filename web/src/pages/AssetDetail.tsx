@@ -61,6 +61,10 @@ export function AssetDetailPage() {
   const [telemetryError, setTelemetryError] = useState("");
   const [jobs, setJobs] = useState<AssetJobs | null>(null);
   const [jobsError, setJobsError] = useState("");
+  const [telemetryLoading, setTelemetryLoading] = useState(false);
+  const [telemetryLoaded, setTelemetryLoaded] = useState(false);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("components");
@@ -126,31 +130,55 @@ export function AssetDetailPage() {
 
   const loadTelemetry = useCallback(async () => {
     if (!id) return;
+    setTelemetryLoading(true);
     try {
       const result = await api.assetTelemetry(id);
       setTelemetry(result);
       setTelemetryError("");
     } catch (err) {
       setTelemetryError(err instanceof Error ? err.message : "遥测加载失败");
+    } finally {
+      setTelemetryLoading(false);
+      setTelemetryLoaded(true);
     }
   }, [id]);
 
   const loadJobs = useCallback(async () => {
     if (!id) return;
+    setJobsLoading(true);
     try {
       const result = await api.assetJobs(id);
       setJobs(result);
       setJobsError("");
     } catch (err) {
       setJobsError(err instanceof Error ? err.message : "作业加载失败");
+    } finally {
+      setJobsLoading(false);
+      setJobsLoaded(true);
     }
   }, [id]);
 
   useEffect(() => {
     void load();
-    void loadTelemetry();
-    void loadJobs();
-  }, [load, loadTelemetry, loadJobs]);
+  }, [load]);
+
+  useEffect(() => {
+    setTelemetryLoaded(false);
+    setJobsLoaded(false);
+    setTelemetry(null);
+    setJobs(null);
+  }, [id]);
+
+  // 遥测与作业按标签页懒加载，避免每次查看资产都产生额外查询
+  useEffect(() => {
+    if (!data) return;
+    if (!telemetryLoaded && (tab === "performance" || tab === "hardware" || tab === "services" || tab === "ports")) {
+      void loadTelemetry();
+    }
+    if (!jobsLoaded && tab === "jobs") {
+      void loadJobs();
+    }
+  }, [tab, data, telemetryLoaded, jobsLoaded, loadTelemetry, loadJobs]);
 
   if (loading) {
     return (
@@ -291,19 +319,19 @@ export function AssetDetailPage() {
           <TabButton active={tab === "services"} onClick={() => setTab("services")}>
             <span className="inline-flex items-center gap-1.5">
               <Server size={12.5} />
-              服务 <span className="text-[11px] text-ink3">{current?.services.length ?? 0}</span>
+              服务 <span className="text-[11px] text-ink3">{telemetryLoaded ? current?.services.length ?? 0 : "…"}</span>
             </span>
           </TabButton>
           <TabButton active={tab === "ports"} onClick={() => setTab("ports")}>
             <span className="inline-flex items-center gap-1.5">
               <Network size={12.5} />
-              端口 <span className="text-[11px] text-ink3">{current?.ports.length ?? 0}</span>
+              端口 <span className="text-[11px] text-ink3">{telemetryLoaded ? current?.ports.length ?? 0 : "…"}</span>
             </span>
           </TabButton>
           <TabButton active={tab === "jobs"} onClick={() => setTab("jobs")}>
             <span className="inline-flex items-center gap-1.5">
               <Terminal size={12.5} />
-              作业 <span className="text-[11px] text-ink3">{jobCount}</span>
+              作业 <span className="text-[11px] text-ink3">{jobsLoaded ? jobCount : "…"}</span>
             </span>
           </TabButton>
         </div>
@@ -450,12 +478,13 @@ export function AssetDetailPage() {
             onRemove={(relationID) => void removeRelation(relationID)}
           />
         ) : tab === "jobs" ? (
-          <JobsView data={jobs} error={jobsError} onReload={() => void loadJobs()} />
+          <JobsView data={jobs} error={jobsError} loading={jobsLoading} onReload={() => void loadJobs()} />
         ) : (
           <TelemetryPanel
             tab={tab}
             data={telemetry}
             error={telemetryError}
+            loading={telemetryLoading}
             onReload={() => void loadTelemetry()}
           />
         )}
@@ -482,13 +511,23 @@ function TelemetryPanel({
   tab,
   data,
   error,
+  loading,
   onReload
 }: {
   tab: Tab;
   data: AssetTelemetry | null;
   error: string;
+  loading: boolean;
   onReload: () => void;
 }) {
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2 p-5">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
   if (error) {
     return (
       <Empty
@@ -827,12 +866,22 @@ function PortsView({ data }: { data: HostTelemetry }) {
 function JobsView({
   data,
   error,
+  loading,
   onReload
 }: {
   data: AssetJobs | null;
   error: string;
+  loading: boolean;
   onReload: () => void;
 }) {
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2 p-5">
+        <Skeleton className="h-5 w-32" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
   if (error) {
     return <Empty title="作业加载失败" description={error} action={<button type="button" className="btn btn-secondary h-8" onClick={onReload}>重试</button>} />;
   }

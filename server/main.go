@@ -100,6 +100,10 @@ type App struct {
 	// 云厂商 / 外部 CMDB 集成：避免同一源并发同步
 	integrationMu      sync.Mutex
 	integrationSyncing map[int64]bool
+
+	// demo 模式由启动时的数据初始化决定，进程内缓存避免每次响应都查库
+	demoOnce sync.Once
+	demoFlag bool
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -351,7 +355,7 @@ func runServer() {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           withLogging(withSecurity(app.withAuth(mux))),
+		Handler:           withLogging(withSecurity(withCompression(app.withAuth(mux)))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

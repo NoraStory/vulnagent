@@ -204,6 +204,10 @@ async function streamSSE(
   }
 }
 
+// 概览接口在首屏会被 AppShell 与概览页同时调用；短窗口内复用同一请求，避免重复开销
+let overviewInflight: Promise<Overview> | null = null;
+let overviewFetchedAt = 0;
+
 export const api = {
   health(): Promise<{ ok: boolean; version: string; demo: boolean }> {
     return request("/healthz");
@@ -255,7 +259,16 @@ export const api = {
   },
 
   overview(): Promise<Overview> {
-    return request("/overview");
+    const now = Date.now();
+    if (overviewInflight && now - overviewFetchedAt < 1500) {
+      return overviewInflight;
+    }
+    overviewFetchedAt = now;
+    overviewInflight = request<Overview>("/overview").catch((err) => {
+      overviewInflight = null;
+      throw err;
+    });
+    return overviewInflight;
   },
 
   findings(params: {

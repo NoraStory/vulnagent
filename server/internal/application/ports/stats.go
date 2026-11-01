@@ -63,12 +63,20 @@ type Gauges struct {
 	SelfcheckFailed int
 }
 
+// FindingSeen 概览趋势所需的单条漏洞首次发现时间
+type FindingSeen struct {
+	Priority  string
+	FirstSeen string
+}
+
 // StatsRepository 概览与指标所需的只读统计端口
 type StatsRepository interface {
 	FindingsByPriority(ctx context.Context) ([]PriorityCount, error)
 	FindingsByStatus(ctx context.Context) ([]StatusCount, error)
 	// PriorityBefore 返回 first_seen 早于 before 的优先级分布
 	PriorityBefore(ctx context.Context, before string) ([]PriorityCount, error)
+	// FindingFirstSeen 一次性返回全部漏洞的优先级与首次发现时间，供趋势聚合使用
+	FindingFirstSeen(ctx context.Context) ([]FindingSeen, error)
 	TopComponents(ctx context.Context, limit int) ([]TopComponent, error)
 	AgentSummary(ctx context.Context) (AgentSummary, error)
 	RecentFindingEvents(ctx context.Context, limit int) ([]FindingEvent, error)
