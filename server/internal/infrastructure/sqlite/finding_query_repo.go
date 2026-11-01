@@ -50,8 +50,13 @@ func (r *FindingRepo) List(ctx context.Context, filter ports.FindingFilter) ([]p
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	if err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM findings f JOIN assets a ON a.id = f.asset_id WHERE `+whereSQL, args...).Scan(&total); err != nil {
+	// 仅当按主机名搜索时才需要 JOIN assets；否则 COUNT 只扫 findings 覆盖索引
+	countSQL := `SELECT COUNT(*) FROM findings f`
+	if filter.Query != "" {
+		countSQL += ` JOIN assets a ON a.id = f.asset_id`
+	}
+	countSQL += ` WHERE ` + whereSQL
+	if err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	pageArgs := append(append([]any{}, args...), filter.Limit, filter.Offset)

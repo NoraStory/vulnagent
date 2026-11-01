@@ -1031,6 +1031,7 @@ CREATE TABLE sync_cursors (
 - 前端第三方依赖拆分为 `vendor-react` / `vendor-markdown` / `vendor-xterm` 独立缓存块；资产详情的主机遥测与作业改为按标签页懒加载；
   首屏并发的 `/overview` 请求在 1.5s 窗口内复用同一 Promise。
 - 批量写入用单事务 + 预编译语句；避免逐条 commit。
+- 漏洞列表计数只在按主机名搜索时才 JOIN `assets`，其余筛选直接走 `findings` 覆盖索引。
 - 匹配阶段只读内存索引，结果批量落库；重算用临时表 + 原子替换，避免读抖动。
 - 迁移：`server/internal/infrastructure/sqlite/migrations/*.sql` 通过 `go:embed` 打包，启动时按文件名顺序执行未应用脚本，执行记录写入 `schema_migrations`；脚本全部使用 `IF NOT EXISTS`，对既有库幂等。
 - 只读连接：Harness 读工具使用 `mode=ro` 的独立连接（`sqlite.OpenReadOnly`），从连接层杜绝写入。
