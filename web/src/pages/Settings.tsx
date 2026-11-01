@@ -298,7 +298,11 @@ const notifyLabels: Record<string, string> = {
   "finding.new": "新增 P0/P1 漏洞",
   "ticket.created": "创建工单",
   "sync.failed": "情报同步失败",
-  "selfcheck.failed": "平台自检失败"
+  "selfcheck.failed": "平台自检失败",
+  "asset.created": "新增资产",
+  "asset.updated": "资产档案更新",
+  "asset.merged": "资产合并",
+  "integration.sync_failed": "集成同步失败"
 };
 
 function NotifyPanel() {

@@ -129,6 +129,12 @@ func (a *App) handleAssetPatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "读取资产失败")
 		return
 	}
+	if len(changes) > 0 {
+		a.dispatch("asset.updated", map[string]any{
+			"assetId": id, "hostname": detail.Hostname, "ip": detail.IP,
+			"fields": changeSummary(changes), "actor": u.Name,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"asset":   toAssetItem(detail),
@@ -216,6 +222,10 @@ func (a *App) handleAssetMerge(w http.ResponseWriter, r *http.Request) {
 	a.audit(r, "asset.merge", fmt.Sprintf("asset:%d→%d", req.SourceID, req.TargetID),
 		fmt.Sprintf("组件 %d、漏洞 %d、工单 %d、标识 %d、标签 %d", stats.Components, stats.Findings,
 			stats.Tickets, stats.Identifiers, stats.Tags))
+	a.dispatch("asset.merged", map[string]any{
+		"sourceId": req.SourceID, "targetId": req.TargetID,
+		"components": stats.Components, "findings": stats.Findings, "tickets": stats.Tickets,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "stats": stats})
 }
 

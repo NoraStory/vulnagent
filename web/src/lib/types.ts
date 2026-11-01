@@ -384,6 +384,62 @@ export interface GovernanceItem {
   related?: GovernancePeer[];
 }
 
+export type IntegrationKind = "cloud_aliyun" | "cloud_aws" | "cloud_azure" | "cmdb_api";
+
+export interface IntegrationSource {
+  id: number;
+  kind: IntegrationKind;
+  name: string;
+  config: Record<string, unknown>;
+  hasCredential: boolean;
+  enabled: boolean;
+  intervalMinutes: number;
+  lastRunAt: string;
+  lastStatus: string;
+  lastError: string;
+  lastCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationSample {
+  instanceId?: string;
+  name?: string;
+  hostname?: string;
+  privateIp?: string;
+  publicIp?: string;
+  osFamily?: string;
+  region?: string;
+  status?: string;
+}
+
+export interface IntegrationTestResult {
+  ok: boolean;
+  count?: number;
+  sample?: IntegrationSample[];
+  elapsedMs?: number;
+  error?: string;
+}
+
+export interface IntegrationSyncStats {
+  sourceId: number;
+  kind: string;
+  name: string;
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  errors?: string[];
+  finishedAt: string;
+}
+
+export interface IntegrationSyncResult {
+  ok: boolean;
+  stats?: IntegrationSyncStats;
+  error?: string;
+}
+
 export interface AssetComponent {
   purl: string;
   name: string;

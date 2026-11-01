@@ -701,6 +701,66 @@ Webhook 请求体：
 `type` 说明：`owner_missing`（责任人缺失）、`stale`（Agent 资产超过 `days` 天未上报）、
 `duplicate`（IP/MAC/序列号相同的资产组，含 `related` 成员）、`exposure_changed`（`changeDays` 天内暴露面变更）。
 
+### 集成中心（云厂商 / 外部 CMDB，admin）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/integrations` | 集成源列表（不含凭据，返回 `hasCredential`） |
+| POST | `/integrations` | 新增集成源 |
+| PUT | `/integrations/{id}` | 更新配置 / 凭据 / 启停 / 间隔 |
+| DELETE | `/integrations/{id}` | 删除集成源 |
+| POST | `/integrations/{id}/test` | 只读拉取样例，不写资产 |
+| POST | `/integrations/{id}/sync` | 手动同步一次，写入资产台账 |
+
+集成类型：`cloud_aliyun`（ECS DescribeInstances）、`cloud_aws`（EC2 DescribeInstances）、
+`cloud_azure`（ARM 虚拟机列表）、`cmdb_api`（GET JSON）。
+
+`POST /integrations`：
+
+```json
+{
+  "kind": "cloud_aliyun",
+  "name": "生产账号",
+  "config": { "region": "cn-hangzhou", "endpoint": "" },
+  "credentials": { "accessKeyId": "LTAI...", "accessKeySecret": "..." },
+  "enabled": true,
+  "intervalMinutes": 360
+}
+```
+
+- 凭据以 AES-256-GCM 加密存储，接口永不回传明文或密文，仅返回 `hasCredential`。
+- `cmdb_api` 的 `config` 为 `{ "url": "...", "authType": "none|bearer|basic" }`，
+  凭据为 `{ "token" }` 或 `{ "username", "password" }`。
+- 更新时 `credentials` 留空表示保持不变；`clearSecret: true` 清除已有凭据；类型创建后不可修改。
+
+`POST /integrations/{id}/test` 返回（不写库）：
+
+```json
+{ "ok": true, "count": 2, "elapsedMs": 12, "sample": [
+  { "instanceId": "i-bp1abc", "hostname": "web-01", "privateIp": "10.0.0.10", "osFamily": "linux", "region": "cn-hangzhou" }
+] }
+```
+
+`POST /integrations/{id}/sync` 返回：
+
+```json
+{ "ok": true, "stats": {
+  "sourceId": 1, "kind": "cloud_aliyun", "name": "生产账号",
+  "fetched": 128, "created": 3, "updated": 12, "unchanged": 113, "failed": 0,
+  "finishedAt": "2026-11-01T12:00:00+08:00"
+} }
+```
+
+- 身份归并顺序：`cloud_instance → serial → mac → hostname → ip`；同一实例命中多个资产时该条计入 `failed`。
+- 新资产以 `source=cloud` 建档，写入 `cloud_provider/cloud_account/region/instance_id` 等字段与标识；
+  已存在资产仅更新非空字段，不覆盖人工维护的字段为空值。
+- 每次同步写 `integration.sync` 审计，失败触发 `integration.sync_failed` Webhook。
+
+### 资产 Webhook 事件
+
+`notify-settings` 支持追加订阅：`asset.created`、`asset.updated`、`asset.merged`、`integration.sync_failed`。
+请求头仍为 `X-VulnAgent-Event`，配置密钥时附带 `X-VulnAgent-Signature: sha256=<HMAC>`。
+
 ---
 
 ## 5. 产品映射（admin）

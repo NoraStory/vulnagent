@@ -14,6 +14,9 @@ import type {
   DiscoveryPolicy,
   GovernanceItem,
   GovernanceSummary,
+  IntegrationSource,
+  IntegrationSyncResult,
+  IntegrationTestResult,
   Topology,
   Finding,
   FindingDetail,
@@ -577,6 +580,47 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids, patch })
     });
+  },
+
+  integrations(): Promise<{ items: IntegrationSource[]; kinds: string[] }> {
+    return request("/integrations");
+  },
+
+  createIntegration(payload: {
+    kind: string;
+    name: string;
+    config: Record<string, unknown>;
+    credentials?: Record<string, string>;
+    enabled: boolean;
+    intervalMinutes: number;
+  }): Promise<{ ok: boolean; item: IntegrationSource }> {
+    return request("/integrations", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  updateIntegration(
+    id: number,
+    payload: {
+      name?: string;
+      config?: Record<string, unknown>;
+      credentials?: Record<string, string>;
+      enabled?: boolean;
+      intervalMinutes?: number;
+      clearSecret?: boolean;
+    }
+  ): Promise<{ ok: boolean; item: IntegrationSource }> {
+    return request(`/integrations/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+  },
+
+  deleteIntegration(id: number): Promise<{ ok: boolean }> {
+    return request(`/integrations/${id}`, { method: "DELETE" });
+  },
+
+  testIntegration(id: number): Promise<IntegrationTestResult> {
+    return request(`/integrations/${id}/test`, { method: "POST" });
+  },
+
+  syncIntegration(id: number): Promise<IntegrationSyncResult> {
+    return request(`/integrations/${id}/sync`, { method: "POST" });
   },
 
   asset(id: number | string): Promise<AssetDetail> {

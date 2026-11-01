@@ -96,6 +96,10 @@ type App struct {
 	// 网段发现：运行中任务的取消句柄
 	discoveryMu     sync.Mutex
 	discoveryCancel map[int64]context.CancelFunc
+
+	// 云厂商 / 外部 CMDB 集成：避免同一源并发同步
+	integrationMu      sync.Mutex
+	integrationSyncing map[int64]bool
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -192,6 +196,14 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/topology", a.handleTopology)
 	mux.HandleFunc("GET /api/v1/governance/summary", a.handleGovernanceSummary)
 	mux.HandleFunc("GET /api/v1/governance/todos", a.handleGovernanceTodos)
+
+	// 云厂商与外部 CMDB 只读同步
+	mux.HandleFunc("GET /api/v1/integrations", a.handleIntegrations)
+	mux.HandleFunc("POST /api/v1/integrations", a.handleIntegrations)
+	mux.HandleFunc("PUT /api/v1/integrations/{id}", a.handleIntegrationUpdate)
+	mux.HandleFunc("DELETE /api/v1/integrations/{id}", a.handleIntegrationUpdate)
+	mux.HandleFunc("POST /api/v1/integrations/{id}/test", a.handleIntegrationTest)
+	mux.HandleFunc("POST /api/v1/integrations/{id}/sync", a.handleIntegrationSync)
 
 	// 资产自动发现：任务、候选审核与授权网段策略
 	mux.HandleFunc("GET /api/v1/discovery/jobs", a.handleDiscoveryJobs)
@@ -311,6 +323,7 @@ func runServer() {
 	slog.Info("运维技能已加载", "count", len(app.skills.List()), "dir", app.skills.root)
 	app.initHarness(cfg)
 	app.cleanupOldJobs()
+	go app.integrationLoop(context.Background())
 	defer func() {
 		if app.roDB != nil {
 			_ = app.roDB.Close()

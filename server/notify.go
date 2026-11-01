@@ -18,7 +18,10 @@ import (
 )
 
 // 支持的事件类型
-var notifyEventCatalog = []string{"finding.new", "ticket.created", "sync.failed", "selfcheck.failed"}
+var notifyEventCatalog = []string{
+	"finding.new", "ticket.created", "sync.failed", "selfcheck.failed",
+	"asset.created", "asset.updated", "asset.merged", "integration.sync_failed",
+}
 
 type notifyConfig struct {
 	URL        string   `json:"url"`

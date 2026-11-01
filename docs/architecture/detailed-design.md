@@ -594,6 +594,32 @@ CREATE TABLE business_systems (
   疑似重复（IP/MAC/序列号相同的资产组）、暴露面变化（最近 30 天 `asset_changes.field='exposure'`）；
 - 批量更新复用 `assets` 档案写入与 `asset_changes` 留痕，单次上限 200 台。
 
+### 5.1.4 云厂商与外部 CMDB 集成（已落地，迁移 0017）
+
+```sql
+CREATE TABLE integration_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,              -- cloud_aliyun / cloud_aws / cloud_azure / cmdb_api
+  name TEXT NOT NULL,
+  config TEXT NOT NULL DEFAULT '{}', -- 非敏感配置：region / endpoint / url / authType / subscriptionId
+  secret TEXT NOT NULL DEFAULT '',   -- AES-256-GCM 加密的凭据 JSON
+  enabled INTEGER NOT NULL DEFAULT 1,
+  interval_minutes INTEGER NOT NULL DEFAULT 360,
+  last_run_at TEXT NOT NULL DEFAULT '', last_status TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '', last_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE(kind, name)
+);
+```
+
+- 适配器位于 `internal/cloud`：阿里云 RPC/HMAC-SHA1、AWS SigV4 + XML、Azure OAuth2 + ARM、CMDB JSON GET；
+  只调用官方列表接口，不创建/修改/删除云端资源。
+- 凭据复用 SSH 凭据的 AES-256-GCM 密钥加密；API 永不回传明文或密文。
+- 同步归并顺序 `cloud_instance → serial → mac → hostname → ip`；命中多个资产时该条失败并保留证据，
+  不静默合并。新资产 `source=cloud`，已存在资产仅更新非空字段。
+- 手动同步单次上限 90 秒；定时任务每 5 分钟检查一次到期源，同源并发由进程内标记互斥。
+- 失败写 `last_status=failed` 与审计，并触发 `integration.sync_failed` Webhook。
+
 ### 5.2 目标模型（规划中，尚未实现）
 
 > 以下为后续演进方向（Agent 注册/心跳、SBOM 快照版本化、EPSS 历史、API Token、多租户）。
@@ -946,6 +972,10 @@ CREATE TABLE sync_cursors (
 | GET | `/api/v1/governance/summary` | viewer+ | 四类治理待办数量 |
 | GET | `/api/v1/governance/todos` | viewer+ | 治理待办分页列表 |
 | POST | `/api/v1/assets/batch` | operator+ | 批量分配责任人 / 归档（≤200） |
+| GET/POST | `/api/v1/integrations` | admin | 集成源列表 / 新增 |
+| PUT/DELETE | `/api/v1/integrations/{id}` | admin | 更新 / 删除集成源 |
+| POST | `/api/v1/integrations/{id}/test` | admin | 只读拉取样例（不写资产） |
+| POST | `/api/v1/integrations/{id}/sync` | admin | 手动同步云厂商 / 外部 CMDB |
 | POST | `/api/v1/assets/ssh-scan` | operator+ | SSH 兜底采集（只读脚本，凭据不落库） |
 | GET | `/api/v1/findings` | viewer+ | 按 priority/status/asset/时间筛选 |
 | GET | `/api/v1/findings/{id}` | viewer+ | 含 score_breakdown、POC、修复建议 |
@@ -966,7 +996,9 @@ CREATE TABLE sync_cursors (
 
 ### 6.3 对外回调
 
-- `POST {webhook}`：`finding.new`（新增 P0/P1）、`ticket.created`、`sync.failed`、`selfcheck.failed`；HMAC-SHA256 签名（`X-VulnAgent-Signature`），失败退避重试 3 次，事件头 `X-VulnAgent-Event`。
+- `POST {webhook}`：`finding.new`（新增 P0/P1）、`ticket.created`、`sync.failed`、`selfcheck.failed`；
+  资产事件 `asset.created` / `asset.updated` / `asset.merged` 与集成失败 `integration.sync_failed`；
+  HMAC-SHA256 签名（`X-VulnAgent-Signature`），失败退避重试 3 次，事件头 `X-VulnAgent-Event`。
 - 工单系统回写（Jira/飞书审批状态）：尚未实现。
 
 ---

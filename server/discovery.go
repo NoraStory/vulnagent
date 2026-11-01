@@ -444,6 +444,10 @@ func (a *App) approveDiscoveryCandidate(ctx context.Context, candidate ports.Dis
 	if err := a.discoveryRepo().SetCandidateDecision(ctx, candidate.ID, "approved", assetID, actor, now); err != nil {
 		return 0, err
 	}
+	a.dispatch("asset.created", map[string]any{
+		"assetId": assetID, "hostname": hostname, "ip": candidate.IP,
+		"source": "discovery", "actor": actor,
+	})
 	return assetID, nil
 }
 

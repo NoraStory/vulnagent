@@ -11,6 +11,7 @@ const AssetDetailPage = lazy(() => import("./pages/AssetDetail").then((m) => ({ 
 const DiscoveryPage = lazy(() => import("./pages/Discovery").then((m) => ({ default: m.DiscoveryPage })));
 const TopologyPage = lazy(() => import("./pages/Topology").then((m) => ({ default: m.TopologyPage })));
 const GovernancePage = lazy(() => import("./pages/Governance").then((m) => ({ default: m.GovernancePage })));
+const IntegrationsPage = lazy(() => import("./pages/Integrations").then((m) => ({ default: m.IntegrationsPage })));
 const AssistantPage = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.AssistantPage })));
 const TerminalPage = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.TerminalPage })));
 const SharedTerminalPage = lazy(() =>
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="/discovery" element={<DiscoveryPage />} />
           <Route path="/topology" element={<TopologyPage />} />
           <Route path="/governance" element={<GovernancePage />} />
+          <Route path="/integrations" element={<IntegrationsPage />} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/terminal" element={<TerminalPage />} />
           <Route path="/share/:token" element={<SharedTerminalPage />} />

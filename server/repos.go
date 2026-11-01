@@ -44,6 +44,8 @@ func (a *App) businessRepo() *sqlite.BusinessRepo { return sqlite.NewBusinessRep
 
 func (a *App) governanceRepo() *sqlite.GovernanceRepo { return sqlite.NewGovernanceRepo(a.db) }
 
+func (a *App) integrationRepo() *sqlite.IntegrationRepo { return sqlite.NewIntegrationRepo(a.db) }
+
 // readDB 返回 Harness 读工具专用的只读连接；打开失败时回落到主连接
 func (a *App) readDB() *sql.DB {
 	a.roOnce.Do(func() {
