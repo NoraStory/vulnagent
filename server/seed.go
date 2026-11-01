@@ -610,7 +610,7 @@ func seedDemo(db *sql.DB) error {
 				if !matchSeedAffected(c, comp) {
 					continue
 				}
-				risk, priority, breakdown := policy.Score(c.score, c.epss, c.exploit, a.exposure, a.tier)
+				risk, priority, breakdown := policy.Score(c.score, c.epss, c.exploit, a.exposure, a.tier, "normal")
 				status := findingStatusPattern[idx%len(findingStatusPattern)]
 				assignee := ""
 				if status != "open" || idx%4 != 0 {
@@ -631,7 +631,7 @@ func seedDemo(db *sql.DB) error {
 					fixed_version, assignee, ticket_id, first_seen, last_seen)
 					VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)`,
 					assetID, comp.purl, comp.name, comp.version, comp.eco, c.id, c.score, c.epss,
-					c.exploit, assetWeight(a.exposure, a.tier), risk, priority, marshalBreakdown(breakdown),
+					c.exploit, assetWeight(a.exposure, a.tier, "normal"), risk, priority, marshalBreakdown(breakdown),
 					status, c.fixed, assignee, ticketID, fmtT(firstSeen), fmtT(lastSeen))
 				if err != nil {
 					return err

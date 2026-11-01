@@ -19,4 +19,6 @@ func unmarshalPolicy(weightsJSON, thresholdsJSON string) RiskPolicy {
 
 func marshalBreakdown(b []ScoreFactor) string { return risk.MarshalBreakdown(b) }
 
-func assetWeight(exposure, tier string) float64 { return risk.AssetWeight(exposure, tier) }
+func assetWeight(exposure, tier, businessTier string) float64 {
+	return risk.AssetWeight(exposure, tier, businessTier)
+}

@@ -362,13 +362,13 @@ func (a *App) recomputeFindings(p RiskPolicy) (int, error) {
 	}
 	updates := make([]ports.ScoreUpdate, 0, len(list))
 	for _, it := range list {
-		risk, prio, bd := p.Score(it.CVSS, it.EPSS, it.Exploit, it.Exposure, it.Tier)
+		risk, prio, bd := p.Score(it.CVSS, it.EPSS, it.Exploit, it.Exposure, it.Tier, it.BusinessTier)
 		updates = append(updates, ports.ScoreUpdate{
 			ID:          it.ID,
 			Risk:        risk,
 			Priority:    prio,
 			Breakdown:   marshalBreakdown(bd),
-			AssetWeight: assetWeight(it.Exposure, it.Tier),
+			AssetWeight: assetWeight(it.Exposure, it.Tier, it.BusinessTier),
 		})
 	}
 	if err := a.findingRepo().BulkUpdateScores(ctx, updates); err != nil {

@@ -80,12 +80,13 @@ type StatsRepository interface {
 
 // RecomputeRow 重算风险分所需的一行
 type RecomputeRow struct {
-	ID       int64
-	CVSS     float64
-	EPSS     float64
-	Exploit  string
-	Exposure string
-	Tier     string
+	ID           int64
+	CVSS         float64
+	EPSS         float64
+	Exploit      string
+	Exposure     string
+	Tier         string
+	BusinessTier string
 }
 
 // ScoreUpdate 重算后的落库字段

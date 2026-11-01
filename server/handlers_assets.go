@@ -187,6 +187,11 @@ func (a *App) handleAssetDetail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产变更失败")
 		return
 	}
+	relations, err := a.assetRepo().Relations(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "查询资产关系失败")
+		return
+	}
 
 	item := toAssetItem(detail)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -196,5 +201,6 @@ func (a *App) handleAssetDetail(w http.ResponseWriter, r *http.Request) {
 		"findings":    findings,
 		"identifiers": identifiers,
 		"changes":     changes,
+		"relations":   relations,
 	})
 }

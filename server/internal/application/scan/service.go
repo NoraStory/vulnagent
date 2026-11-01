@@ -66,6 +66,10 @@ func (s *Service) MatchAsset(assetID int64) (MatchResult, error) {
 	}
 
 	exposure, tier := string(host.Exposure), string(host.Tier)
+	businessTier := host.BusinessTier
+	if businessTier == "" {
+		businessTier = "normal"
+	}
 	now := clock.FormatNow()
 	fresh := make([]map[string]any, 0, 4)
 
@@ -84,7 +88,7 @@ func (s *Service) MatchAsset(assetID int64) (MatchResult, error) {
 				if !ok {
 					continue
 				}
-				riskScore, priority, breakdown := s.Policy.Score(meta.Score, meta.EPSS, meta.Exploit, exposure, tier)
+				riskScore, priority, breakdown := s.Policy.Score(meta.Score, meta.EPSS, meta.Exploit, exposure, tier, businessTier)
 				fixed := r.FixedVersion
 				if fixed == "" {
 					fixed = meta.Fixed
@@ -96,7 +100,7 @@ func (s *Service) MatchAsset(assetID int64) (MatchResult, error) {
 					CVSS:         meta.Score,
 					EPSS:         meta.EPSS,
 					Exploit:      meta.Exploit,
-					AssetWeight:  risk.AssetWeight(exposure, tier),
+					AssetWeight:  risk.AssetWeight(exposure, tier, businessTier),
 					Risk:         riskScore,
 					Priority:     priority,
 					Breakdown:    risk.MarshalBreakdown(breakdown),

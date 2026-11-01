@@ -9,6 +9,8 @@ const FindingsPage = lazy(() => import("./pages/Findings").then((m) => ({ defaul
 const AssetsPage = lazy(() => import("./pages/Assets").then((m) => ({ default: m.AssetsPage })));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetail").then((m) => ({ default: m.AssetDetailPage })));
 const DiscoveryPage = lazy(() => import("./pages/Discovery").then((m) => ({ default: m.DiscoveryPage })));
+const TopologyPage = lazy(() => import("./pages/Topology").then((m) => ({ default: m.TopologyPage })));
+const GovernancePage = lazy(() => import("./pages/Governance").then((m) => ({ default: m.GovernancePage })));
 const AssistantPage = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.AssistantPage })));
 const TerminalPage = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.TerminalPage })));
 const SharedTerminalPage = lazy(() =>
@@ -56,6 +58,8 @@ export default function App() {
           <Route path="/assets" element={<AssetsPage />} />
           <Route path="/assets/:id" element={<AssetDetailPage />} />
           <Route path="/discovery" element={<DiscoveryPage />} />
+          <Route path="/topology" element={<TopologyPage />} />
+          <Route path="/governance" element={<GovernancePage />} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/terminal" element={<TerminalPage />} />
           <Route path="/share/:token" element={<SharedTerminalPage />} />

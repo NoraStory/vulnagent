@@ -23,10 +23,11 @@ var _ ports.AssetRepository = (*AssetRepo)(nil)
 func (r *AssetRepo) Get(ctx context.Context, id int64) (asset.Asset, error) {
 	var a asset.Asset
 	var exposure, tier string
-	err := r.db.QueryRowContext(ctx, `SELECT id, hostname, ip, os_family, os_version, env,
-		exposure, tier, owner, source, agent_status, last_seen_at FROM assets WHERE id = ?`, id).
+	err := r.db.QueryRowContext(ctx, `SELECT a.id, a.hostname, a.ip, a.os_family, a.os_version, a.env,
+		a.exposure, a.tier, a.owner, a.source, a.agent_status, a.last_seen_at, COALESCE(bs.tier, 'normal')
+		FROM assets a LEFT JOIN business_systems bs ON bs.name = a.business_system WHERE a.id = ?`, id).
 		Scan(&a.ID, &a.Hostname, &a.IP, &a.OSFamily, &a.OSVersion, &a.Env,
-			&exposure, &tier, &a.Owner, &a.Source, &a.AgentStatus, &a.LastSeenAt)
+			&exposure, &tier, &a.Owner, &a.Source, &a.AgentStatus, &a.LastSeenAt, &a.BusinessTier)
 	if errors.Is(err, sql.ErrNoRows) {
 		return asset.Asset{}, ports.ErrNotFound
 	}

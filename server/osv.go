@@ -135,6 +135,10 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 		return res, err
 	}
 	exposure, tier := string(host.Exposure), string(host.Tier)
+	businessTier := host.BusinessTier
+	if businessTier == "" {
+		businessTier = "normal"
+	}
 	inventory, err := a.assetRepo().Components(ctx0, assetID)
 	if err != nil {
 		return res, err
@@ -206,7 +210,7 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 				slog.Warn("写入 OSV 受影响区间失败", "cve", cveID, "err", err)
 			}
 
-			risk, priority, breakdown := policy.Score(score, 0, "none", exposure, tier)
+			risk, priority, breakdown := policy.Score(score, 0, "none", exposure, tier, businessTier)
 			wasCreated, err := a.findingRepo().UpsertOSV(ctx0, ports.MatchInput{
 				AssetID: assetID,
 				Component: asset.Component{
@@ -219,7 +223,7 @@ func (a *App) osvScanAsset(assetID int64, actor string) (osvResult, error) {
 				CVSS:         score,
 				EPSS:         0,
 				Exploit:      "none",
-				AssetWeight:  assetWeight(exposure, tier),
+				AssetWeight:  assetWeight(exposure, tier, businessTier),
 				Risk:         risk,
 				Priority:     priority,
 				Breakdown:    marshalBreakdown(breakdown),

@@ -89,8 +89,10 @@ func (r *FindingRepo) MarkStatus(ctx context.Context, id int64, status, now, eve
 
 // ListForRecompute 返回重算风险分所需的全部记录
 func (r *FindingRepo) ListForRecompute(ctx context.Context) ([]ports.RecomputeRow, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT f.id, f.cvss, f.epss, f.exploit, a.exposure, a.tier
-		FROM findings f JOIN assets a ON a.id = f.asset_id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT f.id, f.cvss, f.epss, f.exploit, a.exposure, a.tier,
+		COALESCE(bs.tier, 'normal')
+		FROM findings f JOIN assets a ON a.id = f.asset_id
+		LEFT JOIN business_systems bs ON bs.name = a.business_system`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +100,7 @@ func (r *FindingRepo) ListForRecompute(ctx context.Context) ([]ports.RecomputeRo
 	list := make([]ports.RecomputeRow, 0, 64)
 	for rows.Next() {
 		var it ports.RecomputeRow
-		if err := rows.Scan(&it.ID, &it.CVSS, &it.EPSS, &it.Exploit, &it.Exposure, &it.Tier); err != nil {
+		if err := rows.Scan(&it.ID, &it.CVSS, &it.EPSS, &it.Exploit, &it.Exposure, &it.Tier, &it.BusinessTier); err != nil {
 			return nil, err
 		}
 		list = append(list, it)

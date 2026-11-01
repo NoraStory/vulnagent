@@ -4,10 +4,12 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   Activity,
   ChevronRight,
+  ClipboardCheck,
   History,
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Network,
   Radar,
   ScrollText,
   Server,
@@ -27,7 +29,8 @@ const navGroups = [
       { to: "/", label: "概览", icon: LayoutDashboard },
       { to: "/findings", label: "漏洞", icon: ShieldAlert },
       { to: "/assets", label: "资产", icon: Server },
-      { to: "/discovery", label: "发现", icon: Radar }
+      { to: "/discovery", label: "发现", icon: Radar },
+      { to: "/topology", label: "拓扑", icon: Network }
     ]
   },
   {
@@ -41,6 +44,7 @@ const navGroups = [
   {
     label: "平台",
     items: [
+      { to: "/governance", label: "治理", icon: ClipboardCheck },
       { to: "/selfcheck", label: "自检", icon: Activity },
       { to: "/settings", label: "审计与设置", icon: ScrollText }
     ]
@@ -52,6 +56,8 @@ const pageMeta: Record<string, { title: string; subtitle: string; crumb: string 
   "/findings": { title: "漏洞清单", subtitle: "按风险优先级排序，可解释、可闭环", crumb: "漏洞" },
   "/assets": { title: "资产与组件", subtitle: "主机清单、SBOM 与暴露面权重", crumb: "资产" },
   "/discovery": { title: "资产发现", subtitle: "授权网段探活、候选审核与资产入库", crumb: "发现" },
+  "/topology": { title: "资产拓扑", subtitle: "业务系统、资产与依赖关系全景", crumb: "拓扑" },
+  "/governance": { title: "资产治理", subtitle: "责任人、失联、重复与暴露面变化待办", crumb: "治理" },
   "/assistant": { title: "Agent 助手", subtitle: "只读工具直接执行，写操作需审批", crumb: "助手" },
   "/terminal": { title: "SSH 智能终端", subtitle: "多主机会话、AI 现场解读与命令审批", crumb: "终端" },
   "/trajectory": { title: "操作轨迹", subtitle: "审计、主机作业与工具调用的统一时间线", crumb: "轨迹" },

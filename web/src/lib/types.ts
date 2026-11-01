@@ -295,6 +295,95 @@ export interface DiscoveryPolicy {
   reverseDns: boolean;
 }
 
+export interface AssetRelationRef {
+  id: number;
+  hostname: string;
+  ip: string;
+  businessSystem: string;
+  env: string;
+  assetType: string;
+  risk: number;
+}
+
+export interface AssetRelation {
+  id: number;
+  fromAssetId: number;
+  toAssetId: number;
+  relation: string;
+  direction: "in" | "out";
+  asset: AssetRelationRef;
+  createdAt: string;
+}
+
+export interface BusinessSystem {
+  name: string;
+  tier: string;
+  owner: string;
+  description: string;
+  updatedAt: string;
+  assetCount: number;
+}
+
+export interface TopologyAsset {
+  id: number;
+  hostname: string;
+  ip: string;
+  businessSystem: string;
+  env: string;
+  tier: string;
+  exposure: string;
+  assetType: string;
+  status: string;
+  risk: number;
+  findings: number;
+  components: number;
+}
+
+export interface TopologyEdge {
+  id: number;
+  fromAssetId: number;
+  toAssetId: number;
+  relation: string;
+}
+
+export interface Topology {
+  assets: TopologyAsset[];
+  relations: TopologyEdge[];
+  businessSystems: BusinessSystem[];
+  truncated: boolean;
+  total: number;
+}
+
+export interface GovernanceSummary {
+  ownerMissing: number;
+  stale: number;
+  duplicate: number;
+  exposureChanged: number;
+}
+
+export interface GovernancePeer {
+  id: number;
+  hostname: string;
+  ip: string;
+}
+
+export interface GovernanceItem {
+  type: "owner_missing" | "stale" | "duplicate" | "exposure_changed";
+  assetId: number;
+  hostname: string;
+  ip: string;
+  businessSystem: string;
+  owner: string;
+  status: string;
+  source: string;
+  lastSeen: string;
+  detail: string;
+  oldValue?: string;
+  newValue?: string;
+  updatedAt?: string;
+  related?: GovernancePeer[];
+}
+
 export interface AssetComponent {
   purl: string;
   name: string;
@@ -444,6 +533,7 @@ export interface AssetDetail {
   findings: Finding[];
   identifiers: AssetIdentifier[];
   changes: AssetChange[];
+  relations: AssetRelation[];
 }
 
 export interface CheckItem {

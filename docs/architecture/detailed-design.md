@@ -229,9 +229,10 @@ S_epss    = epss_score                          # 0–1，缺省 0（标记 no-e
 S_exploit = 1.0  有 POC/已观测利用
             0.6  仅 PoC 仓库链接
             0.0  无
-S_asset   = exposure × business_tier            # 0–1
+S_asset   = exposure × business_tier × business_system_tier   # 0–1，上限 1.0
             exposure:     公网 1.0 / 内网 0.6 / 隔离 0.2
             business_tier: 核心 1.0 / 重要 0.8 / 一般 0.5
+            business_system_tier: 核心 1.0 / 重要 0.9 / 一般或未登记 0.8
 ```
 
 #### 4.6.2 分档与硬规则
@@ -245,6 +246,7 @@ S_asset   = exposure × business_tier            # 0–1
 
 - 打分为**纯函数 + 可解释**：`findings` 里保存 `score_breakdown` JSON（四个因子值与权重），UI 直接展开显示。
 - 权重可通过 `risk_policy` 配置调整，变更写审计；重算走后台任务，不阻塞读。
+- 业务系统重要性来自 `business_systems.tier`（未登记按一般），管理员调整后立即重算全部 `findings` 的风险分与优先级。
 
 ### 4.7 修复模块
 
@@ -572,6 +574,25 @@ CREATE TABLE discovery_candidates (
 **候选匹配**：先按反向 DNS 主机名匹配 `asset_identifiers`/`assets.hostname`（置信度 0.95），
 再按 IP 标识匹配（0.85），未命中记为 `new`（0.6）。确认新候选时创建 `source=discovery` 的资产并登记
 主机名/IP/MAC 标识；确认已有候选只补充标识；合并（admin）把标识写入指定资产并把候选标记 `merged`。
+
+### 5.1.3 业务系统、拓扑与治理（已落地，迁移 0016）
+
+```sql
+CREATE TABLE business_systems (
+  name TEXT PRIMARY KEY, tier TEXT NOT NULL DEFAULT 'normal',
+  owner TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+```
+
+- 业务系统列表 = `business_systems` 登记项 ∪ 资产档案中出现但未登记的业务系统（按 `normal` 补齐）；
+- `tier` 取 `core | important | normal`，参与资产权重（见 4.6.1），更新时同步重算全部漏洞；
+- 资产关系沿用 `asset_relations`，允许 `depends_on / runs_on / member_of / manages / connects_to`，
+  拓扑边排除 `merged_into`；关系 CRUD 均写审计；
+- 拓扑接口按业务系统/环境筛选，返回最多 300 个资产节点与其间关系，超出时 `truncated=true`；
+- 治理待办四类：责任人缺失（active 且 owner 为空）、长期未上报（Agent 资产超过 7 天）、
+  疑似重复（IP/MAC/序列号相同的资产组）、暴露面变化（最近 30 天 `asset_changes.field='exposure'`）；
+- 批量更新复用 `assets` 档案写入与 `asset_changes` 留痕，单次上限 200 台。
 
 ### 5.2 目标模型（规划中，尚未实现）
 
@@ -918,6 +939,13 @@ CREATE TABLE sync_cursors (
 | POST | `/api/v1/discovery/candidates/{id}/{approve\|ignore\|merge}` | operator+ / admin | 候选处置 |
 | POST | `/api/v1/discovery/candidates/batch` | operator+ | 批量确认/忽略 |
 | GET/PUT | `/api/v1/settings/discovery` | viewer+ / admin | 授权网段与限速策略 |
+| GET/PUT/DELETE | `/api/v1/business-systems[/{name}]` | viewer+ / admin | 业务系统重要性（触发风险重算） |
+| GET | `/api/v1/topology` | viewer+ | 资产拓扑（业务系统/环境筛选，最多 300 节点） |
+| GET/POST | `/api/v1/assets/{id}/relations` | viewer+ / operator+ | 资产关系查询 / 创建 |
+| DELETE | `/api/v1/assets/relations/{id}` | operator+ | 删除资产关系 |
+| GET | `/api/v1/governance/summary` | viewer+ | 四类治理待办数量 |
+| GET | `/api/v1/governance/todos` | viewer+ | 治理待办分页列表 |
+| POST | `/api/v1/assets/batch` | operator+ | 批量分配责任人 / 归档（≤200） |
 | POST | `/api/v1/assets/ssh-scan` | operator+ | SSH 兜底采集（只读脚本，凭据不落库） |
 | GET | `/api/v1/findings` | viewer+ | 按 priority/status/asset/时间筛选 |
 | GET | `/api/v1/findings/{id}` | viewer+ | 含 score_breakdown、POC、修复建议 |

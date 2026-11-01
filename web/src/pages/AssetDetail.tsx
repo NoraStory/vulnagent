@@ -8,14 +8,18 @@ import {
   Cpu,
   FileText,
   HardDrive,
+  Loader2,
   Network,
+  Plus,
   Server,
+  Share2,
   ShieldAlert,
   Terminal,
+  Trash2,
   User
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { AssetDetail, AssetJobs, AssetTelemetry, HostTelemetry, MetricPoint } from "../lib/types";
+import type { AssetDetail, AssetJobs, AssetRelation, AssetTelemetry, HostTelemetry, MetricPoint } from "../lib/types";
 import {
   Badge,
   Dot,
@@ -36,12 +40,22 @@ import {
   timeAgo
 } from "../lib/format";
 import { useToast } from "../lib/toast";
+import { useAuth } from "../lib/auth";
 
-type Tab = "components" | "findings" | "cmdb" | "performance" | "hardware" | "services" | "ports" | "jobs";
+type Tab = "components" | "findings" | "cmdb" | "relations" | "performance" | "hardware" | "services" | "ports" | "jobs";
+
+const relationLabels: Record<string, string> = {
+  depends_on: "依赖",
+  runs_on: "运行于",
+  member_of: "成员",
+  manages: "管理",
+  connects_to: "连接"
+};
 
 export function AssetDetailPage() {
   const { id } = useParams();
   const toast = useToast();
+  const { canWrite } = useAuth();
   const [data, setData] = useState<AssetDetail | null>(null);
   const [telemetry, setTelemetry] = useState<AssetTelemetry | null>(null);
   const [telemetryError, setTelemetryError] = useState("");
@@ -75,6 +89,40 @@ export function AssetDetailPage() {
       toast.push(err instanceof Error ? err.message : "刷新资产失败", "error");
     }
   }, [id]);
+
+  const [relationTarget, setRelationTarget] = useState("");
+  const [relationType, setRelationType] = useState("depends_on");
+  const [relationBusy, setRelationBusy] = useState(false);
+
+  const addRelation = async () => {
+    if (!data) return;
+    const targetID = Number(relationTarget);
+    if (!targetID) {
+      toast.push("请输入目标资产 ID", "error");
+      return;
+    }
+    setRelationBusy(true);
+    try {
+      await api.createAssetRelation(data.asset.id, { toAssetId: targetID, relation: relationType });
+      toast.push("资产关系已创建", "success");
+      setRelationTarget("");
+      await reloadAsset();
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "创建关系失败", "error");
+    } finally {
+      setRelationBusy(false);
+    }
+  };
+
+  const removeRelation = async (relationID: number) => {
+    try {
+      await api.deleteAssetRelation(relationID);
+      toast.push("资产关系已删除", "info");
+      await reloadAsset();
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "删除关系失败", "error");
+    }
+  };
 
   const loadTelemetry = useCallback(async () => {
     if (!id) return;
@@ -220,6 +268,12 @@ export function AssetDetailPage() {
             <span className="inline-flex items-center gap-1.5">
               <FileText size={12.5} />
               档案
+            </span>
+          </TabButton>
+          <TabButton active={tab === "relations"} onClick={() => setTab("relations")}>
+            <span className="inline-flex items-center gap-1.5">
+              <Share2 size={12.5} />
+              关系 <span className="text-[11px] text-ink3">{data.relations?.length ?? 0}</span>
             </span>
           </TabButton>
           <TabButton active={tab === "performance"} onClick={() => setTab("performance")}>
@@ -382,6 +436,18 @@ export function AssetDetailPage() {
             identifiers={data.identifiers ?? []}
             changes={data.changes ?? []}
             onRefresh={() => void reloadAsset()}
+          />
+        ) : tab === "relations" ? (
+          <RelationsView
+            relations={data.relations ?? []}
+            canWrite={canWrite}
+            target={relationTarget}
+            relationType={relationType}
+            busy={relationBusy}
+            onTargetChange={setRelationTarget}
+            onTypeChange={setRelationType}
+            onAdd={() => void addRelation()}
+            onRemove={(relationID) => void removeRelation(relationID)}
           />
         ) : tab === "jobs" ? (
           <JobsView data={jobs} error={jobsError} onReload={() => void loadJobs()} />
@@ -823,6 +889,95 @@ ${job.output ? `\n${job.output}` : "\n（无输出）"}`}
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function RelationsView({
+  relations,
+  canWrite,
+  target,
+  relationType,
+  busy,
+  onTargetChange,
+  onTypeChange,
+  onAdd,
+  onRemove
+}: {
+  relations: AssetRelation[];
+  canWrite: boolean;
+  target: string;
+  relationType: string;
+  busy: boolean;
+  onTargetChange: (value: string) => void;
+  onTypeChange: (value: string) => void;
+  onAdd: () => void;
+  onRemove: (id: number) => void;
+}) {
+  return (
+    <div>
+      <PanelHeader title="资产关系" subtitle={`${relations.length} 条 · 依赖 / 运行于 / 成员 / 管理 / 连接`} />
+      {canWrite && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
+          <span className="text-[11.5px] text-ink3">新增关系：当前资产 →</span>
+          <input
+            className="input h-8 w-[140px] text-[12px]"
+            value={target}
+            onChange={(event) => onTargetChange(event.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="目标资产 ID"
+            inputMode="numeric"
+          />
+          <select
+            className="input h-8 w-[120px] text-[12px]"
+            value={relationType}
+            onChange={(event) => onTypeChange(event.target.value)}
+          >
+            {Object.entries(relationLabels).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <button type="button" className="btn btn-secondary h-8" onClick={onAdd} disabled={busy}>
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+            添加
+          </button>
+        </div>
+      )}
+      {relations.length === 0 ? (
+        <Empty title="暂无资产关系" description="可在拓扑页查看关系，或在此为资产建立依赖。" />
+      ) : (
+        <div className="divide-y divide-line">
+          {relations.map((relation) => (
+            <div key={relation.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className={`pill ${relation.direction === "out" ? "bg-brand-soft text-brand-strong" : "bg-subtle text-ink2"}`}>
+                  {relation.direction === "out" ? "出" : "入"}
+                </span>
+                <span className="pill bg-subtle text-ink2">{relationLabels[relation.relation] ?? relation.relation}</span>
+                <Link to={`/assets/${relation.asset.id}`} className="text-[12.5px] font-medium text-ink hover:underline">
+                  {relation.asset.hostname}
+                </Link>
+                <span className="font-mono text-[11px] text-ink3">{relation.asset.ip}</span>
+                {relation.asset.businessSystem && (
+                  <span className="text-[10.5px] text-ink3">{relation.asset.businessSystem}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <RiskMeter value={relation.asset.risk} width={64} />
+                {canWrite && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost h-7 px-2 text-ink3"
+                    onClick={() => onRemove(relation.id)}
+                    aria-label="删除关系"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

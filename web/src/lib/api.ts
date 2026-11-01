@@ -5,11 +5,16 @@ import type {
   AssetItem,
   AssetJobs,
   AssetMergeStats,
+  AssetRelation,
   AssetTelemetry,
   AuditItem,
+  BusinessSystem,
   DiscoveryCandidate,
   DiscoveryJob,
   DiscoveryPolicy,
+  GovernanceItem,
+  GovernanceSummary,
+  Topology,
   Finding,
   FindingDetail,
   HarnessApproval,
@@ -494,6 +499,84 @@ export const api = {
 
   updateDiscoveryPolicy(policy: DiscoveryPolicy): Promise<{ ok: boolean; policy: DiscoveryPolicy }> {
     return request("/settings/discovery", { method: "PUT", body: JSON.stringify(policy) });
+  },
+
+  assetRelations(id: number | string): Promise<{ items: AssetRelation[] }> {
+    return request(`/assets/${id}/relations`);
+  },
+
+  createAssetRelation(
+    id: number | string,
+    payload: { toAssetId: number; relation: string }
+  ): Promise<{ ok: boolean; id: number }> {
+    return request(`/assets/${id}/relations`, { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  deleteAssetRelation(id: number): Promise<{ ok: boolean }> {
+    return request(`/assets/relations/${id}`, { method: "DELETE" });
+  },
+
+  topology(params: {
+    businessSystem?: string;
+    env?: string;
+    status?: string;
+    assetType?: string;
+  } = {}): Promise<Topology> {
+    return request(`/topology${query(params)}`);
+  },
+
+  businessSystems(): Promise<{ items: BusinessSystem[] }> {
+    return request("/business-systems");
+  },
+
+  updateBusinessSystem(
+    name: string,
+    payload: { tier: string; owner?: string; description?: string }
+  ): Promise<{ ok: boolean; businessSystem: BusinessSystem; recomputed: number }> {
+    return request(`/business-systems/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteBusinessSystem(name: string): Promise<{ ok: boolean; recomputed: number }> {
+    return request(`/business-systems/${encodeURIComponent(name)}`, { method: "DELETE" });
+  },
+
+  governanceSummary(params: { days?: number; changeDays?: number } = {}): Promise<{
+    summary: GovernanceSummary;
+    staleCutoff: string;
+    changeCutoff: string;
+  }> {
+    return request(`/governance/summary${query(params)}`);
+  },
+
+  governanceTodos(params: {
+    type: string;
+    page?: number;
+    pageSize?: number;
+    days?: number;
+    changeDays?: number;
+  }): Promise<{ type: string; total: number; page: number; pageSize: number; items: GovernanceItem[] }> {
+    return request(`/governance/todos${query(params)}`);
+  },
+
+  batchUpdateAssets(
+    ids: number[],
+    patch: {
+      owner?: string;
+      ownerEmail?: string;
+      department?: string;
+      businessSystem?: string;
+      status?: string;
+      tier?: string;
+      env?: string;
+    }
+  ): Promise<{ ok: boolean; updated: number; unchanged: number; failed: { id: number; error: string }[] }> {
+    return request("/assets/batch", {
+      method: "POST",
+      body: JSON.stringify({ ids, patch })
+    });
   },
 
   asset(id: number | string): Promise<AssetDetail> {

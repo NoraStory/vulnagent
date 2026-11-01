@@ -176,10 +176,22 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets/{id}", a.handleAssetDetail)
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.handleAssetPatch)
 	mux.HandleFunc("GET /api/v1/assets/{id}/changes", a.handleAssetChanges)
+	mux.HandleFunc("GET /api/v1/assets/{id}/relations", a.handleAssetRelations)
+	mux.HandleFunc("POST /api/v1/assets/{id}/relations", a.handleAssetRelationCreate)
+	mux.HandleFunc("DELETE /api/v1/assets/relations/{id}", a.handleAssetRelationDelete)
+	mux.HandleFunc("POST /api/v1/assets/batch", a.handleAssetBatch)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/tags", a.handleAssetTags)
 	mux.HandleFunc("GET /api/v1/assets/{id}/telemetry", a.handleAssetTelemetry)
 	mux.HandleFunc("GET /api/v1/assets/{id}/jobs", a.handleAssetJobs)
 	mux.HandleFunc("POST /api/v1/assets/ssh-scan", a.handleSSHScan)
+
+	// 业务系统重要性、拓扑与治理待办
+	mux.HandleFunc("GET /api/v1/business-systems", a.handleBusinessSystems)
+	mux.HandleFunc("PUT /api/v1/business-systems/{name}", a.handleBusinessSystemUpsert)
+	mux.HandleFunc("DELETE /api/v1/business-systems/{name}", a.handleBusinessSystemDelete)
+	mux.HandleFunc("GET /api/v1/topology", a.handleTopology)
+	mux.HandleFunc("GET /api/v1/governance/summary", a.handleGovernanceSummary)
+	mux.HandleFunc("GET /api/v1/governance/todos", a.handleGovernanceTodos)
 
 	// 资产自动发现：任务、候选审核与授权网段策略
 	mux.HandleFunc("GET /api/v1/discovery/jobs", a.handleDiscoveryJobs)

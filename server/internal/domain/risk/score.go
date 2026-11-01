@@ -67,6 +67,32 @@ func TierCN(tier string) string {
 	return "一般"
 }
 
+// BusinessFactor 业务系统重要性系数：核心 1.0、重要 0.9、一般/未登记 0.8
+func BusinessFactor(tier string) float64 {
+	switch tier {
+	case "core":
+		return 1.0
+	case "important":
+		return 0.9
+	case "normal":
+		return 0.8
+	}
+	return 0.8
+}
+
+// BusinessCN 业务系统重要性的中文名
+func BusinessCN(tier string) string {
+	switch tier {
+	case "core":
+		return "核心"
+	case "important":
+		return "重要"
+	case "normal":
+		return "一般"
+	}
+	return "一般"
+}
+
 // ExploitFactor 在野利用系数
 func ExploitFactor(state string) float64 {
 	switch state {
@@ -78,9 +104,9 @@ func ExploitFactor(state string) float64 {
 	return 0
 }
 
-// AssetWeight 资产权重 = 暴露面系数 × 业务等级系数，上限 1.0
-func AssetWeight(exposure, tier string) float64 {
-	w := ExposureFactor(exposure) * TierFactor(tier)
+// AssetWeight 资产权重 = 暴露面系数 × 业务等级系数 × 业务系统重要性系数，上限 1.0
+func AssetWeight(exposure, tier, businessTier string) float64 {
+	w := ExposureFactor(exposure) * TierFactor(tier) * BusinessFactor(businessTier)
 	if w > 1.0 {
 		w = 1.0
 	}
@@ -124,8 +150,8 @@ func exploitNote(state string) string {
 }
 
 // Score 按公式实时计算风险分与优先级，并产出可解释的四项因子
-func (p Policy) Score(cvss, epss float64, exploit, exposure, tier string) (int, string, []Factor) {
-	aw := AssetWeight(exposure, tier)
+func (p Policy) Score(cvss, epss float64, exploit, exposure, tier, businessTier string) (int, string, []Factor) {
+	aw := AssetWeight(exposure, tier, businessTier)
 	sCvss := cvss / 10
 	sEpss := epss
 	if sEpss < 0 {
@@ -172,7 +198,7 @@ func (p Policy) Score(cvss, epss float64, exploit, exposure, tier string) (int, 
 			Value:    aw,
 			Weight:   p.Weights.Asset,
 			Weighted: round1(100 * p.Weights.Asset * aw),
-			Note:     fmt.Sprintf("%s · %s业务", ExposureCN(exposure), TierCN(tier)),
+			Note:     fmt.Sprintf("%s · %s业务 · 业务系统%s", ExposureCN(exposure), TierCN(tier), BusinessCN(businessTier)),
 		},
 	}
 	return riskScore, priority, breakdown

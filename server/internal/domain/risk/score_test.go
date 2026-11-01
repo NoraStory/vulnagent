@@ -19,7 +19,7 @@ func TestScoreTable(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, priority, factors := p.Score(c.cvss, c.epss, c.exploit, c.expose, c.tier)
+			got, priority, factors := p.Score(c.cvss, c.epss, c.exploit, c.expose, c.tier, "core")
 			if got != c.wantRisk {
 				t.Fatalf("风险分 = %d，期望 %d", got, c.wantRisk)
 			}
@@ -35,29 +35,41 @@ func TestScoreTable(t *testing.T) {
 
 func TestPriorityHardRules(t *testing.T) {
 	p := DefaultPolicy()
-	if _, prio, _ := p.Score(9.8, 0, "poc", "isolated", "normal"); prio != "P0" {
+	if _, prio, _ := p.Score(9.8, 0, "poc", "isolated", "normal", "normal"); prio != "P0" {
 		t.Fatalf("CVSS≥9 且存在 POC 应判 P0，实际 %s", prio)
 	}
-	if _, prio, _ := p.Score(8.0, 0.55, "none", "internal", "normal"); prio != "P1" {
+	if _, prio, _ := p.Score(8.0, 0.55, "none", "internal", "normal", "normal"); prio != "P1" {
 		t.Fatalf("CVSS≥8 且 EPSS≥0.5 应判 P1，实际 %s", prio)
 	}
 }
 
 func TestAssetWeight(t *testing.T) {
 	cases := []struct {
-		exposure, tier string
-		want           float64
+		exposure, tier, business string
+		want                     float64
 	}{
-		{"public", "core", 1},
-		{"internal", "core", 0.6},
-		{"public", "normal", 0.5},
-		{"isolated", "normal", 0.1},
-		{"unknown", "unknown", 0.3},
+		{"public", "core", "core", 1},
+		{"internal", "core", "core", 0.6},
+		{"public", "normal", "core", 0.5},
+		{"isolated", "normal", "core", 0.1},
+		{"unknown", "unknown", "core", 0.3},
+		{"public", "core", "important", 0.9},
+		{"public", "core", "normal", 0.8},
+		{"public", "core", "", 0.8},
 	}
 	for _, c := range cases {
-		if got := AssetWeight(c.exposure, c.tier); got != c.want {
-			t.Fatalf("AssetWeight(%s,%s) = %v，期望 %v", c.exposure, c.tier, got, c.want)
+		if got := AssetWeight(c.exposure, c.tier, c.business); got != c.want {
+			t.Fatalf("AssetWeight(%s,%s,%s) = %v，期望 %v", c.exposure, c.tier, c.business, got, c.want)
 		}
+	}
+}
+
+func TestBusinessTierChangesScore(t *testing.T) {
+	p := DefaultPolicy()
+	core, _, _ := p.Score(9.8, 0.9, "kev", "public", "core", "core")
+	normal, _, _ := p.Score(9.8, 0.9, "kev", "public", "core", "normal")
+	if core <= normal {
+		t.Fatalf("核心业务系统风险分应高于一般业务：core=%d normal=%d", core, normal)
 	}
 }
 

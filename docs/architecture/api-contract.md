@@ -171,7 +171,7 @@
     { "factor": "cvss", "label": "CVSS 基础分", "value": 10.0, "weight": 0.4, "weighted": 40.0, "note": "满分" },
     { "factor": "epss", "label": "EPSS 利用概率", "value": 0.944, "weight": 0.2, "weighted": 18.9, "note": "近 30 天在野" },
     { "factor": "exploit", "label": "在野利用", "value": "kev", "weight": 0.25, "weighted": 25.0, "note": "CISA KEV" },
-    { "factor": "asset", "label": "资产权重", "value": 0.8, "weight": 0.15, "weighted": 12.0, "note": "公网 · 核心业务" }
+    { "factor": "asset", "label": "资产权重", "value": 0.8, "weight": 0.15, "weighted": 12.0, "note": "公网 · 核心业务 · 业务系统一般" }
   ],
   "poc": [{ "link": "https://github.com/...", "insertedAt": "2026-10-20T00:00:00+08:00" }],
   "advice": {
@@ -644,6 +644,62 @@ Webhook 请求体：
   "maxPorts": 32, "maxJobsPerHour": 10, "reverseDns": true
 }
 ```
+
+### 业务系统、拓扑、关系与治理
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/business-systems` | viewer+ | 业务系统及资产数（未登记项按一般业务补齐） |
+| PUT | `/business-systems/{name}` | admin | 设置重要性 `core/important/normal`，立即重算风险分 |
+| DELETE | `/business-systems/{name}` | admin | 删除登记（资产字段保留，重新按一般业务计算） |
+| GET | `/topology?businessSystem=&env=` | viewer+ | 拓扑节点、关系边与业务系统列表（≤300 节点） |
+| GET | `/assets/{id}/relations` | viewer+ | 资产关系（出入方向 + 对端摘要） |
+| POST | `/assets/{id}/relations` | operator+ | 创建关系 `{toAssetId, relation}` |
+| DELETE | `/assets/relations/{id}` | operator+ | 删除关系 |
+| GET | `/governance/summary?days=7&changeDays=30` | viewer+ | 四类待办数量 |
+| GET | `/governance/todos?type=&page=&pageSize=` | viewer+ | 待办列表，type 为 `owner_missing/stale/duplicate/exposure_changed` |
+| POST | `/assets/batch` | operator+ | 批量更新责任人/部门/业务系统/状态等（≤200 台） |
+
+`PUT /business-systems/{name}`：
+
+```json
+{ "tier": "core", "owner": "张三", "description": "交易主链路" }
+```
+
+```json
+{ "ok": true, "businessSystem": { "name": "交易系统", "tier": "core" }, "recomputed": 128 }
+```
+
+`GET /topology`：
+
+```json
+{
+  "assets": [
+    { "id": 3, "hostname": "web-01", "ip": "10.20.9.21", "businessSystem": "交易系统", "env": "prod",
+      "tier": "core", "exposure": "public", "assetType": "server", "status": "active",
+      "risk": 96, "findings": 11, "components": 214 }
+  ],
+  "relations": [ { "id": 1, "fromAssetId": 3, "toAssetId": 4, "relation": "depends_on" } ],
+  "businessSystems": [ { "name": "交易系统", "tier": "core", "assetCount": 2 } ],
+  "truncated": false, "total": 2
+}
+```
+
+关系类型：`depends_on | runs_on | member_of | manages | connects_to`。`GET /assets/{id}/relations` 返回
+`direction`（`out/in`）与对端资产摘要（hostname/ip/businessSystem/env/risk）。
+
+`POST /assets/batch`：
+
+```json
+{ "ids": [3, 4], "patch": { "owner": "张三", "department": "基础架构", "status": "retired" } }
+```
+
+```json
+{ "ok": true, "updated": 2, "unchanged": 0, "failed": [] }
+```
+
+`type` 说明：`owner_missing`（责任人缺失）、`stale`（Agent 资产超过 `days` 天未上报）、
+`duplicate`（IP/MAC/序列号相同的资产组，含 `related` 成员）、`exposure_changed`（`changeDays` 天内暴露面变更）。
 
 ---
 

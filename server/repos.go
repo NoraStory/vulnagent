@@ -40,6 +40,10 @@ func (a *App) memoryRepo() *sqlite.MemoryRepo { return sqlite.NewMemoryRepo(a.db
 
 func (a *App) discoveryRepo() *sqlite.DiscoveryRepo { return sqlite.NewDiscoveryRepo(a.db) }
 
+func (a *App) businessRepo() *sqlite.BusinessRepo { return sqlite.NewBusinessRepo(a.db) }
+
+func (a *App) governanceRepo() *sqlite.GovernanceRepo { return sqlite.NewGovernanceRepo(a.db) }
+
 // readDB 返回 Harness 读工具专用的只读连接；打开失败时回落到主连接
 func (a *App) readDB() *sql.DB {
 	a.roOnce.Do(func() {

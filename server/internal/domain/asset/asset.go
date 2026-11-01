@@ -51,6 +51,8 @@ type Asset struct {
 	Source      string   `json:"source"`
 	AgentStatus string   `json:"agentStatus"`
 	LastSeenAt  string   `json:"lastSeenAt"`
+	// BusinessTier 业务系统重要性（core/important/normal），由 business_systems 解析
+	BusinessTier string `json:"businessTier"`
 }
 
 // Component 资产上的一个软件成分
