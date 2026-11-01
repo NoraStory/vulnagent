@@ -530,7 +530,7 @@ func (a *App) importAssetRow(r *http.Request, fields map[string]string, strategy
 			row.Message = "将新建资产"
 			return row
 		}
-		id, err := a.assetRepo().Create(r.Context(), fields, splitAssetTags(fields["tags"]), importIdentifiers(fields))
+		id, err := a.assetRepo().Create(r.Context(), fields, splitAssetTags(fields["tags"]), importIdentifiers(fields), "import")
 		if err != nil {
 			row.Action = "error"
 			row.Message = "新建资产失败：" + err.Error()

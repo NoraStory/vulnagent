@@ -292,16 +292,20 @@ func (r *AssetRepo) FindByHostname(ctx context.Context, hostname string) (int64,
 	return id, true, nil
 }
 
-// Create 新建资产档案并写入标签与标识
-func (r *AssetRepo) Create(ctx context.Context, fields map[string]string, tags []string, identifiers map[string]string) (int64, error) {
+// Create 新建资产档案并写入标签与标识；source 为采集来源（import/discovery/manual）
+func (r *AssetRepo) Create(ctx context.Context, fields map[string]string, tags []string, identifiers map[string]string, source string) (int64, error) {
 	now := nowString()
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "import"
+	}
 	cols := []string{"hostname", "ip", "os_family", "os_version", "os_arch", "kernel", "env", "exposure", "tier",
 		"asset_type", "status", "owner", "owner_email", "department", "business_system", "location",
 		"cloud_provider", "cloud_account", "region", "instance_id", "mac", "serial", "virtualized",
 		"source", "agent_status", "last_seen_at", "created_at", "updated_at"}
 	defaults := map[string]string{
 		"env": "prod", "exposure": "internal", "tier": "normal", "asset_type": "server", "status": "active",
-		"source": "import", "agent_status": "none",
+		"source": source, "agent_status": "none",
 	}
 	values := make([]any, 0, len(cols))
 	for _, col := range cols {
@@ -340,7 +344,7 @@ func (r *AssetRepo) Create(ctx context.Context, fields map[string]string, tags [
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
-			VALUES(?,?,?,'import',?)`, id, kind, value, now); err != nil {
+			VALUES(?,?,?,?,?)`, id, kind, value, source, now); err != nil {
 			return 0, err
 		}
 	}
@@ -349,7 +353,7 @@ func (r *AssetRepo) Create(ctx context.Context, fields map[string]string, tags [
 			return 0, err
 		}
 	}
-	if err := insertAssetChange(ctx, tx, id, "created", "", "导入创建资产", "import", "import"); err != nil {
+	if err := insertAssetChange(ctx, tx, id, "created", "", "创建资产", source, source); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {

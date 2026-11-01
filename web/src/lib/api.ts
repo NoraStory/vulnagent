@@ -7,6 +7,9 @@ import type {
   AssetMergeStats,
   AssetTelemetry,
   AuditItem,
+  DiscoveryCandidate,
+  DiscoveryJob,
+  DiscoveryPolicy,
   Finding,
   FindingDetail,
   HarnessApproval,
@@ -429,6 +432,68 @@ export const api = {
       throw await toApiError(response, "导出失败");
     }
     return response.blob();
+  },
+
+  discoveryJobs(params: { status?: string; page?: number; pageSize?: number } = {}): Promise<Paged<DiscoveryJob>> {
+    return request(`/discovery/jobs${query(params)}`);
+  },
+
+  createDiscoveryJob(payload: {
+    name?: string;
+    cidrs: string[];
+    ports?: number[];
+    concurrency?: number;
+    timeoutMs?: number;
+    reverseDns?: boolean;
+  }): Promise<{ ok: boolean; job: DiscoveryJob }> {
+    return request("/discovery/jobs", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  discoveryJob(id: number): Promise<{ job: DiscoveryJob; counts: Record<string, number> }> {
+    return request(`/discovery/jobs/${id}`);
+  },
+
+  cancelDiscoveryJob(id: number): Promise<{ ok: boolean }> {
+    return request(`/discovery/jobs/${id}/cancel`, { method: "POST" });
+  },
+
+  discoveryCandidates(params: {
+    jobId?: number;
+    decision?: string;
+    q?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<Paged<DiscoveryCandidate>> {
+    return request(`/discovery/candidates${query(params)}`);
+  },
+
+  decideDiscoveryCandidate(
+    id: number,
+    action: "approve" | "ignore" | "merge",
+    body?: { assetId?: number }
+  ): Promise<{ ok: boolean; assetId?: number; decision?: string }> {
+    return request(`/discovery/candidates/${id}/${action}`, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined
+    });
+  },
+
+  batchDiscoveryCandidates(
+    ids: number[],
+    action: "approve" | "ignore"
+  ): Promise<{ ok: boolean; processed: number; failed: { id: number; error: string }[] }> {
+    return request("/discovery/candidates/batch", {
+      method: "POST",
+      body: JSON.stringify({ ids, action })
+    });
+  },
+
+  discoveryPolicy(): Promise<{ policy: DiscoveryPolicy }> {
+    return request("/settings/discovery");
+  },
+
+  updateDiscoveryPolicy(policy: DiscoveryPolicy): Promise<{ ok: boolean; policy: DiscoveryPolicy }> {
+    return request("/settings/discovery", { method: "PUT", body: JSON.stringify(policy) });
   },
 
   asset(id: number | string): Promise<AssetDetail> {

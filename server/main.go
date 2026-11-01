@@ -92,6 +92,10 @@ type App struct {
 	// SSH 会话协同：在线会话与分享链接
 	liveMu sync.Mutex
 	live   map[string]*sshLiveSession
+
+	// 网段发现：运行中任务的取消句柄
+	discoveryMu     sync.Mutex
+	discoveryCancel map[int64]context.CancelFunc
 }
 
 func (a *App) routes(mux *http.ServeMux) {
@@ -176,6 +180,17 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets/{id}/telemetry", a.handleAssetTelemetry)
 	mux.HandleFunc("GET /api/v1/assets/{id}/jobs", a.handleAssetJobs)
 	mux.HandleFunc("POST /api/v1/assets/ssh-scan", a.handleSSHScan)
+
+	// 资产自动发现：任务、候选审核与授权网段策略
+	mux.HandleFunc("GET /api/v1/discovery/jobs", a.handleDiscoveryJobs)
+	mux.HandleFunc("POST /api/v1/discovery/jobs", a.handleDiscoveryJobs)
+	mux.HandleFunc("GET /api/v1/discovery/jobs/{id}", a.handleDiscoveryJobDetail)
+	mux.HandleFunc("POST /api/v1/discovery/jobs/{id}/cancel", a.handleDiscoveryJobCancel)
+	mux.HandleFunc("GET /api/v1/discovery/candidates", a.handleDiscoveryCandidates)
+	mux.HandleFunc("POST /api/v1/discovery/candidates/batch", a.handleDiscoveryCandidatesBatch)
+	mux.HandleFunc("POST /api/v1/discovery/candidates/{id}/{action}", a.handleDiscoveryCandidateAction)
+	mux.HandleFunc("GET /api/v1/settings/discovery", a.handleDiscoveryPolicy)
+	mux.HandleFunc("PUT /api/v1/settings/discovery", a.handleDiscoveryPolicy)
 
 	// Agent 下行作业：Agent 令牌鉴权
 	mux.HandleFunc("GET /api/v1/agent/jobs", a.handleAgentJobs)
@@ -274,6 +289,11 @@ func runServer() {
 	if _, err := db.Exec(`UPDATE ssh_agent_runs SET status='failed', error='服务重启，运行中断', finished_at=? WHERE status='running'`,
 		fmtT(nowT())); err != nil {
 		slog.Warn("清理中断的 SSH Agent 运行失败", "err", err)
+	}
+	if n, err := app.discoveryRepo().InterruptUnfinishedJobs(context.Background()); err != nil {
+		slog.Warn("清理中断的发现任务失败", "err", err)
+	} else if n > 0 {
+		slog.Info("已标记中断的发现任务", "count", n)
 	}
 	app.skills = loadSkills()
 	slog.Info("运维技能已加载", "count", len(app.skills.List()), "dir", app.skills.root)

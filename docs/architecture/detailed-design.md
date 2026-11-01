@@ -530,6 +530,49 @@ CREATE TABLE discovery_results (...);
 源资产标记 `status=merged` + `merged_into=target`，写入 `merged_into` 关系与两端变更历史；
 列表默认过滤已合并资产（`includeArchived=1` 可见）。合并仅限 admin。
 
+### 5.1.2 网段发现（已落地，迁移 0015）
+
+```sql
+-- 任务：pending → running → completed / failed / cancelled
+CREATE TABLE discovery_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL DEFAULT '',
+  cidrs TEXT NOT NULL DEFAULT '', ports TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending', total INTEGER NOT NULL DEFAULT 0,
+  scanned INTEGER NOT NULL DEFAULT 0, found INTEGER NOT NULL DEFAULT 0,
+  options TEXT NOT NULL DEFAULT '{}', cancel_requested INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL DEFAULT '', finished_at TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT ''
+);
+
+-- 候选：同一任务内按 IP 唯一
+CREATE TABLE discovery_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, ip TEXT NOT NULL,
+  hostname TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
+  open_ports TEXT NOT NULL DEFAULT '', services TEXT NOT NULL DEFAULT '[]', evidence TEXT NOT NULL DEFAULT '',
+  matched_asset_id INTEGER NOT NULL DEFAULT 0,
+  decision TEXT NOT NULL DEFAULT 'new', confidence REAL NOT NULL DEFAULT 0,
+  decided_by TEXT NOT NULL DEFAULT '', decided_at TEXT NOT NULL DEFAULT '', asset_id INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '', UNIQUE(job_id, ip)
+);
+```
+
+**执行模型**：handler 校验策略 → 展开 CIDR → 写入 pending 任务 → 启动 goroutine 扫描；
+`internal/discovery` 负责纯扫描逻辑（TCP dial + 读 200ms banner + 反向 DNS），控制面负责进度落库、
+候选匹配与审计。同一时间只允许一个任务（`CountRunningJobs`），每 16 台回调一次进度并检查取消标记；
+服务重启时把残留 pending/running 标记为失败。
+
+**安全边界**：
+
+- 任务网段必须完全落在策略 `allowedCidrs` 内，且不允许 `0.0.0.0/0`，IPv6 暂不支持。
+- 主机数（`maxHosts`，默认 1024）、端口数（`maxPorts`，默认 32）、并发（`maxConcurrency`，默认 64）、
+  单端口超时（`timeoutMs`，默认 600ms）均有上限；每小时任务数默认 10。
+- 只做 TCP 连接与被动读取 banner，不发送 HTTP 请求、不做 ICMP、不做漏洞利用。
+- 创建、拒绝、取消、确认、忽略、合并、策略变更全部写审计。
+
+**候选匹配**：先按反向 DNS 主机名匹配 `asset_identifiers`/`assets.hostname`（置信度 0.95），
+再按 IP 标识匹配（0.85），未命中记为 `new`（0.6）。确认新候选时创建 `source=discovery` 的资产并登记
+主机名/IP/MAC 标识；确认已有候选只补充标识；合并（admin）把标识写入指定资产并把候选标记 `merged`。
+
 ### 5.2 目标模型（规划中，尚未实现）
 
 > 以下为后续演进方向（Agent 注册/心跳、SBOM 快照版本化、EPSS 历史、API Token、多租户）。
@@ -868,6 +911,13 @@ CREATE TABLE sync_cursors (
 | GET | `/api/v1/assets/export` | operator+ | 按筛选导出资产 CSV（UTF-8 BOM） |
 | POST | `/api/v1/assets/import` | operator+ | CSV 导入，支持 dryRun 与冲突策略 |
 | POST | `/api/v1/assets/merge` | admin | 合并重复资产（保留源资产审计记录） |
+| GET/POST | `/api/v1/discovery/jobs` | viewer+ / operator+ | 发现任务列表 / 创建并异步执行 |
+| GET | `/api/v1/discovery/jobs/{id}` | viewer+ | 任务进度与候选统计 |
+| POST | `/api/v1/discovery/jobs/{id}/cancel` | operator+ | 取消运行中任务 |
+| GET | `/api/v1/discovery/candidates` | viewer+ | 候选资产列表 |
+| POST | `/api/v1/discovery/candidates/{id}/{approve\|ignore\|merge}` | operator+ / admin | 候选处置 |
+| POST | `/api/v1/discovery/candidates/batch` | operator+ | 批量确认/忽略 |
+| GET/PUT | `/api/v1/settings/discovery` | viewer+ / admin | 授权网段与限速策略 |
 | POST | `/api/v1/assets/ssh-scan` | operator+ | SSH 兜底采集（只读脚本，凭据不落库） |
 | GET | `/api/v1/findings` | viewer+ | 按 priority/status/asset/时间筛选 |
 | GET | `/api/v1/findings/{id}` | viewer+ | 含 score_breakdown、POC、修复建议 |

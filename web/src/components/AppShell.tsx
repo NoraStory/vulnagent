@@ -8,6 +8,7 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Radar,
   ScrollText,
   Server,
   ShieldAlert,
@@ -25,7 +26,8 @@ const navGroups = [
     items: [
       { to: "/", label: "概览", icon: LayoutDashboard },
       { to: "/findings", label: "漏洞", icon: ShieldAlert },
-      { to: "/assets", label: "资产", icon: Server }
+      { to: "/assets", label: "资产", icon: Server },
+      { to: "/discovery", label: "发现", icon: Radar }
     ]
   },
   {
@@ -49,6 +51,7 @@ const pageMeta: Record<string, { title: string; subtitle: string; crumb: string 
   "/": { title: "安全概览", subtitle: "漏洞态势、情报新鲜度与采集健康度", crumb: "概览" },
   "/findings": { title: "漏洞清单", subtitle: "按风险优先级排序，可解释、可闭环", crumb: "漏洞" },
   "/assets": { title: "资产与组件", subtitle: "主机清单、SBOM 与暴露面权重", crumb: "资产" },
+  "/discovery": { title: "资产发现", subtitle: "授权网段探活、候选审核与资产入库", crumb: "发现" },
   "/assistant": { title: "Agent 助手", subtitle: "只读工具直接执行，写操作需审批", crumb: "助手" },
   "/terminal": { title: "SSH 智能终端", subtitle: "多主机会话、AI 现场解读与命令审批", crumb: "终端" },
   "/trajectory": { title: "操作轨迹", subtitle: "审计、主机作业与工具调用的统一时间线", crumb: "轨迹" },

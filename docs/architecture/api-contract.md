@@ -583,6 +583,68 @@ Webhook 请求体：
 
 - 每次调用写一条 `scan.batch` 审计记录。
 
+### 资产发现（discovery）
+
+网段发现仅允许授权 CIDR，默认白名单为 `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`127.0.0.0/8`；
+任务展开后会校验白名单、主机数上限与端口数量，越权请求返回 `400 cidr_not_allowed` 并写 `discovery.job.reject` 审计。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/discovery/jobs?status=&page=1&pageSize=20` | viewer+ | 任务列表（按 ID 倒序） |
+| POST | `/discovery/jobs` | operator+ | 创建并异步执行发现任务 |
+| GET | `/discovery/jobs/{id}` | viewer+ | 任务详情与候选处置统计 |
+| POST | `/discovery/jobs/{id}/cancel` | operator+ | 取消 pending/running 任务 |
+| GET | `/discovery/candidates?jobId=&decision=&q=&page=1&pageSize=20` | viewer+ | 候选资产列表 |
+| POST | `/discovery/candidates/{id}/approve` | operator+ | 确认候选：新建资产或补充已有资产标识 |
+| POST | `/discovery/candidates/{id}/ignore` | operator+ | 忽略候选 |
+| POST | `/discovery/candidates/{id}/merge` | admin | 合并到指定资产（写入 IP/主机名/MAC 标识） |
+| POST | `/discovery/candidates/batch` | operator+ | 批量确认/忽略（单次 ≤200） |
+| GET/PUT | `/settings/discovery` | viewer+ / admin | 授权网段、默认端口与限速策略 |
+
+`POST /discovery/jobs`：
+
+```json
+{ "name": "办公网巡检", "cidrs": ["10.20.9.0/24"], "ports": [22, 80, 443], "concurrency": 32, "timeoutMs": 600, "reverseDns": true }
+```
+
+- `cidrs` 支持 IPv4 网段或单个 IP；不支持 IPv6；`0.0.0.0/0`、白名单外网段、超过 `maxHosts` 的网段一律拒绝。
+- `ports` 留空使用策略默认端口；同一时间只允许一个任务执行（`409 job_running`），每小时任务数受 `maxJobsPerHour` 限制（`429 too_many_jobs`）。
+- 返回 `202`：`{ "ok": true, "job": { "id": 12, "status": "pending", "total": 256, ... } }`。
+
+`GET /discovery/jobs/{id}`：
+
+```json
+{
+  "job": { "id": 12, "status": "running", "total": 256, "scanned": 64, "found": 3, "cidrs": "10.20.9.0/24", "ports": "22,80,443", "cancelRequested": false },
+  "counts": { "new": 2, "existing": 1 }
+}
+```
+
+`GET /discovery/candidates` item：
+
+```json
+{
+  "id": 9, "jobId": 12, "ip": "10.20.9.21", "hostname": "web-01", "mac": "",
+  "openPorts": "22,443", "services": "[{\"port\":22,\"banner\":\"SSH-2.0-OpenSSH_9.6\"}]",
+  "evidence": "tcp/22 SSH-2.0-OpenSSH_9.6; tcp/443 open",
+  "matchedAssetId": 0, "decision": "new", "confidence": 0.6, "assetId": 0
+}
+```
+
+- `decision`：`new`（新发现）、`existing`（通过主机名/IP 匹配到已有资产）、`approved`、`ignored`、`merged`。
+- `POST .../merge` 请求体 `{ "assetId": 3 }`；`POST .../batch` 请求体 `{ "ids": [9,10], "action": "approve|ignore" }`。
+
+策略对象：
+
+```json
+{
+  "allowedCidrs": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"],
+  "defaultPorts": [22, 80, 443, 3389, 3306, 5432, 6379, 9200],
+  "maxHosts": 1024, "maxConcurrency": 64, "timeoutMs": 600,
+  "maxPorts": 32, "maxJobsPerHour": 10, "reverseDns": true
+}
+```
+
 ---
 
 ## 5. 产品映射（admin）

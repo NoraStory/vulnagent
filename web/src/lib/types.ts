@@ -248,6 +248,53 @@ export interface AssetMergeStats {
   relations: number;
 }
 
+export interface DiscoveryJob {
+  id: number;
+  name: string;
+  cidrs: string;
+  ports: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  total: number;
+  scanned: number;
+  found: number;
+  options: string;
+  cancelRequested: boolean;
+  createdBy: string;
+  createdAt: string;
+  startedAt: string;
+  finishedAt: string;
+  error: string;
+}
+
+export interface DiscoveryCandidate {
+  id: number;
+  jobId: number;
+  ip: string;
+  hostname: string;
+  mac: string;
+  openPorts: string;
+  services: string;
+  evidence: string;
+  matchedAssetId: number;
+  decision: "new" | "existing" | "approved" | "ignored" | "merged";
+  confidence: number;
+  decidedBy: string;
+  decidedAt: string;
+  assetId: number;
+  createdAt: string;
+}
+
+export interface DiscoveryPolicy {
+  allowedCidrs: string[];
+  defaultPorts: number[];
+  maxHosts: number;
+  maxConcurrency: number;
+  timeoutMs: number;
+  maxPorts: number;
+  maxJobsPerHour: number;
+  reverseDns: boolean;
+}
+
 export interface AssetComponent {
   purl: string;
   name: string;
