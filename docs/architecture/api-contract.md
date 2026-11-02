@@ -1794,12 +1794,16 @@ Agent 的 `status` 事件新增：
   "sampledAt": "2026-11-02T18:40:00+08:00", "elapsedMs": 860,
   "available": true, "nvidiaSmi": true,
   "gpus": [{
-    "name": "NVIDIA GeForce RTX 4090", "memoryMb": 24564, "memoryUsedMb": 1024,
+    "index": 0, "uuid": "GPU-xxxx", "name": "NVIDIA GeForce RTX 4090",
+    "memoryMb": 24564, "memoryUsedMb": 1024, "memoryUtilization": 12,
     "driver": "550.54.14", "utilization": 37, "persistenceMode": "Enabled",
-    "powerLimitW": 450, "powerDefaultW": 450, "clockMhz": 2100, "maxClockMhz": 2520,
-    "throttle": "Not Active"
+    "powerLimitW": 450, "powerDefaultW": 450, "powerMaxW": 500, "powerDrawW": 120.5,
+    "clockMhz": 2100, "maxClockMhz": 2520, "memoryClockMhz": 10501,
+    "tempC": 62, "fanPercent": 45, "pstate": "P2", "computeMode": "Default",
+    "migMode": "Disabled", "throttle": "Not Active",
+    "processes": [{ "pid": 1234, "name": "python", "memoryMb": 512 }]
   }],
-  "cuda": "12.4", "cpuModel": "Intel Xeon Gold 6338", "cpuCores": 32, "cpuGovernor": "performance",
+  "cuda": "12.4", "driver": "550.54.14", "cpuModel": "Intel Xeon Gold 6338", "cpuCores": 32, "cpuGovernor": "performance",
   "memTotalKb": 64000000, "swapTotalKb": 0,
   "endpointReady": true, "accelEnabled": true, "baselineAt": "2026-11-02T18:30:00+08:00",
   "suggestions": [{
@@ -1812,6 +1816,26 @@ Agent 的 `status` 事件新增：
 
 - 无 NVIDIA 驱动时 `nvidiaSmi=false`、`available=false`，`suggestions` 给出安装提示；HTTP 仍为 200。
 - `endpointReady` 表示服务端已配置 `VA_GPU_LLM_*`，`accelEnabled` 为主机加速开关。
+- 加速能力与系统指标在同一 SSH 连接上并发采集；GPU 字段兼容旧版 10 字段输出。
+
+#### GET /ssh/hosts/{id}/accel/live（viewer+）
+
+轻量实时 GPU 指标，供页面 5 秒轮询；后端缓存 3 秒，`refresh=1` 强制重采。只执行一条 `nvidia-smi --query-gpu`，不重复探测 CPU/驱动。
+
+```json
+{
+  "hostId": 7, "hostName": "gpu-01", "hostAddr": "10.0.0.7:22",
+  "sampledAt": "2026-11-02T18:40:05+08:00", "elapsedMs": 180, "available": true,
+  "gpus": [{
+    "index": 0, "uuid": "GPU-xxxx", "name": "NVIDIA GeForce RTX 4090",
+    "memoryMb": 24564, "memoryUsedMb": 2048, "utilization": 45, "memoryUtilization": 30,
+    "powerDrawW": 120.5, "powerLimitW": 450, "tempC": 62, "fanPercent": 45,
+    "pstate": "P2", "throttle": "Not Active"
+  }]
+}
+```
+
+- 无 GPU 时返回 200，`available=false` 且 `error` 说明原因；SSH 失败返回 `502`。
 
 #### POST /ssh/hosts/{id}/accel/baseline（operator+）
 
@@ -1855,7 +1879,8 @@ Agent 的 `status` 事件新增：
 #### 连接复用与缓存
 
 - 性能监控、服务加速、GPU 探测与 hashcat 共用进程内 SSH 连接池；空闲 3 分钟回收，复用前用空会话探活，失效自动重连。
-- `GET /ssh/hosts/{id}/accel` 命中 60 秒缓存时不建立 SSH 连接；`refresh=1` 强制重采。
+- `GET /ssh/hosts/{id}/accel` 命中 60 秒缓存时不建立 SSH 连接；`refresh=1` 强制重采。加速能力与系统指标并发采集。
+- `GET /ssh/hosts/{id}/accel/live` 命中 3 秒缓存时不建立 SSH 连接；页面在不可见时暂停轮询。
 
 ### 12.10 SSH 主机 hashcat 口令审计
 

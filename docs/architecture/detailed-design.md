@@ -1252,14 +1252,16 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 定位：面向开启加速的主机提供「能力探测 → 调优建议 → 基线对比」闭环；只读检测，不自动修改目标机。服务端 AI 推理端点（vLLM / TensorRT-LLM）作为其中一项能力保留。
 - 端点：服务端通过 `VA_GPU_LLM_BASE_URL` / `VA_GPU_LLM_API_KEY` / `VA_GPU_LLM_MODEL` 接入 OpenAI 兼容的本地推理服务；`BASE_URL + MODEL` 齐备即启用，未配置 Key 时使用占位值 `local`（多数本地服务不校验）。
 - 主机开关：`ssh_hosts.gpu_accel`（迁移 0019）按主机保存；`llmForHost` 在「主机开关开启且 GPU 端点已配置」时返回 GPU 客户端，否则回落默认端点，问答与 Agent（含收尾总结）统一走该选择。
-- 能力探测：`GET /api/v1/ssh/hosts/{id}/accel` 只读采集 `nvidia-smi` 设备/显存/驱动/利用率/持久化模式/功耗上限/当前与最高频率/降频原因，以及 CUDA 版本、CPU 型号/核数/调频策略、内存与 Swap。结果按主机缓存，供服务端调度节点列表使用。
-- 调优建议：基于探测结果生成 `suggestions`（持久化模式、功耗上限、降频、CPU governor、Swap），每条包含说明、影响、风险与可复制命令；服务端不执行任何变更。
+- 能力探测：`GET /api/v1/ssh/hosts/{id}/accel` 只读采集 `nvidia-smi` 设备索引/UUID/显存/驱动/利用率/显存利用率/持久化模式/功耗上限与峰值/实时功耗/当前与最高频率/显存频率/温度/风扇/P-State/Compute Mode/MIG/降频原因/GPU 计算进程，以及 CUDA/驱动版本、CPU 型号/核数/调频策略、内存与 Swap。加速能力与系统指标在同一 SSH 连接上并发采集，结果按主机缓存，供服务端调度节点列表使用。
+- 实时运行态：`GET /api/v1/ssh/hosts/{id}/accel/live` 仅执行一条 `nvidia-smi --query-gpu` 查询，返回利用率、显存、温度、功耗、风扇、P-State 与降频原因；后端缓存 3 秒，页面 5 秒轮询并支持 `refresh=1` 强制重采。
+- 兼容性：GPU 解析同时支持新版 21 字段与旧版 10 字段输出；旧部署无需修改脚本。
+- 调优建议：基于探测结果生成 `suggestions`（持久化模式、功耗上限、降频、温度 ≥80°C、CPU governor、Swap），每条包含说明、影响、风险与可复制命令；服务端不执行任何变更。
 - 基线对比：`POST /api/v1/ssh/hosts/{id}/accel/baseline` 保存当前能力画像与性能指标（迁移 0020 `ssh_accel_baselines`，每主机一条）；`POST /api/v1/ssh/hosts/{id}/accel/compare` 重新采样并返回 CPU/内存/负载/GPU 利用率/GPU 频率差值、配置变更（持久化、功耗、governor）与剩余建议。
 - 服务端调度框架：`GET /api/v1/accel/hosts` 返回已开启加速的主机及最近一次探测缓存（GPU、CUDA、就绪状态），作为后续服务端计算任务调度的候选节点。
 - 连接复用：性能监控、服务加速、GPU 探测与 hashcat 共用进程内 SSH 连接池；空闲 3 分钟回收，复用前通过空会话探活，失效自动重连。性能监控 2–3 秒轮询不再重复 TCP/认证握手。
-- 探测缓存：`GET /api/v1/ssh/hosts/{id}/accel` 默认返回 60 秒内缓存，页面「重新检测」使用 `?refresh=1` 强制重采；记录基线与对比始终实时采样。
+- 探测缓存：`GET /api/v1/ssh/hosts/{id}/accel` 默认返回 60 秒内缓存，页面「重新检测」使用 `?refresh=1` 强制重采；记录基线与对比始终实时采样。实时接口单独使用 3 秒缓存，避免页面轮询放大 SSH 压力。
 - 口令审计：目标机安装 hashcat 时，`POST /ssh/hosts/{id}/hashcat/benchmark` 运行 `hashcat -b -m 0` 对比 CPU（`-D 1`）与 GPU（`-D 2`）速度；`POST /ssh/hosts/{id}/hashcat/audit` 将最多 100 条哈希经 SFTP 写入 `/tmp`，按 `-m <mode> -a 0 --runtime 300` 字典审计后立即删除临时文件，返回命中明文并写审计（不记录哈希与明文）。
-- 前端：SSH 终端顶部新增「服务加速」入口，页面展示 GPU/系统加速状态、优化建议、GPU 明细、加速节点、hashcat 基准/审计与基线对比；主机编辑弹窗提供「检测 GPU」与服务加速开关，开启后 AI 面板显示「服务加速」徽标。
+- 前端：SSH 终端顶部新增「服务加速」入口，页面展示 GPU/系统加速状态、优化建议、多 GPU 运行态表格（温度/功耗/风扇/P-State/进程）、加速节点、hashcat 基准/审计与基线对比；实时刷新在页面不可见时自动暂停。主机编辑弹窗提供「检测 GPU」与服务加速开关，开启后 AI 面板显示「服务加速」徽标。
 - 优化建议：本地推理优先使用与工具调用兼容的模型；显存不足时降低上下文预算 `VA_AGENT_CONTEXT_BUDGET`；调优后先记录基线再对比，确认指标改善后再推广到其他主机。
 
 #### 7.6.14 网页运行配置
