@@ -7,6 +7,7 @@ import {
   useRef,
   useState
 } from "react";
+import type { CSSProperties } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Terminal as XTerm } from "@xterm/xterm";
@@ -54,6 +55,7 @@ import { SessionReplay } from "../components/SessionReplay";
 import { AgentHistory } from "../components/AgentHistory";
 import { ShareDialog } from "../components/ShareDialog";
 import { ScanResultDialog } from "../components/ScanResultDialog";
+import { ResizeHandle } from "../components/ResizeHandle";
 import { Skeleton } from "../components/ui";
 import type {
   SshAgentEvent,
@@ -402,6 +404,61 @@ const TerminalPane = forwardRef<
   );
 });
 
+const HOST_WIDTH_DEFAULT = 236;
+const HOST_WIDTH_MIN = 180;
+const HOST_WIDTH_MAX = 420;
+const AI_WIDTH_DEFAULT = 340;
+const AI_WIDTH_MIN = 300;
+const AI_WIDTH_MAX = 720;
+
+// 读取并校正持久化的面板宽度
+function readStoredWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    const value = raw ? Number(raw) : NaN;
+    if (Number.isFinite(value)) {
+      return Math.min(max, Math.max(min, Math.round(value)));
+    }
+  } catch {
+    /* 隐私模式下忽略读取失败 */
+  }
+  return fallback;
+}
+
+// 根据容器宽度与当前视口计算两个面板的最大可用宽度
+function computePanelLimits(
+  gridWidth: number,
+  hostWidth: number,
+  aiWidth: number,
+  hostsCollapsed: boolean,
+  aiCollapsed: boolean
+): { hostMax: number; aiMax: number } {
+  const viewport = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const wide = viewport >= 1280;
+  const mdUp = viewport >= 768;
+  const terminalMin = wide ? 480 : 420;
+  const gapTotal = 24;
+  const hostVisible = mdUp && !hostsCollapsed;
+  const aiVisible = wide && !aiCollapsed;
+
+  let aiMax = AI_WIDTH_MAX;
+  if (aiVisible && gridWidth > 0) {
+    aiMax = Math.min(
+      AI_WIDTH_MAX,
+      Math.max(AI_WIDTH_MIN, gridWidth - gapTotal - (hostVisible ? hostWidth : 0) - terminalMin)
+    );
+  }
+  const effectiveAI = Math.min(aiWidth, aiMax);
+  let hostMax = HOST_WIDTH_MAX;
+  if (hostVisible && gridWidth > 0) {
+    hostMax = Math.min(
+      HOST_WIDTH_MAX,
+      Math.max(HOST_WIDTH_MIN, gridWidth - gapTotal - (aiVisible ? effectiveAI : 0) - terminalMin)
+    );
+  }
+  return { hostMax, aiMax };
+}
+
 export function TerminalPage() {
   const toast = useToast();
   const [hosts, setHosts] = useState<SshHost[]>([]);
@@ -446,8 +503,17 @@ export function TerminalPage() {
       return false;
     }
   });
+  const [hostWidth, setHostWidth] = useState(() =>
+    readStoredWidth("va.ssh.hostWidth", HOST_WIDTH_DEFAULT, HOST_WIDTH_MIN, HOST_WIDTH_MAX)
+  );
+  const [aiWidth, setAiWidth] = useState(() =>
+    readStoredWidth("va.ssh.aiWidth", AI_WIDTH_DEFAULT, AI_WIDTH_MIN, AI_WIDTH_MAX)
+  );
+  const [gridWidth, setGridWidth] = useState(0);
   const [scanningHost, setScanningHost] = useState<number | null>(null);
   const [scanResult, setScanResult] = useState<SshHostScanResult | null>(null);
+
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   const paneRefs = useRef(new Map<string, PaneHandle>());
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
@@ -491,6 +557,37 @@ export function TerminalPage() {
       /* 隐私模式下忽略持久化失败 */
     }
   }, [hostsCollapsed, aiCollapsed]);
+
+  // 监听网格可用宽度，窗口缩放时按需收紧面板
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setGridWidth(Math.round(width));
+    });
+    observer.observe(el);
+    setGridWidth(Math.round(el.getBoundingClientRect().width));
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("va.ssh.hostWidth", String(Math.round(hostWidth)));
+      localStorage.setItem("va.ssh.aiWidth", String(Math.round(aiWidth)));
+    } catch {
+      /* 隐私模式下忽略持久化失败 */
+    }
+  }, [hostWidth, aiWidth]);
+
+  useEffect(() => {
+    if (gridWidth <= 0) return;
+    const { hostMax, aiMax } = computePanelLimits(gridWidth, hostWidth, aiWidth, hostsCollapsed, aiCollapsed);
+    const nextAI = Math.min(aiWidth, aiMax);
+    const nextHost = Math.min(hostWidth, hostMax);
+    if (nextAI !== aiWidth) setAiWidth(nextAI);
+    if (nextHost !== hostWidth) setHostWidth(nextHost);
+  }, [gridWidth, hostsCollapsed, aiCollapsed, hostWidth, aiWidth]);
 
   useEffect(() => {
     const el = aiScrollRef.current;
@@ -1293,13 +1390,19 @@ export function TerminalPage() {
     </div>
   );
 
+  // 列宽由 CSS 变量驱动，避免动态拼接 Tailwind 类名在构建期丢失
+  const { hostMax, aiMax } = computePanelLimits(gridWidth, hostWidth, aiWidth, hostsCollapsed, aiCollapsed);
+  const gridStyle = {
+    "--host-w": `${Math.round(hostWidth)}px`,
+    "--ai-w": `${Math.round(aiWidth)}px`
+  } as CSSProperties;
   const terminalGridClass = hostsCollapsed
     ? aiCollapsed
       ? "grid-cols-1"
-      : "grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]"
+      : "grid-cols-1 xl:grid-cols-[minmax(0,1fr)_var(--ai-w)]"
     : aiCollapsed
-      ? "grid-cols-1 md:grid-cols-[236px_minmax(0,1fr)]"
-      : "grid-cols-1 md:grid-cols-[236px_minmax(0,1fr)] xl:grid-cols-[236px_minmax(0,1fr)_340px]";
+      ? "grid-cols-1 md:grid-cols-[var(--host-w)_minmax(0,1fr)]"
+      : "grid-cols-1 md:grid-cols-[var(--host-w)_minmax(0,1fr)] xl:grid-cols-[var(--host-w)_minmax(0,1fr)_var(--ai-w)]";
 
   return (
     <div className="flex h-[calc(100dvh-170px)] min-h-[520px] flex-col gap-3">
@@ -1397,7 +1500,7 @@ export function TerminalPage() {
         </div>
       </div>
 
-      <div className={`grid min-h-0 flex-1 gap-3 ${terminalGridClass}`}>
+      <div ref={gridRef} className={`relative grid min-h-0 flex-1 gap-3 ${terminalGridClass}`} style={gridStyle}>
         <aside className={`card min-h-0 flex-col overflow-hidden ${hostsCollapsed ? "hidden" : "hidden md:flex"}`}>
           <div className="border-b border-line px-3 py-2.5">
             <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink2">
@@ -1760,6 +1863,33 @@ export function TerminalPage() {
         </section>
 
         <aside className={`card min-h-0 flex-col overflow-hidden ${aiCollapsed ? "hidden" : "hidden xl:flex"}`}>{aiPanel}</aside>
+
+        {!hostsCollapsed && (
+          <ResizeHandle
+            label="调整主机列表宽度"
+            value={hostWidth}
+            min={HOST_WIDTH_MIN}
+            max={hostMax}
+            direction={1}
+            onChange={setHostWidth}
+            onReset={() => setHostWidth(HOST_WIDTH_DEFAULT)}
+            className="hidden md:block"
+            style={{ left: hostWidth }}
+          />
+        )}
+        {!aiCollapsed && (
+          <ResizeHandle
+            label="调整 AI 面板宽度"
+            value={aiWidth}
+            min={AI_WIDTH_MIN}
+            max={aiMax}
+            direction={-1}
+            onChange={setAiWidth}
+            onReset={() => setAiWidth(AI_WIDTH_DEFAULT)}
+            className="hidden xl:block"
+            style={{ right: aiWidth }}
+          />
+        )}
       </div>
 
       {aiOpen && (
