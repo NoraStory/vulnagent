@@ -48,6 +48,7 @@ type sshAgentStep struct {
 
 const (
 	sshAgentMaxSteps    = 8
+	sshAgentMaxFailures = 5
 	sshAgentTimeout     = 90 * time.Second
 	sshAgentOutputCap   = 16 << 10
 	sshAgentApprovalTTL = 5 * time.Minute
@@ -88,6 +89,14 @@ var (
 		regexp.MustCompile(`(?i)>\s*/etc/|\bmv\s+/etc/|\bchmod\s+-R\s+777\b|\bchown\s+-R\b`),
 	}
 )
+
+// nextSSHAgentFailureStreak 统计连续命令执行失败次数，成功命令重置为 0。
+func nextSSHAgentFailureStreak(current, exitCode int, runErr error) int {
+	if runErr != nil || exitCode != 0 {
+		return current + 1
+	}
+	return 0
+}
 
 // classifySSHCommand 判断命令风险，critical 始终需要人工确认
 func classifySSHCommand(command string) string {
@@ -191,7 +200,8 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s（参考 %d 条）", truncateRunes(goal, 100), len(references)))
 	slog.Info("SSH Agent 启动", "run", runID, "host", host.Name, "mode", mode, "goal", truncateRunes(goal, 80))
 	stream.emit(harnessapp.Event{Type: "status", Data: map[string]any{
-		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "host": host.Name,
+		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "maxFailures": sshAgentMaxFailures,
+		"host":       host.Name,
 		"references": referenceMeta(references), "referenceError": refErr, "search": searchEnabled,
 		"contextRuns": len(previousRuns), "accelerated": accelerated, "model": llm.Model(),
 	}})
@@ -222,6 +232,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		return fmt.Sprintf("%s。已执行 %d 步，命令与输出已保留，可调整目标后继续。", reason, len(history))
 	}
 	formatFailures, modelFailures := 0, 0
+	consecutiveFailures := 0
 	for index := 0; index < sshAgentMaxSteps; index++ {
 		if ctx.Err() != nil {
 			errText = "请求已取消"
@@ -355,6 +366,21 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 			Output: output, Risk: risk, Approved: approved, ExitCode: exitCode,
 		})
 		stepsDone++
+		// 连续命令执行失败达到上限时主动停止，避免在错误方向上耗尽步数或反复变更。
+		consecutiveFailures = nextSSHAgentFailureStreak(consecutiveFailures, exitCode, runErr)
+		if consecutiveFailures >= sshAgentMaxFailures {
+			status = "completed"
+			reason := fmt.Sprintf("连续 %d 条命令执行失败，已自动停止", sshAgentMaxFailures)
+			summary = gracefulSummary(reason)
+			errText = reason
+			stream.emit(harnessapp.Event{Type: "warning", Data: map[string]any{
+				"message": reason + "；已执行步骤与输出均已保存，可调整目标后继续。",
+			}})
+			stream.emit(harnessapp.Event{Type: "done", Data: map[string]any{
+				"runId": runID, "steps": stepsDone, "summary": summary, "truncated": true,
+			}})
+			return
+		}
 	}
 
 	status = "completed"

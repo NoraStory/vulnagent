@@ -2,12 +2,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestSSHAgentFailureStreak(t *testing.T) {
+	streak := 0
+	for i := 0; i < sshAgentMaxFailures; i++ {
+		streak = nextSSHAgentFailureStreak(streak, 1, nil)
+	}
+	if streak != sshAgentMaxFailures {
+		t.Fatalf("连续失败计数应为 %d，实际 %d", sshAgentMaxFailures, streak)
+	}
+	if got := nextSSHAgentFailureStreak(streak, 0, nil); got != 0 {
+		t.Fatalf("成功命令应重置连续失败计数，实际 %d", got)
+	}
+	if got := nextSSHAgentFailureStreak(2, 0, errors.New("connection reset")); got != 3 {
+		t.Fatalf("执行错误也应计入连续失败，实际 %d", got)
+	}
+}
 
 func TestClassifySSHCommand(t *testing.T) {
 	cases := []struct {

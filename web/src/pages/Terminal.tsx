@@ -1275,7 +1275,7 @@ export function TerminalPage() {
               <option value="auto">全自动执行</option>
             </select>
           )}
-          <span>多轮上下文；自动执行最多 8 步，命令与输出写入审计。</span>
+          <span>多轮上下文；自动执行最多 8 步，连续 5 条命令失败自动停止；命令与输出写入审计。</span>
         </div>
         {activeTab && aiContextByTab[activeTab.key] && (
           <ContextMeter usage={aiContextByTab[activeTab.key]} className="mt-1.5" compact />
