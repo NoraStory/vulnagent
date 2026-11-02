@@ -46,9 +46,18 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 
 ---
 
+## 版本与路线图
+
+- 当前里程碑：`v0.7.1`（源码内开发版标识 `0.7.1-dev`）。
+- [版本更新日志](docs/CHANGELOG.md)：逐个版本说明新增/修复/迁移，并标注提交区间与已推送的 `origin/master` 终点。
+- [Roadmap](docs/ROADMAP.md)：`v0.8.0` 生产可用性、`v0.9.0` 分布式与规模化、`v1.0.0` 产品化与稳定契约。
+
+---
+
 ## 目录
 
 - [界面预览](#界面预览)
+- [版本与路线图](#版本与路线图)
 - [核心能力](#核心能力)
 - [架构](#架构)
 - [快速开始](#快速开始)
@@ -488,6 +497,8 @@ sudo bash deploy/linux/install.sh --port 8787 --open-firewall \
 
 ## 文档
 
+- [版本更新日志](docs/CHANGELOG.md)
+- [Roadmap](docs/ROADMAP.md)
 - [详细设计](docs/architecture/detailed-design.md)
 - [API 契约](docs/architecture/api-contract.md)
 - [多集群与项目运维设计](docs/architecture/multi-cluster-design.md)
