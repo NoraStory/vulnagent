@@ -185,6 +185,11 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 							"LOAD|0.52|0.40|0.35\nUPTIME|123456\nCPUS|4\nPROCS|123\n" +
 							"DISK|/|100000000|42000000|58000000|42%\n" +
 							"TOP|1234|12.3|4.5|nginx\n"
+					case strings.Contains(payload.Command, "scaling_governor"):
+						output = "NVSMI|1\n" +
+							"GPU|NVIDIA GeForce RTX 4090, 24564, 1024, 550.54.14, 37, Enabled, 450.00, 450.00, 2100, 2520\n" +
+							"CUDA|12.4\nTHROTTLE|Not Active\n" +
+							"CPU|Intel Xeon Gold 6338\nGOV|performance\nCORES|32\nMEM|64000000\nSWAP|0\n"
 					case strings.Contains(payload.Command, "nvidia-smi"):
 						output = "NVIDIA GeForce RTX 4090, 24564, 550.54.14, 37\n"
 					case strings.Contains(payload.Command, "dpkg-query"):

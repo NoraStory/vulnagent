@@ -92,6 +92,10 @@ type App struct {
 	sshApprovalMu sync.Mutex
 	sshApprovals  map[string]chan bool
 
+	// 服务加速：最近的加速能力探测结果（用于调度节点列表）
+	accelMu       sync.Mutex
+	accelProfiles map[int64]sshHostAccelProfile
+
 	// SSH 会话协同：在线会话与分享链接
 	liveMu sync.Mutex
 	live   map[string]*sshLiveSession
@@ -160,6 +164,10 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/metrics", a.handleSSHHostMetrics)
 	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/gpu", a.handleSSHHostGPU)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/gpu/benchmark", a.handleSSHHostGPUBenchmark)
+	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/accel", a.handleSSHHostAccel)
+	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/accel/baseline", a.handleSSHHostAccelBaseline)
+	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/accel/compare", a.handleSSHHostAccelCompare)
+	mux.HandleFunc("GET /api/v1/accel/hosts", a.handleAccelHosts)
 	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
 	mux.HandleFunc("GET /api/v1/ssh/sessions/{id}/recording", a.handleSSHRecording)
 	mux.HandleFunc("POST /api/v1/ssh/sessions/{id}/share", a.handleSSHShareCreate)

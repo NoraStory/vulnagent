@@ -1002,10 +1002,10 @@ export function TerminalPage() {
         {activeTab?.host.gpuAccel && (
           <span
             className="inline-flex items-center gap-0.5 rounded-full bg-brand-soft px-1.5 py-0.5 text-[9.5px] font-medium text-brand-strong"
-            title="该主机启用 GPU 推理加速"
+            title="该主机已启用服务加速"
           >
             <Zap size={9} />
-            GPU 加速
+            服务加速
           </span>
         )}
         {activeTab && (
@@ -1559,6 +1559,18 @@ export function TerminalPage() {
           >
             <Activity size={13} />
             性能监控
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary h-8 px-2.5 text-[12px]"
+            onClick={() => {
+              if (activeTab) navigate(`/terminal/accel/${activeTab.host.id}`);
+            }}
+            disabled={!activeTab}
+            title="检测 GPU、CUDA 与系统调优状态，对比加速前后指标"
+          >
+            <Zap size={13} />
+            服务加速
           </button>
           <button
             type="button"
@@ -2358,7 +2370,7 @@ function HostDialog({
             <div className="space-y-2 rounded-[10px] border border-line bg-subtle/40 px-3 py-2.5">
               <div className="flex items-center gap-1.5">
                 <Zap size={12} className="text-brand" />
-                <span className="text-[11.5px] font-medium text-ink">GPU 推理加速（NVIDIA）</span>
+                <span className="text-[11.5px] font-medium text-ink">服务加速（NVIDIA）</span>
                 <button
                   type="button"
                   className="ml-auto inline-flex items-center gap-1 rounded-[6px] border border-line bg-surface px-2 py-1 text-[10.5px] text-ink2 hover:text-ink disabled:opacity-60"
@@ -2398,13 +2410,13 @@ function HostDialog({
                       disabled={!gpuAccel && !gpuReady}
                       onChange={(event) => setGpuAccel(event.target.checked)}
                     />
-                    使用 GPU 加速推理（保存后生效）
+                    启用服务加速（保存后生效）
                   </label>
                 </div>
               )}
               {!gpuInfo && !gpuError && (
                 <p className="text-[10.5px] leading-[16px] text-ink3">
-                  检测主机是否具备 NVIDIA GPU，并确认服务端 GPU 端点已配置后即可开启加速。
+                  检测主机 GPU 与 CUDA 能力；保存后可在终端顶部「服务加速」查看系统调优建议与加速前后对比。
                 </p>
               )}
               {gpuReady && (

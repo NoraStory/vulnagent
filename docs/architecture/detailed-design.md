@@ -1236,14 +1236,17 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 跨任务上下文：Agent 启动时读取同一主机最近 3 次已完成任务的「目标 + 结论」注入提示，状态事件返回 `contextRuns`，面板显示已载入的历史任务数。
 - 验收：单元测试覆盖尾逗号/中文引号/前后解释/围栏/纯命令降级、历史裁剪与历史任务上下文查询；接口实测多轮问答可正确引用上一轮信息。
 
-#### 7.6.13 GPU 推理加速（NVIDIA，可选）
+#### 7.6.13 服务加速（NVIDIA，可选）
 
-- 端点：服务端通过 `VA_GPU_LLM_BASE_URL` / `VA_GPU_LLM_API_KEY` / `VA_GPU_LLM_MODEL` 接入 OpenAI 兼容的本地推理服务（vLLM / TensorRT-LLM 等）；`BASE_URL + MODEL` 齐备即启用，未配置 Key 时使用占位值 `local`（多数本地服务不校验）。
+- 定位：面向开启加速的主机提供「能力探测 → 调优建议 → 基线对比」闭环；只读检测，不自动修改目标机。服务端 AI 推理端点（vLLM / TensorRT-LLM）作为其中一项能力保留。
+- 端点：服务端通过 `VA_GPU_LLM_BASE_URL` / `VA_GPU_LLM_API_KEY` / `VA_GPU_LLM_MODEL` 接入 OpenAI 兼容的本地推理服务；`BASE_URL + MODEL` 齐备即启用，未配置 Key 时使用占位值 `local`（多数本地服务不校验）。
 - 主机开关：`ssh_hosts.gpu_accel`（迁移 0019）按主机保存；`llmForHost` 在「主机开关开启且 GPU 端点已配置」时返回 GPU 客户端，否则回落默认端点，问答与 Agent（含收尾总结）统一走该选择。
-- 探测：`GET /api/v1/ssh/hosts/{id}/gpu` 只读执行 `nvidia-smi`，返回设备名、显存、驱动、利用率与多卡列表；未安装驱动时返回 `available=false` 而非报错。
-- 加速对比：`POST /api/v1/ssh/hosts/{id}/gpu/benchmark` 先探测主机 GPU，再对默认端点与 GPU 端点各预热 1 次后采样（默认 2 轮，可调 1–3 轮），返回平均/最小/最大耗时与 `speedupPercent`，并写审计 `ssh.gpu.benchmark`。
-- 前端：主机编辑弹窗新增「检测 GPU」、加速开关（需检测到 GPU 且端点就绪才可勾选）与「对比加速前后」结果卡片；开启加速的主机在 AI 面板标题显示「GPU 加速」徽标。
-- 优化建议：本地推理优先使用与工具调用兼容的模型；显存不足时降低上下文预算 `VA_AGENT_CONTEXT_BUDGET`；对比结果为正提升且失败次数为 0 再开启该主机加速。
+- 能力探测：`GET /api/v1/ssh/hosts/{id}/accel` 只读采集 `nvidia-smi` 设备/显存/驱动/利用率/持久化模式/功耗上限/当前与最高频率/降频原因，以及 CUDA 版本、CPU 型号/核数/调频策略、内存与 Swap。结果按主机缓存，供服务端调度节点列表使用。
+- 调优建议：基于探测结果生成 `suggestions`（持久化模式、功耗上限、降频、CPU governor、Swap），每条包含说明、影响、风险与可复制命令；服务端不执行任何变更。
+- 基线对比：`POST /api/v1/ssh/hosts/{id}/accel/baseline` 保存当前能力画像与性能指标（迁移 0020 `ssh_accel_baselines`，每主机一条）；`POST /api/v1/ssh/hosts/{id}/accel/compare` 重新采样并返回 CPU/内存/负载/GPU 利用率/GPU 频率差值、配置变更（持久化、功耗、governor）与剩余建议。
+- 服务端调度框架：`GET /api/v1/accel/hosts` 返回已开启加速的主机及最近一次探测缓存（GPU、CUDA、就绪状态），作为后续服务端计算任务调度的候选节点。
+- 前端：SSH 终端顶部新增「服务加速」入口，页面展示 GPU/系统加速状态、优化建议、GPU 明细、加速节点与基线对比；主机编辑弹窗提供「检测 GPU」与服务加速开关，开启后 AI 面板显示「服务加速」徽标。
+- 优化建议：本地推理优先使用与工具调用兼容的模型；显存不足时降低上下文预算 `VA_AGENT_CONTEXT_BUDGET`；调优后先记录基线再对比，确认指标改善后再推广到其他主机。
 
 ---
 

@@ -15,6 +15,7 @@ const IntegrationsPage = lazy(() => import("./pages/Integrations").then((m) => (
 const AssistantPage = lazy(() => import("./pages/Assistant").then((m) => ({ default: m.AssistantPage })));
 const TerminalPage = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.TerminalPage })));
 const HostMonitorPage = lazy(() => import("./pages/HostMonitor").then((m) => ({ default: m.HostMonitorPage })));
+const HostAccelPage = lazy(() => import("./pages/HostAccel").then((m) => ({ default: m.HostAccelPage })));
 const SharedTerminalPage = lazy(() =>
   import("./pages/SharedTerminal").then((m) => ({ default: m.SharedTerminalPage }))
 );
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/terminal" element={<TerminalPage />} />
           <Route path="/terminal/monitor/:id" element={<HostMonitorPage />} />
+          <Route path="/terminal/accel/:id" element={<HostAccelPage />} />
           <Route path="/share/:token" element={<SharedTerminalPage />} />
           <Route path="/trajectory" element={<TrajectoryPage />} />
           <Route path="/selfcheck" element={<SelfCheckPage />} />

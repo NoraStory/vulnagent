@@ -810,6 +810,93 @@ export interface SshGpuBenchmark {
   sampledAt: string;
 }
 
+export interface AccelGPU {
+  name: string;
+  memoryMb: number;
+  memoryUsedMb: number;
+  driver: string;
+  utilization: number;
+  persistenceMode: string;
+  powerLimitW: number;
+  powerDefaultW: number;
+  clockMhz: number;
+  maxClockMhz: number;
+  throttle: string;
+}
+
+export interface AccelSuggestion {
+  id: string;
+  title: string;
+  detail: string;
+  command: string;
+  impact: string;
+  risk: string;
+}
+
+export interface SshAccelProfile {
+  hostId: number;
+  hostName: string;
+  hostAddr: string;
+  sampledAt: string;
+  elapsedMs: number;
+  available: boolean;
+  nvidiaSmi: boolean;
+  gpus: AccelGPU[];
+  cuda: string;
+  cpuModel: string;
+  cpuCores: number;
+  cpuGovernor: string;
+  memTotalKb: number;
+  swapTotalKb: number;
+  endpointReady: boolean;
+  accelEnabled: boolean;
+  baselineAt?: string;
+  suggestions: AccelSuggestion[];
+}
+
+export interface AccelMetricDelta {
+  key: string;
+  label: string;
+  before: number;
+  after: number;
+  delta: number;
+  unit: string;
+  better: "lower" | "higher" | "none";
+  improved: boolean;
+}
+
+export interface SshAccelComparison {
+  hostId: number;
+  hostName: string;
+  baselineAt: string;
+  baselineBy: string;
+  currentAt: string;
+  elapsedMs: number;
+  metrics: AccelMetricDelta[];
+  changes: string[];
+  before: SshAccelProfile;
+  after: SshAccelProfile;
+  suggestions: AccelSuggestion[];
+}
+
+export interface AccelBaselineResult {
+  profile: SshAccelProfile;
+  metrics: SshHostMetrics;
+  createdAt: string;
+}
+
+export interface AccelNode {
+  hostId: number;
+  hostName: string;
+  hostAddr: string;
+  accelEnabled: boolean;
+  endpointReady: boolean;
+  available: boolean;
+  cuda: string;
+  gpuName: string;
+  lastProfiledAt: string;
+}
+
 export interface SshDiskUsage {
   mount: string;
   totalKb: number;

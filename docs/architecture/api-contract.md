@@ -1273,7 +1273,7 @@ vulnagent_selfcheck_failed 0
 
 ### PATCH /ssh/hosts/{id}（operator+）
 
-字段均可选；`password` / `privateKey` 留空表示保持原值；切换认证方式必须同时提供新凭据；地址或端口变化会清空已信任指纹；`clearHostKey=true` 可主动清除指纹；`gpuAccel` 切换该主机是否走 GPU 推理端点。
+字段均可选；`password` / `privateKey` 留空表示保持原值；切换认证方式必须同时提供新凭据；地址或端口变化会清空已信任指纹；`clearHostKey=true` 可主动清除指纹；`gpuAccel` 为该主机的服务加速开关。
 
 ### DELETE /ssh/hosts/{id}（operator+）
 
@@ -1752,4 +1752,74 @@ Agent 的 `status` 事件新增：
 - 未配置 GPU 端点：`503 gpu_not_configured`；未配置默认端点：`503 llm_unavailable`。
 - 主机无可用 GPU：`400 gpu_unavailable`，响应附带 `detected` 明细。
 - 成功对比写审计 `ssh.gpu.benchmark`；`speedupPercent` 为负数表示 GPU 端点更慢。
+
+### 12.9 SSH 主机服务加速
+
+#### GET /ssh/hosts/{id}/accel（viewer+）
+
+只读采集 GPU 与系统加速能力，不修改目标机；结果按主机缓存，供 `GET /accel/hosts` 调度节点列表使用。
+
+```json
+{
+  "hostId": 7, "hostName": "gpu-01", "hostAddr": "10.0.0.7:22",
+  "sampledAt": "2026-11-02T18:40:00+08:00", "elapsedMs": 860,
+  "available": true, "nvidiaSmi": true,
+  "gpus": [{
+    "name": "NVIDIA GeForce RTX 4090", "memoryMb": 24564, "memoryUsedMb": 1024,
+    "driver": "550.54.14", "utilization": 37, "persistenceMode": "Enabled",
+    "powerLimitW": 450, "powerDefaultW": 450, "clockMhz": 2100, "maxClockMhz": 2520,
+    "throttle": "Not Active"
+  }],
+  "cuda": "12.4", "cpuModel": "Intel Xeon Gold 6338", "cpuCores": 32, "cpuGovernor": "performance",
+  "memTotalKb": 64000000, "swapTotalKb": 0,
+  "endpointReady": true, "accelEnabled": true, "baselineAt": "2026-11-02T18:30:00+08:00",
+  "suggestions": [{
+    "id": "cpu-governor", "title": "CPU 调频策略不是 performance",
+    "detail": "当前策略为 powersave…", "command": "echo performance | sudo tee …",
+    "impact": "降低调度抖动", "risk": "medium"
+  }]
+}
+```
+
+- 无 NVIDIA 驱动时 `nvidiaSmi=false`、`available=false`，`suggestions` 给出安装提示；HTTP 仍为 200。
+- `endpointReady` 表示服务端已配置 `VA_GPU_LLM_*`，`accelEnabled` 为主机加速开关。
+
+#### POST /ssh/hosts/{id}/accel/baseline（operator+）
+
+保存当前能力画像与性能指标作为基线（每主机一条，重复记录覆盖），写审计 `ssh.accel.baseline`。
+
+```json
+{ "profile": { "…": "…" }, "metrics": { "cpuPercent": 12.3, "…": "…" }, "createdAt": "2026-11-02T18:40:00+08:00" }
+```
+
+#### POST /ssh/hosts/{id}/accel/compare（operator+）
+
+重新采样并与最近基线对比，写审计 `ssh.accel.compare`。
+
+```json
+{
+  "hostId": 7, "hostName": "gpu-01",
+  "baselineAt": "2026-11-02T18:40:00+08:00", "baselineBy": "va-admin",
+  "currentAt": "2026-11-02T18:55:00+08:00", "elapsedMs": 910,
+  "metrics": [
+    { "key": "cpu", "label": "CPU 使用率", "before": 40, "after": 20, "delta": -20, "unit": "%", "better": "lower", "improved": true },
+    { "key": "gpu-clock", "label": "GPU 当前频率", "before": 1500, "after": 2100, "delta": 600, "unit": "MHz", "better": "higher", "improved": true }
+  ],
+  "changes": ["GPU 0 持久化模式：Disabled → Enabled", "CPU 调频策略：powersave → performance"],
+  "before": { "…": "…" }, "after": { "…": "…" }, "suggestions": []
+}
+```
+
+- 未记录基线：`404 no_baseline`；SSH/解析失败：`502 accel_failed`。
+- `better` 为 `lower`/`higher`/`none`，`improved` 仅对可判定方向的指标计算。
+
+#### GET /accel/hosts（viewer+）
+
+返回已开启服务加速的主机与最近一次探测缓存，作为服务端计算任务调度的候选节点。
+
+```json
+{ "items": [{ "hostId": 7, "hostName": "gpu-01", "hostAddr": "10.0.0.7:22",
+  "accelEnabled": true, "endpointReady": true, "available": true,
+  "gpuName": "NVIDIA GeForce RTX 4090", "cuda": "12.4", "lastProfiledAt": "2026-11-02T18:40:00+08:00" }] }
+```
 

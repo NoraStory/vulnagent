@@ -47,6 +47,10 @@ import type {
   SshHostTestResult,
   SshGpuInfo,
   SshGpuBenchmark,
+  SshAccelProfile,
+  SshAccelComparison,
+  AccelBaselineResult,
+  AccelNode,
   SshSessionItem,
   SshAssistantReply,
   SshAgentEvent,
@@ -925,6 +929,22 @@ export const api = {
 
   sshHostGPUBenchmark(id: number, rounds = 2): Promise<SshGpuBenchmark> {
     return request(`/ssh/hosts/${id}/gpu/benchmark${query({ rounds })}`, { method: "POST", body: "{}" });
+  },
+
+  sshHostAccel(id: number): Promise<SshAccelProfile> {
+    return request(`/ssh/hosts/${id}/accel`);
+  },
+
+  sshHostAccelBaseline(id: number): Promise<AccelBaselineResult> {
+    return request(`/ssh/hosts/${id}/accel/baseline`, { method: "POST", body: "{}" });
+  },
+
+  sshHostAccelCompare(id: number): Promise<SshAccelComparison> {
+    return request(`/ssh/hosts/${id}/accel/compare`, { method: "POST", body: "{}" });
+  },
+
+  accelHosts(): Promise<{ items: AccelNode[] }> {
+    return request("/accel/hosts");
   },
 
   sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {
