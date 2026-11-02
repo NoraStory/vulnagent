@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Copy,
   Gauge,
+  Hash,
   Lightbulb,
   Loader2,
   RefreshCw,
@@ -14,8 +15,23 @@ import {
 } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { useToast } from "../lib/toast";
-import type { AccelNode, AccelSuggestion, SshAccelComparison, SshAccelProfile } from "../lib/types";
+import type {
+  AccelNode,
+  AccelSuggestion,
+  HashcatAuditResult,
+  HashcatBenchmark,
+  SshAccelComparison,
+  SshAccelProfile
+} from "../lib/types";
 import { Empty } from "../components/ui";
+
+function formatSpeed(value: number): string {
+  if (value >= 1e12) return `${(value / 1e12).toFixed(1)} TH/s`;
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)} GH/s`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)} MH/s`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)} kH/s`;
+  return `${Math.round(value)} H/s`;
+}
 
 function formatKB(value: number): string {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} GB`;
@@ -88,15 +104,22 @@ export function HostAccelPage() {
   const [baselining, setBaselining] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [error, setError] = useState("");
+  const [hashcatBench, setHashcatBench] = useState<HashcatBenchmark | null>(null);
+  const [hashcatBenchBusy, setHashcatBenchBusy] = useState(false);
+  const [auditHashes, setAuditHashes] = useState("");
+  const [auditMode, setAuditMode] = useState("0");
+  const [auditWordlist, setAuditWordlist] = useState("");
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditResult, setAuditResult] = useState<HashcatAuditResult | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (!Number.isFinite(hostId) || hostId <= 0) {
       setError("无效的主机 ID");
       return;
     }
     setLoading(true);
     try {
-      const [next, nodeList] = await Promise.all([api.sshHostAccel(hostId), api.accelHosts()]);
+      const [next, nodeList] = await Promise.all([api.sshHostAccel(hostId, force), api.accelHosts()]);
       setProfile(next);
       setNodes(nodeList.items);
       setError("");
@@ -137,6 +160,49 @@ export function HostAccelPage() {
       toast.push(err instanceof ApiError ? err.message : "对比失败", "error");
     } finally {
       setComparing(false);
+    }
+  }
+
+  async function runHashcatBenchmark() {
+    if (hashcatBenchBusy) return;
+    setHashcatBenchBusy(true);
+    try {
+      setHashcatBench(await api.sshHostHashcatBenchmark(hostId));
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "hashcat 基准失败", "error");
+    } finally {
+      setHashcatBenchBusy(false);
+    }
+  }
+
+  async function runHashcatAudit() {
+    if (auditBusy) return;
+    const hashes = auditHashes
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (hashes.length === 0) {
+      toast.push("请先粘贴至少一条哈希", "error");
+      return;
+    }
+    if (!auditWordlist.trim().startsWith("/")) {
+      toast.push("字典路径必须是目标机上的绝对路径", "error");
+      return;
+    }
+    setAuditBusy(true);
+    setAuditResult(null);
+    try {
+      setAuditResult(
+        await api.sshHostHashcatAudit(hostId, {
+          hashes,
+          hashMode: Number(auditMode) || 0,
+          wordlistPath: auditWordlist.trim()
+        })
+      );
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "口令审计失败", "error");
+    } finally {
+      setAuditBusy(false);
     }
   }
 
@@ -183,7 +249,7 @@ export function HostAccelPage() {
         <button
           type="button"
           className="btn btn-secondary h-8 px-2.5 text-[12px]"
-          onClick={() => void load()}
+          onClick={() => void load(true)}
           disabled={loading}
         >
           {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
@@ -311,6 +377,140 @@ export function HostAccelPage() {
                   ))
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+              <p className="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+                <Hash size={12} className="text-brand" />
+                口令审计（hashcat）
+              </p>
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[9.5px] ${
+                  profile.hashcatAvailable ? "bg-okSoft text-ok" : "bg-subtle text-ink3"
+                }`}
+              >
+                {profile.hashcatAvailable ? profile.hashcatVersion : "未安装"}
+              </span>
+              <span className="ml-auto">
+                <button
+                  type="button"
+                  className="btn btn-secondary h-7 px-2.5 text-[11px]"
+                  onClick={() => void runHashcatBenchmark()}
+                  disabled={!profile.hashcatAvailable || hashcatBenchBusy}
+                  title="在目标机运行 hashcat -b，对比 CPU 与 GPU 速度"
+                >
+                  {hashcatBenchBusy ? <Loader2 size={12} className="animate-spin" /> : <Gauge size={12} />}
+                  CPU/GPU 基准
+                </button>
+              </span>
+            </div>
+            <div className="space-y-2.5 px-3 py-2.5">
+              {!profile.hashcatAvailable ? (
+                <p className="rounded-[8px] bg-subtle px-2.5 py-2 text-[11px] leading-[17px] text-ink3">
+                  目标主机未安装 hashcat，无法使用 GPU 口令审计。可先在目标机安装（例如
+                  <code className="mx-1 font-mono text-[10.5px]">apt-get install hashcat</code>
+                  或使用官方二进制），然后重新检测。
+                </p>
+              ) : (
+                <>
+                  {hashcatBench && (
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                      <StatCard
+                        label="GPU 速度"
+                        value={formatSpeed(hashcatBench.gpuSpeedHs)}
+                        sub={hashcatBench.gpuDevice || "GPU 设备"}
+                        tone="ok"
+                      />
+                      <StatCard
+                        label="CPU 速度"
+                        value={formatSpeed(hashcatBench.cpuSpeedHs)}
+                        sub={hashcatBench.cpuDevice || "CPU 设备"}
+                      />
+                      <StatCard
+                        label="GPU 提升"
+                        value={hashcatBench.speedup > 0 ? `${hashcatBench.speedup}%` : "—"}
+                        sub={`${hashcatBench.mode} · ${hashcatBench.elapsedMs} ms`}
+                        tone={hashcatBench.speedup > 0 ? "ok" : "normal"}
+                      />
+                    </div>
+                  )}
+                  {hashcatBench?.error && (
+                    <p className="rounded-[8px] bg-warnSoft px-2.5 py-1.5 text-[10.5px] text-warn">{hashcatBench.error}</p>
+                  )}
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <textarea
+                      className="input min-h-[72px] resize-y font-mono text-[10.5px] leading-[16px]"
+                      placeholder="每行一条哈希，例如 5f4dcc3b5aa765d61d8327deb882cf99"
+                      value={auditHashes}
+                      onChange={(event) => setAuditHashes(event.target.value)}
+                    />
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-[104px_1fr] gap-2">
+                        <input
+                          className="input h-8 font-mono text-[11px]"
+                          value={auditMode}
+                          onChange={(event) => setAuditMode(event.target.value)}
+                          inputMode="numeric"
+                          title="hashcat -m 模式，例如 0=MD5、1400=SHA256"
+                          placeholder="模式"
+                        />
+                        <input
+                          className="input h-8 font-mono text-[10.5px]"
+                          value={auditWordlist}
+                          onChange={(event) => setAuditWordlist(event.target.value)}
+                          placeholder="/usr/share/wordlists/rockyou.txt"
+                          title="目标机上的字典绝对路径"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary h-8 w-full px-3 text-[11.5px]"
+                        onClick={() => void runHashcatAudit()}
+                        disabled={auditBusy}
+                      >
+                        {auditBusy ? <Loader2 size={12} className="animate-spin" /> : <TriangleAlert size={12} />}
+                        {auditBusy ? "审计中（最长 5 分钟）" : "开始审计"}
+                      </button>
+                      <p className="text-[10px] leading-[15px] text-ink3">
+                        仅用于授权资产自查。哈希会临时写入目标机 /tmp，任务结束立即删除；结果不回传主机日志。
+                      </p>
+                    </div>
+                  </div>
+                  {auditResult && (
+                    <div className="rounded-[8px] border border-line bg-surface px-2.5 py-2">
+                      <p className="text-[11px] text-ink2">
+                        共 <span className="font-mono text-ink">{auditResult.total}</span> 条，命中{" "}
+                        <span className="font-mono text-ok">{auditResult.crackedCount}</span> 条，未命中{" "}
+                        <span className="font-mono text-ink3">{auditResult.notFound}</span> 条 ·{" "}
+                        {auditResult.elapsedMs} ms
+                      </p>
+                      {auditResult.message && <p className="mt-1 text-[10.5px] text-warn">{auditResult.message}</p>}
+                      {auditResult.cracked.length > 0 && (
+                        <div className="mt-1.5 max-h-[180px] overflow-auto">
+                          <table className="w-full min-w-[360px] border-collapse text-[10.5px]">
+                            <thead>
+                              <tr className="border-b border-line text-left text-[9.5px] text-ink3">
+                                <th className="px-1.5 py-1 font-medium">哈希</th>
+                                <th className="px-1.5 py-1 font-medium">明文</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {auditResult.cracked.map((item) => (
+                                <tr key={item.hash} className="border-b border-line/60 last:border-0">
+                                  <td className="max-w-[220px] truncate px-1.5 py-1 font-mono text-ink3">{item.hash}</td>
+                                  <td className="px-1.5 py-1 font-mono text-ink">{item.plain}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 

@@ -95,12 +95,12 @@ func (a *App) handleSSHHostMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	started := time.Now()
-	client, _, err := a.dialSSHHost(ctx, host)
+	client, _, release, err := a.acquireSSHHost(ctx, host)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "ssh_failed", err.Error())
 		return
 	}
-	defer client.Close()
+	defer release()
 
 	output, _, runErr := runSSHCommand(ctx, client, sshMetricScript, 10*time.Second)
 	metrics, parseErr := parseSSHHostMetrics(output)

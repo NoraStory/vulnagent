@@ -51,6 +51,9 @@ import type {
   SshAccelComparison,
   AccelBaselineResult,
   AccelNode,
+  HashcatAuditInput,
+  HashcatAuditResult,
+  HashcatBenchmark,
   SshSessionItem,
   SshAssistantReply,
   SshAgentEvent,
@@ -931,8 +934,8 @@ export const api = {
     return request(`/ssh/hosts/${id}/gpu/benchmark${query({ rounds })}`, { method: "POST", body: "{}" });
   },
 
-  sshHostAccel(id: number): Promise<SshAccelProfile> {
-    return request(`/ssh/hosts/${id}/accel`);
+  sshHostAccel(id: number, refresh = false): Promise<SshAccelProfile> {
+    return request(`/ssh/hosts/${id}/accel${refresh ? "?refresh=1" : ""}`);
   },
 
   sshHostAccelBaseline(id: number): Promise<AccelBaselineResult> {
@@ -945,6 +948,14 @@ export const api = {
 
   accelHosts(): Promise<{ items: AccelNode[] }> {
     return request("/accel/hosts");
+  },
+
+  sshHostHashcatBenchmark(id: number): Promise<HashcatBenchmark> {
+    return request(`/ssh/hosts/${id}/hashcat/benchmark`, { method: "POST", body: "{}" });
+  },
+
+  sshHostHashcatAudit(id: number, input: HashcatAuditInput): Promise<HashcatAuditResult> {
+    return request(`/ssh/hosts/${id}/hashcat/audit`, { method: "POST", body: JSON.stringify(input) });
   },
 
   sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {

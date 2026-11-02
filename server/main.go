@@ -88,6 +88,10 @@ type App struct {
 	sshAEAD   cipher.AEAD
 	sshKeyErr error
 
+	// SSH 只读连接复用池（性能监控、服务加速、GPU 探测共用）
+	sshPoolMu sync.Mutex
+	sshPool   map[int64]*sshPoolEntry
+
 	// SSH Agent 自动执行：命令审批等待队列
 	sshApprovalMu sync.Mutex
 	sshApprovals  map[string]chan bool
@@ -168,6 +172,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/accel/baseline", a.handleSSHHostAccelBaseline)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/accel/compare", a.handleSSHHostAccelCompare)
 	mux.HandleFunc("GET /api/v1/accel/hosts", a.handleAccelHosts)
+	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/hashcat/benchmark", a.handleSSHHostHashcatBenchmark)
+	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/hashcat/audit", a.handleSSHHostHashcatAudit)
 	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
 	mux.HandleFunc("GET /api/v1/ssh/sessions/{id}/recording", a.handleSSHRecording)
 	mux.HandleFunc("POST /api/v1/ssh/sessions/{id}/share", a.handleSSHShareCreate)

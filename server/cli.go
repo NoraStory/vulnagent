@@ -380,6 +380,7 @@ func runOSVScanCommand(args []string) {
 func runBackupCommand(args []string) {
 	fs := flag.NewFlagSet("backup", flag.ExitOnError)
 	out := fs.String("out", "", "备份文件路径（.db）")
+	compress := fs.Bool("compress", false, "并行 gzip 压缩备份（生成 .db.gz）")
 	_ = fs.Parse(args)
 	if strings.TrimSpace(*out) == "" {
 		fmt.Fprintln(os.Stderr, "请使用 --out 指定备份文件路径")
@@ -407,12 +408,23 @@ func runBackupCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "备份失败：%v\n", err)
 		os.Exit(1)
 	}
-	info, err := os.Stat(target)
+	targetPath := target
+	if *compress {
+		targetPath = target + ".gz"
+		if err := compressFileParallel(target, targetPath, 0); err != nil {
+			_ = os.Remove(target)
+			_ = os.Remove(targetPath)
+			fmt.Fprintf(os.Stderr, "压缩备份失败：%v\n", err)
+			os.Exit(1)
+		}
+		_ = os.Remove(target)
+	}
+	info, err := os.Stat(targetPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "备份文件校验失败：%v\n", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "备份完成：%s（%.1f MB）\n", target, float64(info.Size())/(1<<20))
+	fmt.Fprintf(os.Stderr, "备份完成：%s（%.1f MB）\n", targetPath, float64(info.Size())/(1<<20))
 }
 
 func resolveAgentToken(explicit, file string) (string, error) {

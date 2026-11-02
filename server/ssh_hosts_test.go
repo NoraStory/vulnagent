@@ -189,7 +189,13 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 						output = "NVSMI|1\n" +
 							"GPU|NVIDIA GeForce RTX 4090, 24564, 1024, 550.54.14, 37, Enabled, 450.00, 450.00, 2100, 2520\n" +
 							"CUDA|12.4\nTHROTTLE|Not Active\n" +
-							"CPU|Intel Xeon Gold 6338\nGOV|performance\nCORES|32\nMEM|64000000\nSWAP|0\n"
+							"CPU|Intel Xeon Gold 6338\nGOV|performance\nCORES|32\nMEM|64000000\nSWAP|0\nHASHCAT|v6.2.6\n"
+					case strings.Contains(payload.Command, "hashcat --version"):
+						output = "v6.2.6\n"
+					case strings.Contains(payload.Command, "hashcat -b") && strings.Contains(payload.Command, "-D 2"):
+						output = "Speed.#1.........: 12000.0 MH/s\n  Name...........: NVIDIA GeForce RTX 4090\n"
+					case strings.Contains(payload.Command, "hashcat -b") && strings.Contains(payload.Command, "-D 1"):
+						output = "Speed.#1.........: 300.0 MH/s\n  Name...........: Intel Xeon Gold 6338\n"
 					case strings.Contains(payload.Command, "nvidia-smi"):
 						output = "NVIDIA GeForce RTX 4090, 24564, 550.54.14, 37\n"
 					case strings.Contains(payload.Command, "dpkg-query"):

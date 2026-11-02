@@ -1245,7 +1245,10 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 调优建议：基于探测结果生成 `suggestions`（持久化模式、功耗上限、降频、CPU governor、Swap），每条包含说明、影响、风险与可复制命令；服务端不执行任何变更。
 - 基线对比：`POST /api/v1/ssh/hosts/{id}/accel/baseline` 保存当前能力画像与性能指标（迁移 0020 `ssh_accel_baselines`，每主机一条）；`POST /api/v1/ssh/hosts/{id}/accel/compare` 重新采样并返回 CPU/内存/负载/GPU 利用率/GPU 频率差值、配置变更（持久化、功耗、governor）与剩余建议。
 - 服务端调度框架：`GET /api/v1/accel/hosts` 返回已开启加速的主机及最近一次探测缓存（GPU、CUDA、就绪状态），作为后续服务端计算任务调度的候选节点。
-- 前端：SSH 终端顶部新增「服务加速」入口，页面展示 GPU/系统加速状态、优化建议、GPU 明细、加速节点与基线对比；主机编辑弹窗提供「检测 GPU」与服务加速开关，开启后 AI 面板显示「服务加速」徽标。
+- 连接复用：性能监控、服务加速、GPU 探测与 hashcat 共用进程内 SSH 连接池；空闲 3 分钟回收，复用前通过空会话探活，失效自动重连。性能监控 2–3 秒轮询不再重复 TCP/认证握手。
+- 探测缓存：`GET /api/v1/ssh/hosts/{id}/accel` 默认返回 60 秒内缓存，页面「重新检测」使用 `?refresh=1` 强制重采；记录基线与对比始终实时采样。
+- 口令审计：目标机安装 hashcat 时，`POST /ssh/hosts/{id}/hashcat/benchmark` 运行 `hashcat -b -m 0` 对比 CPU（`-D 1`）与 GPU（`-D 2`）速度；`POST /ssh/hosts/{id}/hashcat/audit` 将最多 100 条哈希经 SFTP 写入 `/tmp`，按 `-m <mode> -a 0 --runtime 300` 字典审计后立即删除临时文件，返回命中明文并写审计（不记录哈希与明文）。
+- 前端：SSH 终端顶部新增「服务加速」入口，页面展示 GPU/系统加速状态、优化建议、GPU 明细、加速节点、hashcat 基准/审计与基线对比；主机编辑弹窗提供「检测 GPU」与服务加速开关，开启后 AI 面板显示「服务加速」徽标。
 - 优化建议：本地推理优先使用与工具调用兼容的模型；显存不足时降低上下文预算 `VA_AGENT_CONTEXT_BUDGET`；调优后先记录基线再对比，确认指标改善后再推广到其他主机。
 
 ---
@@ -1434,6 +1437,8 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 
 # 数据库备份（服务运行中也可执行，生成一致性快照）
 .\bin\vulnagent.exe backup --out ..\data\backup-20261023.db
+# 可选并行 gzip 压缩（多协程分块，输出 .db.gz；适合大库归档）
+.\bin\vulnagent.exe backup --out ..\data\backup-20261023.db --compress
 
 # 在线拉取 EPSS（也可在控制台「情报同步」点击在线刷新）
 .\bin\vulnagent.exe sync --epss
@@ -1492,7 +1497,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | Agent 令牌轮换 | `admin` 一键轮换，旧令牌立即失效，新令牌仅返回一次并写入 `agent.token`（0600） |
 | CSV 导出 | 漏洞清单按当前筛选导出 CSV（UTF-8 BOM、上限 5000 条），写 `report.export_csv` 审计 |
 | Webhook 通知 | 新增 P0/P1、工单创建、同步失败、自检失败四类事件，HMAC 签名 + 3 次退避重试，设置页可视化配置与测试 |
-| 数据备份 | `vulnagent backup --out <file>` 走 SQLite `VACUUM INTO`，服务运行中可生成一致性快照 |
+| 数据备份 | `vulnagent backup --out <file>` 走 SQLite `VACUUM INTO`，服务运行中可生成一致性快照；`--compress` 使用多协程并行 gzip（分块压缩、顺序拼接 member） |
 | 运行模式 | 默认不灌演示数据；仅 `VA_SEED_DEMO=on/1/true/yes` 时灌入演示资产并标记 `demo_mode`。生产模式用 `VA_ADMIN_PASSWORD` 初始化管理员，`/healthz` 与前端「演示数据」标识保持一致 |
 | 观测 | `GET /api/v1/metrics` 输出 Prometheus 文本指标（漏洞按优先级/状态、资产、组件、CVE、在线 Agent、最近自检失败数），支持 Agent Bearer 令牌抓取 |
 | 自更新签名链 | `keygen` 生成 Ed25519 密钥对，`sign` 产出带签名清单，`self-update` 校验签名 + SHA-256 后原子替换并保留 `.old`；已实测篡改清单被拒 |

@@ -104,12 +104,12 @@ func (a *App) handleSSHHostGPU(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	client, _, err := a.dialSSHHost(ctx, host)
+	client, _, release, err := a.acquireSSHHost(ctx, host)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "ssh_failed", err.Error())
 		return
 	}
-	defer client.Close()
+	defer release()
 
 	output, _, runErr := runSSHCommand(ctx, client, sshGPUScript, 12*time.Second)
 	info := parseSSHGPUInfo(output)
@@ -228,13 +228,13 @@ func (a *App) handleSSHHostGPUBenchmark(w http.ResponseWriter, r *http.Request) 
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	client, _, err := a.dialSSHHost(ctx, host)
+	client, _, release, err := a.acquireSSHHost(ctx, host)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "ssh_failed", err.Error())
 		return
 	}
+	defer release()
 	output, _, _ := runSSHCommand(ctx, client, sshGPUScript, 12*time.Second)
-	client.Close()
 	info := parseSSHGPUInfo(output)
 	info.HostID = host.ID
 	info.HostName = host.Name

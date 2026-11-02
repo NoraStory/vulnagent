@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/platform/clock"
 )
 
 // sshAccelScript 只读采集加速能力：NVIDIA GPU、CUDA、持久化模式、功耗/频率、CPU 调频策略
@@ -27,7 +29,15 @@ echo "GOV|$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/nul
 echo "CORES|$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo)"
 echo "MEM|$(awk '/MemTotal/{print $2}' /proc/meminfo)"
 echo "SWAP|$(awk '/SwapTotal/{print $2}' /proc/meminfo)"
+if command -v hashcat >/dev/null 2>&1; then
+  echo "HASHCAT|$(hashcat --version 2>/dev/null | head -1)"
+else
+  echo "HASHCAT|"
+fi
 `
+
+// accelProfileTTL 加速能力探测缓存时长，避免连续打开页面重复建立 SSH 会话
+const accelProfileTTL = 60 * time.Second
 
 // accelGPU 单块 GPU 的加速相关状态
 type accelGPU struct {
@@ -56,24 +66,26 @@ type accelSuggestion struct {
 
 // sshHostAccelProfile 主机服务加速能力与系统状态
 type sshHostAccelProfile struct {
-	HostID        int64             `json:"hostId"`
-	HostName      string            `json:"hostName"`
-	HostAddr      string            `json:"hostAddr"`
-	SampledAt     string            `json:"sampledAt"`
-	ElapsedMs     int64             `json:"elapsedMs"`
-	Available     bool              `json:"available"`
-	NvidiaSMI     bool              `json:"nvidiaSmi"`
-	GPUs          []accelGPU        `json:"gpus"`
-	CUDA          string            `json:"cuda"`
-	CPUModel      string            `json:"cpuModel"`
-	CPUCores      int               `json:"cpuCores"`
-	Governor      string            `json:"cpuGovernor"`
-	MemTotalKB    int64             `json:"memTotalKb"`
-	SwapTotalKB   int64             `json:"swapTotalKb"`
-	EndpointReady bool              `json:"endpointReady"`
-	AccelEnabled  bool              `json:"accelEnabled"`
-	BaselineAt    string            `json:"baselineAt,omitempty"`
-	Suggestions   []accelSuggestion `json:"suggestions"`
+	HostID           int64             `json:"hostId"`
+	HostName         string            `json:"hostName"`
+	HostAddr         string            `json:"hostAddr"`
+	SampledAt        string            `json:"sampledAt"`
+	ElapsedMs        int64             `json:"elapsedMs"`
+	Available        bool              `json:"available"`
+	NvidiaSMI        bool              `json:"nvidiaSmi"`
+	GPUs             []accelGPU        `json:"gpus"`
+	CUDA             string            `json:"cuda"`
+	CPUModel         string            `json:"cpuModel"`
+	CPUCores         int               `json:"cpuCores"`
+	Governor         string            `json:"cpuGovernor"`
+	MemTotalKB       int64             `json:"memTotalKb"`
+	SwapTotalKB      int64             `json:"swapTotalKb"`
+	EndpointReady    bool              `json:"endpointReady"`
+	AccelEnabled     bool              `json:"accelEnabled"`
+	BaselineAt       string            `json:"baselineAt,omitempty"`
+	HashcatAvailable bool              `json:"hashcatAvailable"`
+	HashcatVersion   string            `json:"hashcatVersion"`
+	Suggestions      []accelSuggestion `json:"suggestions"`
 }
 
 // parseSSHAccelProfile 解析采集脚本的 KEY|value 行
@@ -126,6 +138,9 @@ func parseSSHAccelProfile(output string) (sshHostAccelProfile, error) {
 			profile.MemTotalKB, _ = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
 		case "SWAP":
 			profile.SwapTotalKB, _ = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		case "HASHCAT":
+			profile.HashcatVersion = strings.TrimSpace(parts[1])
+			profile.HashcatAvailable = profile.HashcatVersion != ""
 		}
 	}
 	if !seen {
@@ -277,11 +292,11 @@ func (a *App) sampleHostAccel(ctx context.Context, host sshHost) (sshHostAccelPr
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	started := time.Now()
-	client, _, err := a.dialSSHHost(ctx, host)
+	client, _, release, err := a.acquireSSHHost(ctx, host)
 	if err != nil {
 		return sshHostAccelProfile{}, sshHostMetrics{}, err
 	}
-	defer client.Close()
+	defer release()
 
 	profileOutput, _, runErr := runSSHCommand(ctx, client, sshAccelScript, 15*time.Second)
 	profile, parseErr := parseSSHAccelProfile(profileOutput)
@@ -426,6 +441,15 @@ func (a *App) handleSSHHostAccel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "主机不存在")
 		return
+	}
+	if r.URL.Query().Get("refresh") != "1" {
+		if cached, ok := a.cachedAccelProfile(host.ID); ok {
+			if sampled, parseErr := clock.Parse(cached.SampledAt); parseErr == nil && time.Since(sampled) < accelProfileTTL {
+				cached.BaselineAt = a.accelBaselineAt(r.Context(), host.ID)
+				writeJSON(w, http.StatusOK, cached)
+				return
+			}
+		}
 	}
 	profile, _, err := a.sampleHostAccel(r.Context(), host)
 	if err != nil {

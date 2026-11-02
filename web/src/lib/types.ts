@@ -851,6 +851,8 @@ export interface SshAccelProfile {
   endpointReady: boolean;
   accelEnabled: boolean;
   baselineAt?: string;
+  hashcatAvailable: boolean;
+  hashcatVersion: string;
   suggestions: AccelSuggestion[];
 }
 
@@ -895,6 +897,41 @@ export interface AccelNode {
   cuda: string;
   gpuName: string;
   lastProfiledAt: string;
+}
+
+export interface HashcatBenchmark {
+  available: boolean;
+  version: string;
+  mode: string;
+  gpuDevice: string;
+  cpuDevice: string;
+  gpuSpeedHs: number;
+  cpuSpeedHs: number;
+  speedup: number;
+  elapsedMs: number;
+  error?: string;
+}
+
+export interface HashcatCrack {
+  hash: string;
+  plain: string;
+}
+
+export interface HashcatAuditResult {
+  total: number;
+  crackedCount: number;
+  notFound: number;
+  hashMode: number;
+  wordlist: string;
+  elapsedMs: number;
+  cracked: HashcatCrack[];
+  message?: string;
+}
+
+export interface HashcatAuditInput {
+  hashes: string[];
+  hashMode: number;
+  wordlistPath: string;
 }
 
 export interface SshDiskUsage {

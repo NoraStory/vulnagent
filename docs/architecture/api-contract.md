@@ -1757,7 +1757,7 @@ Agent 的 `status` 事件新增：
 
 #### GET /ssh/hosts/{id}/accel（viewer+）
 
-只读采集 GPU 与系统加速能力，不修改目标机；结果按主机缓存，供 `GET /accel/hosts` 调度节点列表使用。
+只读采集 GPU 与系统加速能力，不修改目标机；结果按主机缓存 60 秒，供 `GET /accel/hosts` 调度节点列表使用。查询参数 `refresh=1` 强制重新采样。
 
 ```json
 {
@@ -1822,4 +1822,46 @@ Agent 的 `status` 事件新增：
   "accelEnabled": true, "endpointReady": true, "available": true,
   "gpuName": "NVIDIA GeForce RTX 4090", "cuda": "12.4", "lastProfiledAt": "2026-11-02T18:40:00+08:00" }] }
 ```
+
+#### 连接复用与缓存
+
+- 性能监控、服务加速、GPU 探测与 hashcat 共用进程内 SSH 连接池；空闲 3 分钟回收，复用前用空会话探活，失效自动重连。
+- `GET /ssh/hosts/{id}/accel` 命中 60 秒缓存时不建立 SSH 连接；`refresh=1` 强制重采。
+
+### 12.10 SSH 主机 hashcat 口令审计
+
+#### POST /ssh/hosts/{id}/hashcat/benchmark（operator+）
+
+在目标机运行 `hashcat -b -m 0`，分别以 `-D 2`（GPU）与 `-D 1`（CPU）采样速度，写审计 `ssh.hashcat.benchmark`。
+
+```json
+{
+  "available": true, "version": "v6.2.6", "mode": "MD5",
+  "gpuDevice": "NVIDIA GeForce RTX 4090", "cpuDevice": "Intel Xeon Gold 6338",
+  "gpuSpeedHs": 12000000000, "cpuSpeedHs": 300000000, "speedup": 3900,
+  "elapsedMs": 18400
+}
+```
+
+- 未安装 hashcat：`400 hashcat_unavailable`。
+- 两侧速度均为 0 时返回 200，`error` 说明后端设备不可用。
+
+#### POST /ssh/hosts/{id}/hashcat/audit（operator+）
+
+```json
+{ "hashes": ["5f4dcc3b5aa765d61d8327deb882cf99"], "hashMode": 0, "wordlistPath": "/usr/share/wordlists/rockyou.txt" }
+```
+
+```json
+{
+  "total": 1, "crackedCount": 1, "notFound": 0, "hashMode": 0,
+  "wordlist": "/usr/share/wordlists/rockyou.txt", "elapsedMs": 3200,
+  "cracked": [{ "hash": "5f4dcc3b5aa765d61d8327deb882cf99", "plain": "password" }]
+}
+```
+
+- 最多 100 条哈希，单条 8–512 字符；`hashMode` 为 hashcat `-m`（0–99999）；字典必须是目标机绝对路径。
+- 哈希经 SFTP 写入 `/tmp/vulnagent-hashcat-*.txt`，命令限制 `--runtime 300`，结束后立即删除哈希、结果与日志文件。
+- 字典不存在：`400 wordlist_missing`；SSH/SFTP 失败：`502 ssh_failed` / `502 sftp_failed`。
+- 写审计 `ssh.hashcat.audit`（仅记录数量，不记录哈希与明文）；接口仅限 operator，返回明文前需确认授权范围。
 
