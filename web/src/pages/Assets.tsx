@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Download, RefreshCw, ScanSearch, Search, Server, Terminal, Upload } from "lucide-react";
+import { Boxes, Download, RefreshCw, ScanSearch, Search, Server, Terminal, Upload } from "lucide-react";
 import { api } from "../lib/api";
 import type { AssetItem } from "../lib/types";
 import { Badge, Dot, Empty, Pagination, RiskMeter, Skeleton } from "../components/ui";
@@ -54,6 +54,9 @@ export function AssetsPage() {
   const statusFilter = params.get("status") ?? "";
   const typeFilter = params.get("assetType") ?? "";
   const bizFilter = params.get("businessSystem") ?? "";
+  const clusterParam = params.get("clusterId") ?? "";
+  const clusterName = params.get("clusterName") ?? "";
+  const clusterId = Number(clusterParam) > 0 ? Number(clusterParam) : undefined;
   const pageParam = Number(params.get("page") ?? 1);
   const page = Number.isFinite(pageParam) && pageParam >= 1 ? Math.floor(pageParam) : 1;
 
@@ -110,6 +113,7 @@ export function AssetsPage() {
         status: statusFilter || undefined,
         assetType: typeFilter || undefined,
         businessSystem: bizFilter || undefined,
+        clusterId,
         page,
         pageSize: PAGE_SIZE
       });
@@ -121,13 +125,13 @@ export function AssetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [queryParam, envFilter, statusFilter, typeFilter, bizFilter, page]);
+  }, [queryParam, envFilter, statusFilter, typeFilter, bizFilter, clusterId, page]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const hasFilter = Boolean(queryParam || envFilter || statusFilter || typeFilter || bizFilter);
+  const hasFilter = Boolean(queryParam || envFilter || statusFilter || typeFilter || bizFilter || clusterId);
 
   const clearFilters = () => {
     setSearch("");
@@ -161,7 +165,8 @@ export function AssetsPage() {
         env: envFilter || undefined,
         status: statusFilter || undefined,
         assetType: typeFilter || undefined,
-        businessSystem: bizFilter || undefined
+        businessSystem: bizFilter || undefined,
+        clusterId
       });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -233,6 +238,26 @@ export function AssetsPage() {
             )}
           </div>
         </div>
+
+        {clusterId && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-2 text-[11px] text-ink2">
+            <Boxes size={12} className="text-ink3" />
+            <span>集群范围：{clusterName || `#${clusterId}`}</span>
+            <button
+              type="button"
+              className="rounded-full bg-subtle px-2 py-0.5 text-[10.5px] text-ink3 hover:text-ink"
+              onClick={() => {
+                const next = new URLSearchParams(params);
+                next.delete("clusterId");
+                next.delete("clusterName");
+                next.delete("page");
+                setParams(next, { replace: true });
+              }}
+            >
+              清除集群筛选
+            </button>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-2.5">
           <select

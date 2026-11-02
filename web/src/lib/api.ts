@@ -306,6 +306,7 @@ export const api = {
     priority?: string;
     status?: string;
     q?: string;
+    clusterId?: number;
     page?: number;
     pageSize?: number;
   }): Promise<Paged<Finding>> {
@@ -352,7 +353,7 @@ export const api = {
     return request("/scans", { method: "POST", body: JSON.stringify(payload) });
   },
 
-  async reportFindings(params: { priority?: string; status?: string; q?: string }): Promise<Blob> {
+  async reportFindings(params: { priority?: string; status?: string; q?: string; clusterId?: number }): Promise<Blob> {
     const response = await fetch(`${BASE}/reports/findings.pdf${query(params)}`, {
       credentials: "include"
     });
@@ -362,7 +363,7 @@ export const api = {
     return response.blob();
   },
 
-  async reportFindingsCSV(params: { priority?: string; status?: string; q?: string }): Promise<Blob> {
+  async reportFindingsCSV(params: { priority?: string; status?: string; q?: string; clusterId?: number }): Promise<Blob> {
     const response = await fetch(`${BASE}/reports/findings.csv${query(params)}`, {
       credentials: "include"
     });
@@ -421,6 +422,7 @@ export const api = {
     businessSystem?: string;
     owner?: string;
     cloudProvider?: string;
+    clusterId?: number;
     page?: number;
     pageSize?: number;
   }): Promise<Paged<AssetItem>> {
@@ -476,6 +478,7 @@ export const api = {
     businessSystem?: string;
     tier?: string;
     exposure?: string;
+    clusterId?: number;
   }): Promise<Blob> {
     const response = await fetch(`${BASE}/assets/export${query(params)}`, {
       credentials: "include"

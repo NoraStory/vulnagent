@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,8 +55,9 @@ func reportFilterFromQuery(r *http.Request) reportFilter {
 	priority := query.Get("priority")
 	status := query.Get("status")
 	keyword := strings.TrimSpace(query.Get("q"))
+	clusterID, _ := strconv.ParseInt(strings.TrimSpace(query.Get("clusterId")), 10, 64)
 
-	labels := make([]string, 0, 3)
+	labels := make([]string, 0, 4)
 	if status != "" {
 		labels = append(labels, "状态："+statusLabel(status))
 	}
@@ -65,9 +67,12 @@ func reportFilterFromQuery(r *http.Request) reportFilter {
 	if priority != "" {
 		labels = append([]string{"优先级：" + priority}, labels...)
 	}
+	if clusterID > 0 {
+		labels = append([]string{fmt.Sprintf("集群：#%d", clusterID)}, labels...)
+	}
 
 	return reportFilter{
-		query:  ports.ReportFilter{Priority: priority, Status: status, Query: keyword},
+		query:  ports.ReportFilter{Priority: priority, Status: status, Query: keyword, ClusterID: clusterID},
 		labels: labels,
 	}
 }

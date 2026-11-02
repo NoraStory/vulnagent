@@ -68,6 +68,10 @@ func assetFilterSQL(filter ports.AssetFilter) (string, []any) {
 	if !filter.IncludeArchived {
 		conds = append(conds, "a.merged_into = 0")
 	}
+	if filter.ClusterID > 0 {
+		conds = append(conds, "a.cluster_id = ?")
+		args = append(args, filter.ClusterID)
+	}
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		like := "%" + q + "%"
 		conds = append(conds, "(a.hostname LIKE ? OR a.owner LIKE ? OR a.ip LIKE ? OR a.business_system LIKE ? OR a.serial LIKE ?)")

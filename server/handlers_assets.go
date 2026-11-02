@@ -102,6 +102,7 @@ func toAssetItem(it ports.AssetListItem) assetItem {
 // assetFilterFromQuery 解析资产列表筛选参数
 func assetFilterFromQuery(r *http.Request) ports.AssetFilter {
 	q := r.URL.Query()
+	clusterID, _ := strconv.ParseInt(strings.TrimSpace(q.Get("clusterId")), 10, 64)
 	return ports.AssetFilter{
 		Query:           strings.TrimSpace(q.Get("q")),
 		Env:             strings.TrimSpace(q.Get("env")),
@@ -112,6 +113,7 @@ func assetFilterFromQuery(r *http.Request) ports.AssetFilter {
 		BusinessSystem:  strings.TrimSpace(q.Get("businessSystem")),
 		Owner:           strings.TrimSpace(q.Get("owner")),
 		CloudProvider:   strings.TrimSpace(q.Get("cloudProvider")),
+		ClusterID:       clusterID,
 		IncludeArchived: q.Get("includeArchived") == "1" || q.Get("includeArchived") == "true",
 	}
 }

@@ -35,6 +35,7 @@ type AssetFilter struct {
 	BusinessSystem  string
 	Owner           string
 	CloudProvider   string
+	ClusterID       int64
 	IncludeArchived bool
 }
 

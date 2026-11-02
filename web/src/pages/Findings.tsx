@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, RefreshCw, Search, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import { Boxes, Download, RefreshCw, Search, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import { api } from "../lib/api";
 import type { Finding } from "../lib/types";
 import { Empty, Pagination, PriorityPill, RiskMeter, Skeleton, StatusPill } from "../components/ui";
@@ -36,6 +36,9 @@ export function FindingsPage() {
   const priority = params.get("priority") ?? "all";
   const status = params.get("status") ?? "";
   const queryParam = params.get("q") ?? "";
+  const clusterParam = params.get("clusterId") ?? "";
+  const clusterName = params.get("clusterName") ?? "";
+  const clusterId = Number(clusterParam) > 0 ? Number(clusterParam) : undefined;
   const page = Math.max(1, Number(params.get("page") ?? 1));
 
   const [search, setSearch] = useState(queryParam);
@@ -84,6 +87,7 @@ export function FindingsPage() {
           priority: priority === "all" ? undefined : priority,
           status: status || undefined,
           q: queryParam || undefined,
+          clusterId,
           page,
           pageSize: PAGE_SIZE
         });
@@ -97,7 +101,7 @@ export function FindingsPage() {
         setRefreshing(false);
       }
     },
-    [priority, status, queryParam, page]
+    [priority, status, queryParam, clusterId, page]
   );
 
   useEffect(() => {
@@ -110,7 +114,8 @@ export function FindingsPage() {
       const params = {
         priority: priority === "all" ? undefined : priority,
         status: status || undefined,
-        q: queryParam || undefined
+        q: queryParam || undefined,
+        clusterId
       };
       const blob = kind === "pdf" ? await api.reportFindings(params) : await api.reportFindingsCSV(params);
       const url = URL.createObjectURL(blob);
@@ -224,6 +229,20 @@ export function FindingsPage() {
             )}
           </div>
         </div>
+
+        {clusterId && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-2 text-[11px] text-ink2">
+            <Boxes size={12} className="text-ink3" />
+            <span>集群范围：{clusterName || `#${clusterId}`}</span>
+            <button
+              type="button"
+              className="rounded-full bg-subtle px-2 py-0.5 text-[10.5px] text-ink3 hover:text-ink"
+              onClick={() => updateParams({ clusterId: null, clusterName: null })}
+            >
+              清除集群筛选
+            </button>
+          </div>
+        )}
 
         <div className="divider" />
 

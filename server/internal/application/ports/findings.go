@@ -30,11 +30,12 @@ type FindingListItem struct {
 
 // FindingFilter 漏洞列表筛选条件
 type FindingFilter struct {
-	Priority string
-	Status   string
-	Query    string
-	Limit    int
-	Offset   int
+	Priority  string
+	Status    string
+	Query     string
+	ClusterID int64
+	Limit     int
+	Offset    int
 }
 
 // FindingExtra 详情页的附加信息
@@ -62,9 +63,10 @@ type FindingEventRow struct {
 
 // ReportFilter 报告/导出筛选条件
 type ReportFilter struct {
-	Priority string
-	Status   string
-	Query    string
+	Priority  string
+	Status    string
+	Query     string
+	ClusterID int64
 }
 
 // ReportRow 报告中的一行

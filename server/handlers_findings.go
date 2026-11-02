@@ -117,12 +117,14 @@ func toFindingItem(it ports.FindingListItem) findingItem {
 
 func (a *App) handleFindings(w http.ResponseWriter, r *http.Request) {
 	page, size, offset := pageParams(r)
+	clusterID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("clusterId")), 10, 64)
 	list, total, err := a.findingRepo().List(r.Context(), ports.FindingFilter{
-		Priority: r.URL.Query().Get("priority"),
-		Status:   r.URL.Query().Get("status"),
-		Query:    strings.TrimSpace(r.URL.Query().Get("q")),
-		Limit:    size,
-		Offset:   offset,
+		Priority:  r.URL.Query().Get("priority"),
+		Status:    r.URL.Query().Get("status"),
+		Query:     strings.TrimSpace(r.URL.Query().Get("q")),
+		ClusterID: clusterID,
+		Limit:     size,
+		Offset:    offset,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询漏洞列表失败")

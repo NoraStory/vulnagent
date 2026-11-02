@@ -47,12 +47,16 @@ func (r *FindingRepo) List(ctx context.Context, filter ports.FindingFilter) ([]p
 		where = append(where, "(a.hostname LIKE ? OR f.cve_id LIKE ? OR f.component_name LIKE ?)")
 		args = append(args, like, like, like)
 	}
+	if filter.ClusterID > 0 {
+		where = append(where, "a.cluster_id = ?")
+		args = append(args, filter.ClusterID)
+	}
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	// 仅当按主机名搜索时才需要 JOIN assets；否则 COUNT 只扫 findings 覆盖索引
+	// 仅当按主机名搜索或按集群过滤时才需要 JOIN assets；否则 COUNT 只扫 findings 覆盖索引
 	countSQL := `SELECT COUNT(*) FROM findings f`
-	if filter.Query != "" {
+	if filter.Query != "" || filter.ClusterID > 0 {
 		countSQL += ` JOIN assets a ON a.id = f.asset_id`
 	}
 	countSQL += ` WHERE ` + whereSQL
@@ -197,6 +201,10 @@ func reportWhere(filter ports.ReportFilter, withPriority bool) (string, []any) {
 	if withPriority && filter.Priority != "" {
 		where = append(where, "f.priority = ?")
 		args = append(args, filter.Priority)
+	}
+	if filter.ClusterID > 0 {
+		where = append(where, "a.cluster_id = ?")
+		args = append(args, filter.ClusterID)
 	}
 	return strings.Join(where, " AND "), args
 }

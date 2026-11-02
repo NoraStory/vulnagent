@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Boxes,
   CheckCircle2,
@@ -66,19 +67,44 @@ function endpointOf(node: ClusterNodeItem): string {
   return "—";
 }
 
-function StatCard({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "normal" | "ok" | "warn" | "danger" }) {
+function StatCard({
+  label,
+  value,
+  sub,
+  tone,
+  onClick
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "normal" | "ok" | "warn" | "danger";
+  onClick?: () => void;
+}) {
   const toneClass = tone === "danger" ? "text-danger" : tone === "warn" ? "text-warn" : tone === "ok" ? "text-ok" : "text-ink";
-  return (
-    <div className="card px-3 py-2.5">
+  const body = (
+    <>
       <p className="text-[10.5px] text-ink3">{label}</p>
       <p className={`mt-1 truncate font-mono text-[20px] font-semibold leading-6 ${toneClass}`}>{value}</p>
       {sub && <p className="mt-0.5 truncate text-[10px] text-ink3">{sub}</p>}
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="card px-3 py-2.5 text-left transition-colors hover:border-brand/40 hover:bg-brand-soft/20"
+      >
+        {body}
+      </button>
+    );
+  }
+  return <div className="card px-3 py-2.5">{body}</div>;
 }
 
 export function ClustersPage() {
   const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [clusters, setClusters] = useState<ClusterItem[]>([]);
@@ -90,6 +116,8 @@ export function ClustersPage() {
   const [error, setError] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [clusterOpen, setClusterOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectItem | null>(null);
+  const [editingCluster, setEditingCluster] = useState<ClusterItem | null>(null);
   const [nodeOpen, setNodeOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<ClusterNodeItem | null>(null);
@@ -287,6 +315,9 @@ export function ClustersPage() {
   const currentCluster = clusters.find((item) => item.id === selectedCluster) ?? null;
   const findings = detail?.findings ?? {};
   const canOperate = user?.role === "admin" || user?.role === "operator";
+  const clusterQuery = currentCluster
+    ? `clusterId=${currentCluster.id}&clusterName=${encodeURIComponent(currentCluster.name)}`
+    : "";
 
   const nodeSummary = useMemo(() => {
     const nodes = detail?.nodes ?? [];
@@ -312,7 +343,7 @@ export function ClustersPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isAdmin && (
-            <button type="button" className="btn btn-secondary h-8 px-2.5 text-[12px]" onClick={() => setProjectOpen(true)}>
+            <button type="button" className="btn btn-secondary h-8 px-2.5 text-[12px]" onClick={() => { setEditingProject(null); setProjectOpen(true); }}>
               <Plus size={13} />
               新建项目
             </button>
@@ -321,7 +352,10 @@ export function ClustersPage() {
             <button
               type="button"
               className="btn btn-secondary h-8 px-2.5 text-[12px]"
-              onClick={() => setClusterOpen(true)}
+              onClick={() => {
+                setEditingCluster(null);
+                setClusterOpen(true);
+              }}
               disabled={!currentProject}
             >
               <Plus size={13} />
@@ -377,6 +411,20 @@ export function ClustersPage() {
                     {isAdmin && (
                       <button
                         type="button"
+                        className="rounded p-1 text-ink3 hover:bg-subtle hover:text-ink"
+                        onClick={() => {
+                          setEditingProject(project);
+                          setProjectOpen(true);
+                        }}
+                        title="编辑项目"
+                        aria-label="编辑项目"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        type="button"
                         className="rounded p-1 text-ink3 hover:bg-dangerSoft hover:text-danger"
                         onClick={() => void removeProject(project)}
                         title="删除项目"
@@ -419,6 +467,20 @@ export function ClustersPage() {
                     {isAdmin && (
                       <button
                         type="button"
+                        className="rounded p-1 text-ink3 hover:bg-subtle hover:text-ink"
+                        onClick={() => {
+                          setEditingCluster(cluster);
+                          setClusterOpen(true);
+                        }}
+                        title="编辑集群"
+                        aria-label="编辑集群"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        type="button"
                         className="rounded p-1 text-ink3 hover:bg-dangerSoft hover:text-danger"
                         onClick={() => void removeCluster(cluster)}
                         title="删除集群"
@@ -448,12 +510,18 @@ export function ClustersPage() {
                   sub={`异常 ${nodeSummary.failed} · 可扫描 ${nodeSummary.scannable}`}
                   tone={nodeSummary.failed > 0 ? "danger" : nodeSummary.total > 0 ? "ok" : "normal"}
                 />
-                <StatCard label="关联资产" value={String(currentCluster.assetCount)} sub="扫描后自动归入本集群" />
+                <StatCard
+                  label="关联资产"
+                  value={String(currentCluster.assetCount)}
+                  sub="扫描后自动归入本集群"
+                  onClick={() => navigate(`/assets?${clusterQuery}`)}
+                />
                 <StatCard
                   label="未关闭漏洞"
                   value={String(currentCluster.openFindings)}
                   sub={`P0 ${findings.P0 ?? 0} · P1 ${findings.P1 ?? 0}`}
                   tone={currentCluster.p0 > 0 ? "danger" : currentCluster.p1 > 0 ? "warn" : "normal"}
+                  onClick={() => navigate(`/findings?${clusterQuery}`)}
                 />
                 <StatCard label="环境" value={envLabels[currentCluster.environment] ?? currentCluster.environment} sub={currentCluster.provider || "未填写云厂商"} />
               </div>
@@ -660,7 +728,11 @@ export function ClustersPage() {
                         </thead>
                         <tbody>
                           {detail.assets.map((asset) => (
-                            <tr key={asset.id} className="border-b border-line/60 last:border-0">
+                            <tr
+                              key={asset.id}
+                              className="cursor-pointer border-b border-line/60 last:border-0 hover:bg-subtle/60"
+                              onClick={() => navigate(`/assets/${asset.id}`)}
+                            >
                               <td className="px-3 py-1.5 text-ink2">{asset.hostname}</td>
                               <td className="px-3 py-1.5 font-mono text-[10.5px] text-ink3">{asset.ip || "—"}</td>
                               <td className="px-3 py-1.5 text-ink3">{asset.osFamily || "—"}</td>
@@ -670,7 +742,10 @@ export function ClustersPage() {
                                   <button
                                     type="button"
                                     className="rounded p-1 text-ink3 hover:bg-subtle hover:text-danger"
-                                    onClick={() => void unlinkAsset(asset.id)}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void unlinkAsset(asset.id);
+                                    }}
                                     title="解除关联"
                                     aria-label="解除关联"
                                   >
@@ -690,7 +765,12 @@ export function ClustersPage() {
                   <p className="text-[12px] font-medium text-ink">漏洞分布</p>
                   <div className="mt-2 grid grid-cols-4 gap-2">
                     {(["P0", "P1", "P2", "P3"] as const).map((priority) => (
-                      <div key={priority} className="rounded-[8px] bg-subtle px-2 py-1.5 text-center">
+                      <button
+                        key={priority}
+                        type="button"
+                        className="rounded-[8px] bg-subtle px-2 py-1.5 text-center transition-colors hover:bg-brand-soft/60"
+                        onClick={() => navigate(`/findings?${clusterQuery}&priority=${priority}`)}
+                      >
                         <p className="text-[9.5px] text-ink3">{priority}</p>
                         <p
                           className={`mt-0.5 font-mono text-[16px] font-semibold ${
@@ -703,7 +783,7 @@ export function ClustersPage() {
                         >
                           {findings[priority] ?? 0}
                         </p>
-                      </div>
+                      </button>
                     ))}
                   </div>
                   <p className="mt-2 text-[10.5px] leading-[16px] text-ink3">
@@ -718,9 +798,14 @@ export function ClustersPage() {
 
       {projectOpen && (
         <ProjectDialog
-          onClose={() => setProjectOpen(false)}
+          project={editingProject}
+          onClose={() => {
+            setProjectOpen(false);
+            setEditingProject(null);
+          }}
           onDone={async () => {
             setProjectOpen(false);
+            setEditingProject(null);
             await loadProjects();
           }}
         />
@@ -728,9 +813,14 @@ export function ClustersPage() {
       {clusterOpen && currentProject && (
         <ClusterDialog
           project={currentProject}
-          onClose={() => setClusterOpen(false)}
+          cluster={editingCluster}
+          onClose={() => {
+            setClusterOpen(false);
+            setEditingCluster(null);
+          }}
           onDone={async () => {
             setClusterOpen(false);
+            setEditingCluster(null);
             await loadClusters(currentProject.id);
           }}
         />
@@ -782,11 +872,20 @@ function ModalShell({ title, onClose, children }: { title: string; onClose: () =
   );
 }
 
-function ProjectDialog({ onClose, onDone }: { onClose: () => void; onDone: () => Promise<void> }) {
+function ProjectDialog({
+  project,
+  onClose,
+  onDone
+}: {
+  project?: ProjectItem | null;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
   const toast = useToast();
-  const [name, setName] = useState("");
-  const [owner, setOwner] = useState("");
-  const [description, setDescription] = useState("");
+  const editing = Boolean(project);
+  const [name, setName] = useState(project?.name ?? "");
+  const [owner, setOwner] = useState(project?.owner ?? "");
+  const [description, setDescription] = useState(project?.description ?? "");
   const [saving, setSaving] = useState(false);
 
   async function submit() {
@@ -796,18 +895,24 @@ function ProjectDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
     }
     setSaving(true);
     try {
-      await api.createProject({ name: name.trim(), owner: owner.trim(), description: description.trim() });
-      toast.push("项目已创建", "success");
+      const payload = { name: name.trim(), owner: owner.trim(), description: description.trim() };
+      if (project) {
+        await api.updateProject(project.id, payload);
+        toast.push("项目已更新", "success");
+      } else {
+        await api.createProject(payload);
+        toast.push("项目已创建", "success");
+      }
       await onDone();
     } catch (err) {
-      toast.push(err instanceof Error ? err.message : "创建项目失败", "error");
+      toast.push(err instanceof Error ? err.message : editing ? "更新项目失败" : "创建项目失败", "error");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <ModalShell title="新建项目" onClose={onClose}>
+    <ModalShell title={editing ? "编辑项目" : "新建项目"} onClose={onClose}>
       <div className="space-y-3 px-5 py-4">
         <label className="block">
           <span className="mb-1 block text-[11px] text-ink2">项目名称</span>
@@ -827,21 +932,32 @@ function ProjectDialog({ onClose, onDone }: { onClose: () => void; onDone: () =>
           取消
         </button>
         <button type="button" className="btn btn-primary h-8 px-3 text-[12px]" onClick={() => void submit()} disabled={saving}>
-          {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-          创建
+          {saving ? <Loader2 size={13} className="animate-spin" /> : editing ? <Pencil size={13} /> : <Plus size={13} />}
+          {editing ? "保存" : "创建"}
         </button>
       </footer>
     </ModalShell>
   );
 }
 
-function ClusterDialog({ project, onClose, onDone }: { project: ProjectItem; onClose: () => void; onDone: () => Promise<void> }) {
+function ClusterDialog({
+  project,
+  cluster,
+  onClose,
+  onDone
+}: {
+  project: ProjectItem;
+  cluster?: ClusterItem | null;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
   const toast = useToast();
-  const [name, setName] = useState("");
-  const [environment, setEnvironment] = useState<ClusterEnvironment>("prod");
-  const [provider, setProvider] = useState("");
-  const [region, setRegion] = useState("");
-  const [description, setDescription] = useState("");
+  const editing = Boolean(cluster);
+  const [name, setName] = useState(cluster?.name ?? "");
+  const [environment, setEnvironment] = useState<ClusterEnvironment>(cluster?.environment ?? "prod");
+  const [provider, setProvider] = useState(cluster?.provider ?? "");
+  const [region, setRegion] = useState(cluster?.region ?? "");
+  const [description, setDescription] = useState(cluster?.description ?? "");
   const [saving, setSaving] = useState(false);
 
   async function submit() {
@@ -851,25 +967,30 @@ function ClusterDialog({ project, onClose, onDone }: { project: ProjectItem; onC
     }
     setSaving(true);
     try {
-      await api.createCluster({
-        projectId: project.id,
+      const payload = {
         name: name.trim(),
         environment,
         provider: provider.trim(),
         region: region.trim(),
         description: description.trim()
-      });
-      toast.push("集群已创建", "success");
+      };
+      if (cluster) {
+        await api.updateCluster(cluster.id, payload);
+        toast.push("集群已更新", "success");
+      } else {
+        await api.createCluster({ projectId: project.id, ...payload });
+        toast.push("集群已创建", "success");
+      }
       await onDone();
     } catch (err) {
-      toast.push(err instanceof Error ? err.message : "创建集群失败", "error");
+      toast.push(err instanceof Error ? err.message : editing ? "更新集群失败" : "创建集群失败", "error");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <ModalShell title={`新建集群 · ${project.name}`} onClose={onClose}>
+    <ModalShell title={`${editing ? "编辑集群" : "新建集群"} · ${project.name}`} onClose={onClose}>
       <div className="grid grid-cols-2 gap-3 px-5 py-4">
         <label className="col-span-2 block">
           <span className="mb-1 block text-[11px] text-ink2">集群名称</span>
@@ -903,8 +1024,8 @@ function ClusterDialog({ project, onClose, onDone }: { project: ProjectItem; onC
           取消
         </button>
         <button type="button" className="btn btn-primary h-8 px-3 text-[12px]" onClick={() => void submit()} disabled={saving}>
-          {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-          创建
+          {saving ? <Loader2 size={13} className="animate-spin" /> : editing ? <Pencil size={13} /> : <Plus size={13} />}
+          {editing ? "保存" : "创建"}
         </button>
       </footer>
     </ModalShell>
