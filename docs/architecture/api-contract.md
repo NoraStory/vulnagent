@@ -881,6 +881,35 @@ Webhook 请求体：
 }
 ```
 
+### GET /settings/runtime（viewer+）
+
+读取网页可调节的运行配置。返回每项的分组、类型、最低角色、来源（db/env/default）、是否需重启；密钥只返回 `hasValue`，不回显值。
+
+```json
+{
+  "items": [
+    { "key": "VA_LLM_MODEL", "group": "AI 模型", "label": "模型名称", "kind": "text", "minRole": "operator", "restart": true,
+      "value": "deepseek-v4-1-flash-261017", "hasValue": true, "source": "db", "updatedBy": "va-admin", "updatedAt": "2026-11-02T20:00:00+08:00" },
+    { "key": "VA_LLM_API_KEY", "group": "AI 模型", "label": "模型密钥", "kind": "secret", "minRole": "admin", "restart": true,
+      "value": "", "hasValue": true, "source": "db", "updatedBy": "va-admin", "updatedAt": "2026-11-02T20:00:00+08:00" }
+  ]
+}
+```
+
+### PUT /settings/runtime（operator+，按项校验角色）
+
+```json
+{ "values": { "VA_LLM_MODEL": "deepseek-v4-1-flash-261017", "VA_LLM_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3" } }
+```
+
+- 优先级：网页保存值（`app_settings`）> 环境变量/`.env` > 默认值；值为空表示删除覆盖并回落到环境变量。
+- 密钥使用 AES-256-GCM 加密存储；请求传 `********` 表示保持原值。
+- `operator` 仅可修改 `VA_LLM_MODEL`、`VA_AGENT_CONTEXT_BUDGET`；其余 AI 端点/密钥、同步周期、情报源与安全项仅 `admin`。
+- 响应：`{"ok":true,"changed":["…"],"restartRequired":true,"message":"已保存，部分配置需重启服务后生效"}`。
+- AI 端点/模型、GPU 端点、同步/复扫周期需重启生效；会话空闲、Cookie Secure 与情报源地址即时生效。
+- 校验：URL 必须 http(s)，上下文预算 4000–128000，周期为时长或 `0/off`，布尔为 `1/0`、`on/off`、`true/false`。
+- 写审计 `settings.runtime.update`（只记录键名，不记录值）。
+
 ### PATCH /settings/risk-policy（admin）
 
 ```json
@@ -1864,4 +1893,65 @@ Agent 的 `status` 事件新增：
 - 哈希经 SFTP 写入 `/tmp/vulnagent-hashcat-*.txt`，命令限制 `--runtime 300`，结束后立即删除哈希、结果与日志文件。
 - 字典不存在：`400 wordlist_missing`；SSH/SFTP 失败：`502 ssh_failed` / `502 sftp_failed`。
 - 写审计 `ssh.hashcat.audit`（仅记录数量，不记录哈希与明文）；接口仅限 operator，返回明文前需确认授权范围。
+
+### 13. 项目与集群（多主机运维）
+
+#### 项目
+
+| 方法 | 路径 | 角色 | 说明 |
+|---|---|---|---|
+| GET | `/projects` | viewer+ | 项目列表，含集群数/节点数 |
+| POST | `/projects` | admin | 创建项目 `{name, description, owner}` |
+| PATCH | `/projects/{id}` | admin | 修改名称/说明/负责人 |
+| DELETE | `/projects/{id}` | admin | 级联删除集群/节点，资产 `cluster_id` 置 0 |
+
+#### 集群
+
+| 方法 | 路径 | 角色 | 说明 |
+|---|---|---|---|
+| GET | `/clusters?projectId=1` | viewer+ | 集群列表，含节点健康、资产数、未关闭漏洞 P0/P1 |
+| POST | `/clusters` | admin | `{projectId, name, environment, provider, region, description}` |
+| GET | `/clusters/{id}` | viewer+ | 详情：cluster + nodes + assets + findings 统计 |
+| PATCH | `/clusters/{id}` | operator+ | 修改环境/厂商/地域/说明 |
+| DELETE | `/clusters/{id}` | admin | 删除集群与节点，资产 `cluster_id` 置 0 |
+
+`environment` 取值：`prod` / `staging` / `dev` / `test` / `other`。
+
+#### 节点
+
+| 方法 | 路径 | 角色 | 说明 |
+|---|---|---|---|
+| POST | `/clusters/{id}/nodes` | operator+ | 新增节点 |
+| PATCH | `/cluster-nodes/{id}` | operator+ | 修改节点 |
+| DELETE | `/cluster-nodes/{id}` | operator+ | 删除节点 |
+| POST | `/clusters/{id}/check` | operator+ | 检查集群全部节点 |
+| POST | `/cluster-nodes/{id}/check` | operator+ | 检查单节点 |
+| POST | `/clusters/{id}/scan` | operator+ | 扫描全部关联 SSH 的节点 |
+| POST | `/cluster-nodes/{id}/scan` | operator+ | 扫描单节点 |
+
+节点字段：
+
+```json
+{
+  "name": "backend-1", "role": "backend|database|cache|proxy|storage|scan_target",
+  "host": "10.0.0.12", "port": 8787, "url": "http://10.0.0.12:8787/api/v1/healthz",
+  "sshHostId": 3, "checkType": "auto|http|tcp|ssh|ssh_file",
+  "path": "/var/lib/app/app.db", "note": "主库"
+}
+```
+
+- `checkType=auto` 时：backend→http，database→tcp（填了 `sshHostId` 与 `path` 则为 ssh_file），scan_target→ssh，其余→tcp。
+- SSH/ssh_file 检查复用已保存的 SSH 主机凭据；节点本身不保存凭据。
+- 扫描结果进入现有资产/漏洞流水线，并自动把资产 `cluster_id` 设为该集群。
+- 检查/扫描结果包含 `status`（ok/failed/unknown）、`latencyMs`、`detail`；扫描汇总包含每个节点的成功/失败原因。
+
+#### 资产关联
+
+| 方法 | 路径 | 角色 | 说明 |
+|---|---|---|---|
+| POST | `/clusters/{id}/assets` | operator+ | `{assetIds:[1,2]}` 批量关联已有资产（≤200） |
+| DELETE | `/clusters/{id}/assets/{assetId}` | operator+ | 解除单个资产关联 |
+
+- 删除项目/集群/解除关联只清空 `cluster_id`，不删除资产、组件或漏洞。
+- 所有写操作、检查与扫描写审计（`project.*`、`cluster.*`、`cluster.node.*`、`cluster.assets.*`）。
 

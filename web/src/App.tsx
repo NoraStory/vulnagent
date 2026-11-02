@@ -16,6 +16,7 @@ const AssistantPage = lazy(() => import("./pages/Assistant").then((m) => ({ defa
 const TerminalPage = lazy(() => import("./pages/Terminal").then((m) => ({ default: m.TerminalPage })));
 const HostMonitorPage = lazy(() => import("./pages/HostMonitor").then((m) => ({ default: m.HostMonitorPage })));
 const HostAccelPage = lazy(() => import("./pages/HostAccel").then((m) => ({ default: m.HostAccelPage })));
+const ClustersPage = lazy(() => import("./pages/Clusters").then((m) => ({ default: m.ClustersPage })));
 const SharedTerminalPage = lazy(() =>
   import("./pages/SharedTerminal").then((m) => ({ default: m.SharedTerminalPage }))
 );
@@ -62,6 +63,7 @@ export default function App() {
           <Route path="/assets/:id" element={<AssetDetailPage />} />
           <Route path="/discovery" element={<DiscoveryPage />} />
           <Route path="/topology" element={<TopologyPage />} />
+          <Route path="/clusters" element={<ClustersPage />} />
           <Route path="/governance" element={<GovernancePage />} />
           <Route path="/integrations" element={<IntegrationsPage />} />
           <Route path="/assistant" element={<AssistantPage />} />

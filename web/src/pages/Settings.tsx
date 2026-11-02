@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Bell, History, KeyRound, Lock, Network, Plus, Power, RefreshCw, Save, Search, Send, Settings2, ShieldCheck, Trash2, Upload, UserPlus, Users, X } from "lucide-react";
 import { api } from "../lib/api";
-import type { AuditItem, OpsPolicy, ProductMapping, RiskPolicy, SettingsData, SyncSource } from "../lib/types";
+import type { AuditItem, OpsPolicy, ProductMapping, RiskPolicy, RuntimeSettingItem, SettingsData, SyncSource } from "../lib/types";
 import { Badge, Empty, Pagination, Skeleton } from "../components/ui";
 import { compactNumber, formatTime, roleMeta, timeAgo } from "../lib/format";
 import { useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
 
-type Tab = "policy" | "users" | "sync" | "map" | "notify" | "audit";
+type Tab = "policy" | "users" | "sync" | "map" | "notify" | "audit" | "runtime";
 
 const weightMeta: Array<{ key: keyof RiskPolicy["weights"]; label: string; hint: string; color: string }> = [
   { key: "cvss", label: "CVSS 基础分", hint: "漏洞本身严重程度", color: "#FF3B30" },
@@ -18,16 +17,30 @@ const weightMeta: Array<{ key: keyof RiskPolicy["weights"]; label: string; hint:
 ];
 
 export function SettingsPage() {
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("policy");
   const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [runtimeItems, setRuntimeItems] = useState<RuntimeSettingItem[]>([]);
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [weights, setWeights] = useState<RiskPolicy["weights"]>({ cvss: 0.4, epss: 0.2, exploit: 0.25, asset: 0.15 });
   const [thresholds, setThresholds] = useState<RiskPolicy["thresholds"]>({ p0: 85, p1: 70, p2: 50 });
+
+  const loadRuntime = useCallback(async () => {
+    setRuntimeLoading(true);
+    try {
+      const result = await api.runtimeSettings();
+      setRuntimeItems(result.items);
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "加载运行配置失败", "error");
+    } finally {
+      setRuntimeLoading(false);
+    }
+  }, [toast]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,12 +58,14 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!isAdmin) {
+    void loadRuntime();
+    if (isAdmin) {
+      void load();
+    } else {
       setLoading(false);
-      return;
+      setTab("runtime");
     }
-    void load();
-  }, [isAdmin, load]);
+  }, [isAdmin, load, loadRuntime]);
 
   const sum = useMemo(
     () => Number((weights.cvss + weights.epss + weights.exploit + weights.asset).toFixed(3)),
@@ -77,16 +92,17 @@ export function SettingsPage() {
 
   if (!isAdmin) {
     return (
-      <div className="card">
-        <Empty
-          title="需要管理员权限"
-          description="账号权限、风险策略与审计日志仅对管理员开放。当前账号为只读或运维角色。"
-          action={
-            <Link to="/" className="btn btn-secondary">
-              返回概览
-            </Link>
-          }
-        />
+      <div className="flex flex-col gap-4">
+        <div className="card flex items-start gap-2.5 px-4 py-3">
+          <Lock size={15} className="mt-0.5 shrink-0 text-ink3" />
+          <div>
+            <h2 className="text-[14px] font-semibold text-ink">运行配置</h2>
+            <p className="mt-0.5 text-[11px] leading-[17px] text-ink3">
+              你当前为{user?.role === "operator" ? "运维" : "只读"}角色。可查看运行配置；模型名称与上下文预算允许运维调整，端点、密钥、同步周期与安全项仅管理员可改。
+            </p>
+          </div>
+        </div>
+        <RuntimePanel items={runtimeItems} loading={runtimeLoading} role={user?.role ?? "viewer"} onSaved={loadRuntime} />
       </div>
     );
   }
@@ -125,6 +141,9 @@ export function SettingsPage() {
       <div className="card flex items-center gap-1 px-4 py-2.5">
         <TabButton active={tab === "policy"} onClick={() => setTab("policy")} icon={<Settings2 size={14} />}>
           风险策略
+        </TabButton>
+        <TabButton active={tab === "runtime"} onClick={() => setTab("runtime")} icon={<ShieldCheck size={14} />}>
+          运行配置
         </TabButton>
         <TabButton active={tab === "users"} onClick={() => setTab("users")} icon={<Users size={14} />}>
           账号与角色
@@ -290,6 +309,171 @@ export function SettingsPage() {
       {tab === "sync" && <SyncPanel />}
       {tab === "map" && <ProductMapPanel />}
       {tab === "notify" && <NotifyPanel />}
+      {tab === "runtime" && (
+        <RuntimePanel items={runtimeItems} loading={runtimeLoading} role={user?.role ?? "admin"} onSaved={loadRuntime} />
+      )}
+    </div>
+  );
+}
+
+function roleWeight(role: string): number {
+  if (role === "admin") return 3;
+  if (role === "operator") return 2;
+  return 1;
+}
+
+function RuntimePanel({
+  items,
+  loading,
+  role,
+  onSaved
+}: {
+  items: RuntimeSettingItem[];
+  loading: boolean;
+  role: string;
+  onSaved: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const item of items) {
+      next[item.key] = item.kind === "secret" ? "" : item.value;
+    }
+    setValues(next);
+  }, [items]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, RuntimeSettingItem[]>();
+    for (const item of items) {
+      const list = map.get(item.group) ?? [];
+      list.push(item);
+      map.set(item.group, list);
+    }
+    return [...map.entries()];
+  }, [items]);
+
+  async function save() {
+    if (saving) return;
+    const payload: Record<string, string> = {};
+    for (const item of items) {
+      if (roleWeight(role) < roleWeight(item.minRole)) continue;
+      const value = values[item.key] ?? "";
+      if (item.kind === "secret") {
+        if (value !== "") payload[item.key] = value;
+      } else if (value !== item.value) {
+        payload[item.key] = value;
+      }
+    }
+    if (Object.keys(payload).length === 0) {
+      toast.push("没有需要保存的修改", "info");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await api.updateRuntimeSettings(payload);
+      toast.push(result.message || "运行配置已保存", result.restartRequired ? "info" : "success");
+      await onSaved();
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "保存运行配置失败", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading && items.length === 0) {
+    return (
+      <div className="card p-5">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="mt-3 h-40 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="card flex flex-wrap items-start gap-3 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
+            <ShieldCheck size={14} className="text-brand" />
+            运行配置
+          </h2>
+          <p className="mt-1 text-[11px] leading-[17px] text-ink3">
+            网页保存的值优先于 <code className="font-mono text-[10.5px]">.env</code>；密钥加密存储且不回显。标注「重启后生效」的项需重启服务。
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn btn-secondary h-8 px-2.5 text-[12px]" onClick={() => void onSaved()} disabled={loading}>
+            {loading ? <RefreshCw size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            刷新
+          </button>
+          <button type="button" className="btn btn-primary h-8 px-3 text-[12px]" onClick={() => void save()} disabled={saving}>
+            {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+            保存配置
+          </button>
+        </div>
+      </div>
+
+      {groups.map(([group, groupItems]) => (
+        <section key={group} className="card overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+            <h3 className="text-[12.5px] font-semibold text-ink">{group}</h3>
+            <span className="ml-auto text-[10px] text-ink3">{groupItems.length} 项</span>
+          </div>
+          <div className="grid grid-cols-1 gap-x-5 gap-y-3.5 px-4 py-3 md:grid-cols-2">
+            {groupItems.map((item) => {
+              const editable = roleWeight(role) >= roleWeight(item.minRole);
+              const sourceLabel = item.source === "db" ? "网页" : item.source === "env" ? "环境变量" : "默认";
+              const sourceTone = item.source === "db" ? "bg-brand-soft text-brand-strong" : "bg-subtle text-ink3";
+              return (
+                <label key={item.key} className={`block ${editable ? "" : "opacity-70"}`}>
+                  <span className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink2">
+                    <span className="font-medium text-ink">{item.label}</span>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${sourceTone}`}>{sourceLabel}</span>
+                    {item.restart && <span className="rounded-full bg-warnSoft px-1.5 py-0.5 text-[9px] text-warn">重启后生效</span>}
+                    {!editable && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-subtle px-1.5 py-0.5 text-[9px] text-ink3">
+                        <Lock size={8} />
+                        仅管理员
+                      </span>
+                    )}
+                  </span>
+                  {item.kind === "bool" ? (
+                    <select
+                      className="input h-9 text-[12px]"
+                      value={values[item.key] ?? ""}
+                      onChange={(event) => setValues((current) => ({ ...current, [item.key]: event.target.value }))}
+                      disabled={!editable}
+                    >
+                      <option value="">默认（{item.default || "off"}）</option>
+                      <option value="1">开启</option>
+                      <option value="0">关闭</option>
+                    </select>
+                  ) : (
+                    <input
+                      className="input h-9 font-mono text-[11.5px]"
+                      type={item.kind === "secret" ? "password" : "text"}
+                      autoComplete="new-password"
+                      value={values[item.key] ?? ""}
+                      placeholder={item.kind === "secret" && item.hasValue ? "已设置，留空保持不变" : item.placeholder}
+                      onChange={(event) => setValues((current) => ({ ...current, [item.key]: event.target.value }))}
+                      disabled={!editable}
+                    />
+                  )}
+                  <span className="mt-1 block text-[10px] leading-[15px] text-ink3">{item.description}</span>
+                  {item.source === "db" && item.updatedBy && (
+                    <span className="mt-0.5 block text-[9.5px] text-ink3">
+                      最近修改：{item.updatedBy} · {item.updatedAt}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

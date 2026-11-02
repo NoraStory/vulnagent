@@ -151,6 +151,26 @@ func (a *App) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/overview", a.handleOverview)
 
+	// 项目与集群：分布式后端/数据库/扫描目标的统一运维视图
+	mux.HandleFunc("GET /api/v1/projects", a.handleProjects)
+	mux.HandleFunc("POST /api/v1/projects", a.handleProjectCreate)
+	mux.HandleFunc("PATCH /api/v1/projects/{id}", a.handleProjectUpdate)
+	mux.HandleFunc("DELETE /api/v1/projects/{id}", a.handleProjectDelete)
+	mux.HandleFunc("GET /api/v1/clusters", a.handleClusters)
+	mux.HandleFunc("POST /api/v1/clusters", a.handleClusterCreate)
+	mux.HandleFunc("GET /api/v1/clusters/{id}", a.handleClusterDetail)
+	mux.HandleFunc("PATCH /api/v1/clusters/{id}", a.handleClusterUpdate)
+	mux.HandleFunc("DELETE /api/v1/clusters/{id}", a.handleClusterDelete)
+	mux.HandleFunc("POST /api/v1/clusters/{id}/nodes", a.handleClusterNodeCreate)
+	mux.HandleFunc("POST /api/v1/clusters/{id}/check", a.handleClusterCheck)
+	mux.HandleFunc("POST /api/v1/clusters/{id}/scan", a.handleClusterScan)
+	mux.HandleFunc("POST /api/v1/clusters/{id}/assets", a.handleClusterAssetsLink)
+	mux.HandleFunc("DELETE /api/v1/clusters/{id}/assets/{assetId}", a.handleClusterAssetUnlink)
+	mux.HandleFunc("PATCH /api/v1/cluster-nodes/{id}", a.handleClusterNodeUpdate)
+	mux.HandleFunc("DELETE /api/v1/cluster-nodes/{id}", a.handleClusterNodeDelete)
+	mux.HandleFunc("POST /api/v1/cluster-nodes/{id}/check", a.handleClusterNodeCheck)
+	mux.HandleFunc("POST /api/v1/cluster-nodes/{id}/scan", a.handleClusterNodeScan)
+
 	mux.HandleFunc("GET /api/v1/findings", a.handleFindings)
 	mux.HandleFunc("GET /api/v1/findings/{id}", a.handleFindingDetail)
 	mux.HandleFunc("PATCH /api/v1/findings/{id}", a.handleFindingPatch)
@@ -272,6 +292,8 @@ func (a *App) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/audit-logs", a.handleAuditLogs)
 	mux.HandleFunc("GET /api/v1/settings", a.handleSettings)
+	mux.HandleFunc("GET /api/v1/settings/runtime", a.handleRuntimeSettings)
+	mux.HandleFunc("PUT /api/v1/settings/runtime", a.handleRuntimeSettingsUpdate)
 	mux.HandleFunc("PATCH /api/v1/settings/risk-policy", a.handleRiskPolicy)
 	mux.HandleFunc("GET /api/v1/settings/ops-policy", a.handleOpsPolicy)
 	mux.HandleFunc("PUT /api/v1/settings/ops-policy", a.handleOpsPolicy)
@@ -308,6 +330,13 @@ func runServer() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// 网页保存的运行配置优先于 .env；必须在初始化 Harness 与调度器之前注入环境变量。
+	runtimeApp := &App{db: db, dataDir: dataDir}
+	if err := runtimeApp.applyStoredRuntimeSettings(context.Background()); err != nil {
+		slog.Warn("应用网页运行配置失败", "err", err)
+	}
+	cfg = config.Load()
 
 	if err := ensureUsers(db); err != nil {
 		slog.Error("初始化账号失败", "err", err)

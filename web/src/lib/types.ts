@@ -666,6 +666,120 @@ export interface SettingsData {
   build: { version: string; commit: string; builtAt: string; sbomDigest: string };
 }
 
+export type RuntimeSettingKind = "text" | "url" | "secret" | "int" | "duration" | "bool";
+
+export interface RuntimeSettingItem {
+  key: string;
+  group: string;
+  label: string;
+  description: string;
+  kind: RuntimeSettingKind;
+  minRole: Role;
+  default: string;
+  placeholder: string;
+  restart: boolean;
+  value: string;
+  hasValue: boolean;
+  source: "db" | "env" | "default";
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface RuntimeSettingUpdateResult {
+  ok: boolean;
+  changed: string[];
+  restartRequired: boolean;
+  message: string;
+}
+
+export interface ProjectItem {
+  id: number;
+  name: string;
+  description: string;
+  owner: string;
+  createdAt: string;
+  updatedAt: string;
+  clusterCount: number;
+  nodeCount: number;
+}
+
+export type ClusterEnvironment = "prod" | "staging" | "dev" | "test" | "other";
+
+export interface ClusterItem {
+  id: number;
+  projectId: number;
+  projectName: string;
+  name: string;
+  environment: ClusterEnvironment;
+  provider: string;
+  region: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  nodeCount: number;
+  healthyNodes: number;
+  assetCount: number;
+  openFindings: number;
+  p0: number;
+  p1: number;
+}
+
+export type ClusterNodeRole = "backend" | "database" | "cache" | "proxy" | "storage" | "scan_target";
+export type ClusterCheckType = "auto" | "http" | "tcp" | "ssh" | "ssh_file";
+
+export interface ClusterNodeItem {
+  id: number;
+  clusterId: number;
+  name: string;
+  role: ClusterNodeRole;
+  host: string;
+  port: number;
+  url: string;
+  sshHostId: number;
+  checkType: ClusterCheckType;
+  path: string;
+  note: string;
+  status: "ok" | "failed" | "unknown" | string;
+  latencyMs: number;
+  detail: string;
+  checkedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClusterAssetItem {
+  id: number;
+  hostname: string;
+  ip: string;
+  osFamily: string;
+  agentStatus: string;
+  lastSeenAt: string;
+}
+
+export interface ClusterDetailData {
+  cluster: ClusterItem;
+  nodes: ClusterNodeItem[];
+  assets: ClusterAssetItem[];
+  findings: Record<string, number>;
+}
+
+export interface ClusterScanItem {
+  nodeId: number;
+  nodeName: string;
+  status: "ok" | "failed" | "skipped" | string;
+  message: string;
+  assetId?: number;
+  components?: number;
+  created?: number;
+  updated?: number;
+}
+
+export interface ClusterScanResult {
+  items: ClusterScanItem[];
+  okCount: number;
+  total: number;
+}
+
 // ---------- Agent Harness ----------
 
 export type HarnessRisk = "low" | "medium" | "high";

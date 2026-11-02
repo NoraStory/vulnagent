@@ -25,6 +25,8 @@
 - hashcat：CPU/GPU 速度解析、基准接口、审计输出解析、字典缺失与错误分支
 - SSH 连接池：二次获取复用同一连接、关闭连接池
 - 备份：多协程并行 gzip 压缩大文件与空文件，解压内容一致
+- 运行配置：角色分级（operator 仅模型名称/上下文预算）、密钥加密与不回显、URL/预算/周期/布尔校验、启动时解密注入
+- 项目与集群：项目/集群/节点 CRUD、HTTP 健康检查、SSH 目标扫描后资产归入集群、项目删除级联清理、资产关联/解除
 
 ## 2. 接口冒烟
 
@@ -32,6 +34,7 @@
 |---|---|---|
 | `GET /api/v1/healthz` | 200 且 `demo=false` | 通过 |
 | 迁移 0019/0020 | `ssh_hosts.gpu_accel`、`ssh_accel_baselines` 存在 | 通过 |
+| 迁移 0021/0022 | `app_settings`、`projects/clusters/cluster_nodes`、`assets.cluster_id` 存在 | 通过 |
 | `vulnagent backup --compress` | 生成可解压的 `.db.gz` | 通过（3.2 MB） |
 | 服务端重启 | 健康检查恢复 200 | 通过 |
 

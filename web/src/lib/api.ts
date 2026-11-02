@@ -36,6 +36,13 @@ import type {
   SelfCheckHistoryItem,
   SelfCheckRun,
   SettingsData,
+  RuntimeSettingItem,
+  RuntimeSettingUpdateResult,
+  ProjectItem,
+  ClusterItem,
+  ClusterNodeItem,
+  ClusterDetailData,
+  ClusterScanResult,
   SyncSource,
   Ticket,
   TrajectoryItem,
@@ -726,6 +733,103 @@ export const api = {
 
   settings(): Promise<SettingsData> {
     return request("/settings");
+  },
+
+  runtimeSettings(): Promise<{ items: RuntimeSettingItem[] }> {
+    return request("/settings/runtime");
+  },
+
+  updateRuntimeSettings(values: Record<string, string>): Promise<RuntimeSettingUpdateResult> {
+    return request("/settings/runtime", { method: "PUT", body: JSON.stringify({ values }) });
+  },
+
+  projects(): Promise<{ items: ProjectItem[] }> {
+    return request("/projects");
+  },
+
+  createProject(input: { name: string; description?: string; owner?: string }): Promise<{ ok: boolean; id: number }> {
+    return request("/projects", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  updateProject(id: number, input: { name?: string; description?: string; owner?: string }): Promise<{ ok: boolean }> {
+    return request(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  deleteProject(id: number): Promise<{ ok: boolean }> {
+    return request(`/projects/${id}`, { method: "DELETE" });
+  },
+
+  clusters(projectId?: number): Promise<{ items: ClusterItem[] }> {
+    return request(`/clusters${projectId ? query({ projectId }) : ""}`);
+  },
+
+  createCluster(input: {
+    projectId: number;
+    name: string;
+    environment: string;
+    provider?: string;
+    region?: string;
+    description?: string;
+  }): Promise<{ ok: boolean; id: number }> {
+    return request("/clusters", { method: "POST", body: JSON.stringify(input) });
+  },
+
+  clusterDetail(id: number): Promise<ClusterDetailData> {
+    return request(`/clusters/${id}`);
+  },
+
+  updateCluster(id: number, input: Partial<Pick<ClusterItem, "name" | "environment" | "provider" | "region" | "description">>): Promise<{ ok: boolean }> {
+    return request(`/clusters/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  deleteCluster(id: number): Promise<{ ok: boolean }> {
+    return request(`/clusters/${id}`, { method: "DELETE" });
+  },
+
+  createClusterNode(clusterId: number, input: {
+    name: string;
+    role: string;
+    host?: string;
+    port?: number;
+    url?: string;
+    sshHostId?: number;
+    checkType?: string;
+    path?: string;
+    note?: string;
+  }): Promise<{ ok: boolean; id: number }> {
+    return request(`/clusters/${clusterId}/nodes`, { method: "POST", body: JSON.stringify(input) });
+  },
+
+  updateClusterNode(id: number, input: Record<string, unknown>): Promise<{ ok: boolean }> {
+    return request(`/cluster-nodes/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  deleteClusterNode(id: number): Promise<{ ok: boolean }> {
+    return request(`/cluster-nodes/${id}`, { method: "DELETE" });
+  },
+
+  checkClusterNode(id: number): Promise<ClusterNodeItem> {
+    return request(`/cluster-nodes/${id}/check`, { method: "POST", body: "{}" });
+  },
+
+  scanClusterNode(id: number): Promise<{ ok: boolean; result: unknown }> {
+    return request(`/cluster-nodes/${id}/scan`, { method: "POST", body: "{}" });
+  },
+
+  checkCluster(id: number): Promise<{ items: ClusterNodeItem[] }> {
+    return request(`/clusters/${id}/check`, { method: "POST", body: "{}" });
+  },
+
+  scanCluster(id: number): Promise<ClusterScanResult> {
+    return request(`/clusters/${id}/scan`, { method: "POST", body: "{}" });
+  },
+
+  linkClusterAssets(id: number, assetIds: number[]): Promise<{ ok: boolean; count: number }> {
+    return request(`/clusters/${id}/assets`, { method: "POST", body: JSON.stringify({ assetIds }) });
+  },
+
+  unlinkClusterAsset(id: number, assetId: number): Promise<{ ok: boolean }> {
+    return request(`/clusters/${id}/assets/${assetId}`, { method: "DELETE" });
   },
 
   updateRiskPolicy(policy: RiskPolicy): Promise<{ ok: boolean; riskPolicy: RiskPolicy; recomputed: number }> {

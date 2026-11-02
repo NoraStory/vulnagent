@@ -622,6 +622,17 @@ CREATE TABLE integration_sources (
 - 外部 CMDB 支持分页：默认 `auto` 跟随响应 `next`，也可显式选择 `none / page / cursor`；
   配置项、响应形态与同源限制见 [CMDB 分页契约](./cmdb-pagination-contract.md)。
 
+### 5.1.5 项目与集群（迁移 0022）
+
+- 目标：控制面、后端、数据库与扫描目标分处不同主机时，用「项目 → 集群 → 节点」描述真实部署，并把资产与漏洞按集群汇总。
+- 表：`projects`、`clusters`、`cluster_nodes`；`assets` 新增 `cluster_id`（默认 0）。
+- 节点角色：`backend / database / cache / proxy / storage / scan_target`；检查方式 `auto / http / tcp / ssh / ssh_file`。
+- 健康检查：HTTP 获取后端健康地址；TCP 检查数据库/缓存/代理端口；SSH 复用已保存主机凭据；`ssh_file` 通过 SSH 检查 SQLite 文件大小与分区使用率。
+- 扫描：仅对关联 `ssh_host_id` 的节点执行 `sshscan` 只读采集，结果进入既有资产/漏洞流水线，并自动回填 `assets.cluster_id`。
+- 资产关联：已有 Agent 资产可批量关联/解除关联；删除项目/集群只清空关联，不删除资产。
+- 权限：项目/集群创建删除仅 admin；节点、检查、扫描、资产关联为 operator+；查看为 viewer+；全部写操作写审计。
+- 详细设计见 [多集群与项目运维设计](./multi-cluster-design.md)。
+
 ### 5.2 目标模型（规划中，尚未实现）
 
 > 以下为后续演进方向（Agent 注册/心跳、SBOM 快照版本化、EPSS 历史、API Token、多租户）。
@@ -1250,6 +1261,15 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 口令审计：目标机安装 hashcat 时，`POST /ssh/hosts/{id}/hashcat/benchmark` 运行 `hashcat -b -m 0` 对比 CPU（`-D 1`）与 GPU（`-D 2`）速度；`POST /ssh/hosts/{id}/hashcat/audit` 将最多 100 条哈希经 SFTP 写入 `/tmp`，按 `-m <mode> -a 0 --runtime 300` 字典审计后立即删除临时文件，返回命中明文并写审计（不记录哈希与明文）。
 - 前端：SSH 终端顶部新增「服务加速」入口，页面展示 GPU/系统加速状态、优化建议、GPU 明细、加速节点、hashcat 基准/审计与基线对比；主机编辑弹窗提供「检测 GPU」与服务加速开关，开启后 AI 面板显示「服务加速」徽标。
 - 优化建议：本地推理优先使用与工具调用兼容的模型；显存不足时降低上下文预算 `VA_AGENT_CONTEXT_BUDGET`；调优后先记录基线再对比，确认指标改善后再推广到其他主机。
+
+#### 7.6.14 网页运行配置
+
+- 入口：设置页「运行配置」标签；管理员可见全部配置，运维可查看并修改模型名称/上下文预算，只读角色仅查看。
+- 存储：迁移 0021 `app_settings`（key/value/secret/updated_by/updated_at）；密钥使用 SSH 凭据同一 AES-256-GCM 密钥加密，接口只返回 `hasValue`。
+- 优先级：网页保存值 > 环境变量/`.env` > 默认值；启动时 `applyStoredRuntimeSettings` 在初始化 Harness 与调度器前注入进程环境。
+- 生效：会话空闲、Cookie Secure、情报源地址即时生效；AI/GPU 端点与模型、同步/复扫周期标注「重启后生效」。
+- 校验：URL 必须 http(s)、上下文预算 4000–128000、周期为时长或 `0/off`、布尔为 `1/0|on/off|true/false`；写审计 `settings.runtime.update`（不记录值）。
+- 角色：`operator` 仅允许 `VA_LLM_MODEL`、`VA_AGENT_CONTEXT_BUDGET`；其余端点/密钥/周期/安全项仅 `admin`。
 
 ---
 
