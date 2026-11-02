@@ -3,24 +3,27 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"vulnagent/server/internal/platform/clock"
 )
 
-// sshAccelScript 只读采集加速能力：NVIDIA GPU、CUDA、持久化模式、功耗/频率、CPU 调频策略
+// sshAccelScript 只读采集加速能力：NVIDIA GPU、CUDA、持久化模式、功耗/频率/温度、GPU 进程与 CPU 调频策略
 const sshAccelScript = `export LC_ALL=C
 if command -v nvidia-smi >/dev/null 2>&1; then
   echo "NVSMI|1"
-  nvidia-smi --query-gpu=name,memory.total,memory.used,driver_version,utilization.gpu,persistence_mode,power.limit,power.default_limit,clocks.current.graphics,clocks.max.graphics --format=csv,noheader,nounits 2>/dev/null | head -8 | awk '{print "GPU|" $0}'
-  nvidia-smi 2>/dev/null | awk -F'CUDA Version: ' 'NR<8 && NF>1 {split($2,a," "); print "CUDA|" a[1]; exit}'
-  nvidia-smi --query-gpu=clocks_throttle_reasons.active --format=csv,noheader 2>/dev/null | head -8 | awk '{print "THROTTLE|" $0}'
+  nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.used,utilization.memory,utilization.gpu,driver_version,persistence_mode,power.limit,power.default_limit,power.max_limit,power.draw,clocks.current.graphics,clocks.max.graphics,clocks.current.memory,temperature.gpu,fan.speed,pstate,compute_mode,clocks_throttle_reasons.active --format=csv,noheader,nounits 2>/dev/null | head -8 | awk '{print "GPU|" $0}'
+  nvidia-smi --version 2>/dev/null | awk -F': *' '/CUDA Version/{print "CUDA|" $2} /DRIVER version/{print "DRIVER|" $2}'
+  nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader,nounits 2>/dev/null | head -8 | awk '{print "MIG|" $0}'
+  nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null | head -20 | awk '{print "PROC|" $0}'
 else
   echo "NVSMI|0"
 fi
@@ -39,19 +42,38 @@ fi
 // accelProfileTTL 加速能力探测缓存时长，避免连续打开页面重复建立 SSH 会话
 const accelProfileTTL = 60 * time.Second
 
+// accelProcess 占用 GPU 的进程
+type accelProcess struct {
+	PID      int    `json:"pid"`
+	Name     string `json:"name"`
+	MemoryMB int    `json:"memoryMb"`
+}
+
 // accelGPU 单块 GPU 的加速相关状态
 type accelGPU struct {
-	Name          string  `json:"name"`
-	MemoryMB      int     `json:"memoryMb"`
-	MemoryUsedMB  int     `json:"memoryUsedMb"`
-	Driver        string  `json:"driver"`
-	Utilization   float64 `json:"utilization"`
-	Persistence   string  `json:"persistenceMode"`
-	PowerLimitW   float64 `json:"powerLimitW"`
-	PowerDefaultW float64 `json:"powerDefaultW"`
-	ClockMHz      float64 `json:"clockMhz"`
-	MaxClockMHz   float64 `json:"maxClockMhz"`
-	Throttle      string  `json:"throttle"`
+	Index             int            `json:"index"`
+	UUID              string         `json:"uuid"`
+	Name              string         `json:"name"`
+	MemoryMB          int            `json:"memoryMb"`
+	MemoryUsedMB      int            `json:"memoryUsedMb"`
+	MemoryUtilization float64        `json:"memoryUtilization"`
+	Driver            string         `json:"driver"`
+	Utilization       float64        `json:"utilization"`
+	Persistence       string         `json:"persistenceMode"`
+	PowerLimitW       float64        `json:"powerLimitW"`
+	PowerDefaultW     float64        `json:"powerDefaultW"`
+	PowerMaxW         float64        `json:"powerMaxW"`
+	PowerDrawW        float64        `json:"powerDrawW"`
+	ClockMHz          float64        `json:"clockMhz"`
+	MaxClockMHz       float64        `json:"maxClockMhz"`
+	MemoryClockMHz    float64        `json:"memoryClockMhz"`
+	TempC             float64        `json:"tempC"`
+	FanPercent        float64        `json:"fanPercent"`
+	PState            string         `json:"pstate"`
+	ComputeMode       string         `json:"computeMode"`
+	MigMode           string         `json:"migMode"`
+	Throttle          string         `json:"throttle"`
+	Processes         []accelProcess `json:"processes,omitempty"`
 }
 
 // accelSuggestion 只读检测得出的优化建议，不自动修改主机
@@ -75,6 +97,7 @@ type sshHostAccelProfile struct {
 	NvidiaSMI        bool              `json:"nvidiaSmi"`
 	GPUs             []accelGPU        `json:"gpus"`
 	CUDA             string            `json:"cuda"`
+	Driver           string            `json:"driver"`
 	CPUModel         string            `json:"cpuModel"`
 	CPUCores         int               `json:"cpuCores"`
 	Governor         string            `json:"cpuGovernor"`
@@ -88,10 +111,11 @@ type sshHostAccelProfile struct {
 	Suggestions      []accelSuggestion `json:"suggestions"`
 }
 
-// parseSSHAccelProfile 解析采集脚本的 KEY|value 行
+// parseSSHAccelProfile 解析采集脚本的 KEY|value 行；兼容旧版 10 字段 GPU 输出
 func parseSSHAccelProfile(output string) (sshHostAccelProfile, error) {
 	profile := sshHostAccelProfile{GPUs: []accelGPU{}, Suggestions: []accelSuggestion{}}
 	seen := false
+	migModes := make([]string, 0, 4)
 	throttles := make([]string, 0, 4)
 	for _, rawLine := range strings.Split(output, "\n") {
 		line := strings.TrimSpace(rawLine)
@@ -102,57 +126,147 @@ func parseSSHAccelProfile(output string) (sshHostAccelProfile, error) {
 		if len(parts) < 2 {
 			continue
 		}
+		value := strings.TrimSpace(parts[1])
 		switch parts[0] {
 		case "NVSMI":
 			seen = true
-			profile.NvidiaSMI = strings.TrimSpace(parts[1]) == "1"
+			profile.NvidiaSMI = value == "1"
 		case "GPU":
-			fields := strings.Split(parts[1], ",")
+			fields := splitAccelCSV(value)
+			if len(fields) >= 21 {
+				gpu := accelGPU{
+					Index:             atoiCSV(fields[0]),
+					UUID:              fields[1],
+					Name:              fields[2],
+					MemoryMB:          atoiCSV(fields[3]),
+					MemoryUsedMB:      atoiCSV(fields[4]),
+					MemoryUtilization: floatCSV(fields[5]),
+					Utilization:       floatCSV(fields[6]),
+					Driver:            fields[7],
+					Persistence:       fields[8],
+					PowerLimitW:       floatCSV(fields[9]),
+					PowerDefaultW:     floatCSV(fields[10]),
+					PowerMaxW:         floatCSV(fields[11]),
+					PowerDrawW:        floatCSV(fields[12]),
+					ClockMHz:          floatCSV(fields[13]),
+					MaxClockMHz:       floatCSV(fields[14]),
+					MemoryClockMHz:    floatCSV(fields[15]),
+					TempC:             floatCSV(fields[16]),
+					FanPercent:        floatCSV(fields[17]),
+					PState:            fields[18],
+					ComputeMode:       fields[19],
+					Throttle:          fields[20],
+				}
+				profile.GPUs = append(profile.GPUs, gpu)
+				continue
+			}
 			if len(fields) < 10 {
 				continue
 			}
+			// 兼容 v0.7.1 及更早版本的 10 字段输出
 			gpu := accelGPU{
-				Name:          strings.TrimSpace(fields[0]),
-				Driver:        strings.TrimSpace(fields[3]),
-				Utilization:   parseFloatTrim(fields[4]),
-				Persistence:   strings.TrimSpace(fields[5]),
-				PowerLimitW:   parseFloatTrim(fields[6]),
-				PowerDefaultW: parseFloatTrim(fields[7]),
-				ClockMHz:      parseFloatTrim(fields[8]),
-				MaxClockMHz:   parseFloatTrim(fields[9]),
+				Index:         len(profile.GPUs),
+				Name:          fields[0],
+				MemoryMB:      atoiCSV(fields[1]),
+				MemoryUsedMB:  atoiCSV(fields[2]),
+				Driver:        fields[3],
+				Utilization:   floatCSV(fields[4]),
+				Persistence:   fields[5],
+				PowerLimitW:   floatCSV(fields[6]),
+				PowerDefaultW: floatCSV(fields[7]),
+				ClockMHz:      floatCSV(fields[8]),
+				MaxClockMHz:   floatCSV(fields[9]),
 			}
-			gpu.MemoryMB, _ = strconv.Atoi(strings.TrimSpace(fields[1]))
-			gpu.MemoryUsedMB, _ = strconv.Atoi(strings.TrimSpace(fields[2]))
 			profile.GPUs = append(profile.GPUs, gpu)
 		case "CUDA":
-			profile.CUDA = strings.TrimSpace(parts[1])
+			profile.CUDA = value
+		case "DRIVER":
+			profile.Driver = value
+		case "MIG":
+			migModes = append(migModes, value)
 		case "THROTTLE":
-			throttles = append(throttles, strings.TrimSpace(parts[1]))
+			// 兼容旧版独立 THROTTLE 行
+			throttles = append(throttles, value)
+		case "PROC":
+			fields := splitAccelCSV(value)
+			if len(fields) < 4 {
+				continue
+			}
+			process := accelProcess{PID: atoiCSV(fields[1]), Name: fields[2], MemoryMB: atoiCSV(fields[3])}
+			attached := false
+			for index := range profile.GPUs {
+				if profile.GPUs[index].UUID != "" && profile.GPUs[index].UUID == fields[0] {
+					profile.GPUs[index].Processes = append(profile.GPUs[index].Processes, process)
+					attached = true
+					break
+				}
+			}
+			if !attached && len(profile.GPUs) == 1 {
+				profile.GPUs[0].Processes = append(profile.GPUs[0].Processes, process)
+			}
 		case "CPU":
-			profile.CPUModel = strings.TrimSpace(parts[1])
+			profile.CPUModel = value
 		case "GOV":
-			profile.Governor = strings.TrimSpace(parts[1])
+			profile.Governor = value
 		case "CORES":
-			profile.CPUCores, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
+			profile.CPUCores = atoiCSV(value)
 		case "MEM":
-			profile.MemTotalKB, _ = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+			profile.MemTotalKB = parseIntCSV(value)
 		case "SWAP":
-			profile.SwapTotalKB, _ = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+			profile.SwapTotalKB = parseIntCSV(value)
 		case "HASHCAT":
-			profile.HashcatVersion = strings.TrimSpace(parts[1])
-			profile.HashcatAvailable = profile.HashcatVersion != ""
+			profile.HashcatVersion = value
+			profile.HashcatAvailable = value != ""
 		}
 	}
 	if !seen {
 		return profile, errors.New("无法解析主机加速信息")
 	}
 	for index := range profile.GPUs {
-		if index < len(throttles) {
+		if index < len(migModes) {
+			profile.GPUs[index].MigMode = migModes[index]
+		}
+		if profile.GPUs[index].Throttle == "" && index < len(throttles) {
 			profile.GPUs[index].Throttle = throttles[index]
 		}
+		if profile.GPUs[index].Index == 0 && index > 0 {
+			profile.GPUs[index].Index = index
+		}
+	}
+	if profile.Driver == "" && len(profile.GPUs) > 0 {
+		profile.Driver = profile.GPUs[0].Driver
 	}
 	profile.Available = profile.NvidiaSMI && len(profile.GPUs) > 0
 	return profile, nil
+}
+
+// splitAccelCSV 解析 nvidia-smi CSV 单行，自动处理引号与空格
+func splitAccelCSV(line string) []string {
+	reader := csv.NewReader(strings.NewReader(line))
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1
+	fields, err := reader.Read()
+	if err != nil {
+		fields = strings.Split(line, ",")
+	}
+	for index := range fields {
+		fields[index] = strings.TrimSpace(fields[index])
+	}
+	return fields
+}
+
+func atoiCSV(raw string) int {
+	value, _ := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(raw, "%")))
+	return value
+}
+
+func parseIntCSV(raw string) int64 {
+	value, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	return value
+}
+
+func floatCSV(raw string) float64 {
+	return parseFloatTrim(raw)
 }
 
 // buildAccelSuggestions 基于探测结果给出只读优化建议
@@ -203,6 +317,15 @@ func buildAccelSuggestions(profile *sshHostAccelProfile) []accelSuggestion {
 				Title:  fmt.Sprintf("GPU %d 触发功耗/温度降频", index),
 				Detail: "运行中检测到功耗或温度限制，持续负载下算力会下降，建议检查供电与散热。",
 				Impact: "避免长任务中途降频",
+				Risk:   "low",
+			})
+		}
+		if gpu.TempC >= 80 {
+			suggestions = append(suggestions, accelSuggestion{
+				ID:     fmt.Sprintf("temp-%d", index),
+				Title:  fmt.Sprintf("GPU %d 温度偏高（%.0f°C）", index, gpu.TempC),
+				Detail: "长时间高于 80°C 可能触发硬件降频；建议检查风道、风扇转速与环境温度。",
+				Impact: "降低热降频风险",
 				Risk:   "low",
 			})
 		}
@@ -298,17 +421,33 @@ func (a *App) sampleHostAccel(ctx context.Context, host sshHost) (sshHostAccelPr
 	}
 	defer release()
 
-	profileOutput, _, runErr := runSSHCommand(ctx, client, sshAccelScript, 15*time.Second)
+	// 加速能力与系统指标互不依赖，在同一 SSH 连接上并发执行，降低页面等待时间
+	var (
+		profileOutput string
+		profileErr    error
+		metricsOutput string
+		wg            sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		profileOutput, _, profileErr = runSSHCommand(ctx, client, sshAccelScript, 15*time.Second)
+	}()
+	go func() {
+		defer wg.Done()
+		metricsOutput, _, _ = runSSHCommand(ctx, client, sshMetricScript, 12*time.Second)
+	}()
+	wg.Wait()
+
 	profile, parseErr := parseSSHAccelProfile(profileOutput)
 	if parseErr != nil {
-		if runErr != nil {
-			return profile, sshHostMetrics{}, runErr
+		if profileErr != nil {
+			return profile, sshHostMetrics{}, profileErr
 		}
 		return profile, sshHostMetrics{}, parseErr
 	}
-	metricsOutput, _, _ := runSSHCommand(ctx, client, sshMetricScript, 12*time.Second)
-	metrics, metricsErr := parseSSHHostMetrics(metricsOutput)
-	if metricsErr == nil {
+	metrics, parseMetricsErr := parseSSHHostMetrics(metricsOutput)
+	if parseMetricsErr == nil {
 		metrics.HostID = host.ID
 		metrics.HostName = host.Name
 		metrics.HostAddr = host.addr()

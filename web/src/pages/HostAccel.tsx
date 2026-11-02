@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  Activity,
   ArrowLeft,
   CheckCircle2,
   Copy,
@@ -16,11 +17,14 @@ import {
 import { api, ApiError } from "../lib/api";
 import { useToast } from "../lib/toast";
 import type {
+  AccelGPU,
+  AccelLiveGPU,
   AccelNode,
   AccelSuggestion,
   HashcatAuditResult,
   HashcatBenchmark,
   SshAccelComparison,
+  SshAccelLive,
   SshAccelProfile
 } from "../lib/types";
 import { Empty } from "../components/ui";
@@ -42,6 +46,12 @@ function formatKB(value: number): string {
 function formatTime(value: string): string {
   if (!value) return "—";
   return value.replace("T", " ").slice(0, 19);
+}
+
+// findLiveGPU 按 UUID 匹配实时采样，旧数据回退到索引
+function findLiveGPU(live: SshAccelLive | null, gpu: AccelGPU): AccelLiveGPU | undefined {
+  if (!live) return undefined;
+  return live.gpus.find((item) => (gpu.uuid ? item.uuid === gpu.uuid : item.index === gpu.index));
 }
 
 function StatCard({ label, value, sub, tone }: {
@@ -98,6 +108,8 @@ export function HostAccelPage() {
   const hostId = Number(id);
 
   const [profile, setProfile] = useState<SshAccelProfile | null>(null);
+  const [live, setLive] = useState<SshAccelLive | null>(null);
+  const [liveEnabled, setLiveEnabled] = useState(false);
   const [nodes, setNodes] = useState<AccelNode[]>([]);
   const [comparison, setComparison] = useState<SshAccelComparison | null>(null);
   const [loading, setLoading] = useState(false);
@@ -111,6 +123,7 @@ export function HostAccelPage() {
   const [auditWordlist, setAuditWordlist] = useState("");
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditResult, setAuditResult] = useState<HashcatAuditResult | null>(null);
+  const liveBusy = useRef(false);
 
   const load = useCallback(async (force = false) => {
     if (!Number.isFinite(hostId) || hostId <= 0) {
@@ -119,9 +132,8 @@ export function HostAccelPage() {
     }
     setLoading(true);
     try {
-      const [next, nodeList] = await Promise.all([api.sshHostAccel(hostId, force), api.accelHosts()]);
+      const next = await api.sshHostAccel(hostId, force);
       setProfile(next);
-      setNodes(nodeList.items);
       setError("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "读取服务加速信息失败");
@@ -130,11 +142,55 @@ export function HostAccelPage() {
     }
   }, [hostId]);
 
+  // 节点列表变化不频繁，只在进入页面时获取一次，避免每次重新检测都重复请求
+  const loadNodes = useCallback(async () => {
+    try {
+      const nodeList = await api.accelHosts();
+      setNodes(nodeList.items);
+    } catch {
+      // 节点切换列表失败不影响当前主机检测
+    }
+  }, []);
+
   useEffect(() => {
     setProfile(null);
+    setLive(null);
     setComparison(null);
+    setLiveEnabled(false);
     void load();
-  }, [load]);
+    void loadNodes();
+  }, [load, loadNodes]);
+
+  // 轻量实时采样：仅在页面可见时每 5 秒刷新一次，后端有 3 秒缓存
+  useEffect(() => {
+    if (!liveEnabled || !profile?.available) {
+      return;
+    }
+    let active = true;
+    const tick = async () => {
+      if (!active || document.visibilityState === "hidden" || liveBusy.current) return;
+      liveBusy.current = true;
+      try {
+        const next = await api.sshHostAccelLive(hostId);
+        if (active) setLive(next);
+      } catch {
+        // 单次采样失败保持上一帧，避免轮询抖动
+      } finally {
+        liveBusy.current = false;
+      }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 5000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [liveEnabled, profile?.available, hostId]);
 
   async function recordBaseline() {
     if (baselining) return;
@@ -215,9 +271,22 @@ export function HostAccelPage() {
   }
 
   const gpu = profile && profile.gpus.length > 0 ? profile.gpus[0] : null;
+  const liveFirst = useMemo(() => (gpu ? findLiveGPU(live, gpu) : undefined), [gpu, live]);
+  const gpuRows = useMemo(
+    () => (profile?.gpus ?? []).map((item) => ({ gpu: item, live: findLiveGPU(live, item) })),
+    [profile?.gpus, live]
+  );
   const persistOK = gpu && gpu.persistenceMode.toLowerCase() === "enabled";
   const powerLimited = gpu && gpu.powerDefaultW > 0 && gpu.powerLimitW > 0 && gpu.powerLimitW < gpu.powerDefaultW - 1;
   const sampledAt = profile ? formatTime(profile.sampledAt) : "";
+  const liveAt = live ? formatTime(live.sampledAt) : "";
+  const liveUtil = liveFirst?.utilization ?? gpu?.utilization ?? 0;
+  const liveMemUsed = liveFirst?.memoryUsedMb ?? gpu?.memoryUsedMb ?? 0;
+  const liveTemp = liveFirst?.tempC ?? gpu?.tempC ?? 0;
+  const livePower = liveFirst?.powerDrawW ?? gpu?.powerDrawW ?? 0;
+  const liveFan = liveFirst?.fanPercent ?? gpu?.fanPercent ?? 0;
+  const livePState = liveFirst?.pstate || gpu?.pstate || "—";
+  const gpuProcessCount = (profile?.gpus ?? []).reduce((sum, item) => sum + (item.processes?.length ?? 0), 0);
 
   return (
     <div className="space-y-3">
@@ -241,20 +310,32 @@ export function HostAccelPage() {
             </h2>
             <p className="truncate text-[11px] text-ink3">
               {profile
-                ? `${profile.hostAddr} · 检测于 ${sampledAt} · 耗时 ${profile.elapsedMs} ms`
+                ? `${profile.hostAddr} · 检测于 ${sampledAt} · 耗时 ${profile.elapsedMs} ms${live ? ` · 实时 ${liveAt}` : ""}`
                 : "正在检测主机的 GPU 与服务加速能力…"}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          className="btn btn-secondary h-8 px-2.5 text-[12px]"
-          onClick={() => void load(true)}
-          disabled={loading}
-        >
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-          重新检测
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={`btn h-8 px-2.5 text-[12px] ${liveEnabled ? "btn-primary" : "btn-secondary"}`}
+            onClick={() => setLiveEnabled((value) => !value)}
+            disabled={!profile?.available}
+            title="每 5 秒读取一次 GPU 运行态，页面不可见时暂停"
+          >
+            <Activity size={13} />
+            {liveEnabled ? "实时 5s" : "实时刷新"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary h-8 px-2.5 text-[12px]"
+            onClick={() => void load(true)}
+            disabled={loading}
+          >
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            重新检测
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -284,31 +365,42 @@ export function HostAccelPage() {
             />
             <StatCard
               label="显存"
-              value={gpu ? `${formatKB(gpu.memoryUsedMb * 1024)} / ${formatKB(gpu.memoryMb * 1024)}` : "—"}
-              sub={gpu ? `驱动 ${gpu.driver}` : ""}
+              value={gpu ? `${formatKB(liveMemUsed * 1024)} / ${formatKB(gpu.memoryMb * 1024)}` : "—"}
+              sub={gpu ? `驱动 ${profile.driver || gpu.driver} · 显存占用 ${(liveFirst?.memoryUtilization ?? gpu.memoryUtilization).toFixed(0)}%` : ""}
             />
             <StatCard
               label="GPU 利用率"
-              value={gpu ? `${gpu.utilization.toFixed(1)}%` : "—"}
-              sub={gpu?.throttle ? `降频原因：${gpu.throttle}` : "实时采样"}
-              tone={gpu && gpu.throttle && !/not active/i.test(gpu.throttle) ? "warn" : "normal"}
+              value={gpu ? `${liveUtil.toFixed(1)}%` : "—"}
+              sub={gpu?.throttle ? `降频原因：${liveFirst?.throttle || gpu.throttle}` : "实时采样"}
+              tone={gpu && (liveFirst?.throttle || gpu.throttle) && !/not active/i.test(liveFirst?.throttle || gpu.throttle) ? "warn" : "normal"}
             />
             <StatCard
               label="持久化模式"
               value={gpu ? (persistOK ? "已开启" : gpu.persistenceMode || "未知") : "—"}
-              sub="短任务启动更稳定"
+              sub={gpu?.migMode ? `MIG ${gpu.migMode}` : "短任务启动更稳定"}
               tone={persistOK ? "ok" : "warn"}
             />
             <StatCard
-              label="功耗上限"
-              value={gpu && gpu.powerLimitW > 0 ? `${gpu.powerLimitW.toFixed(0)} W` : "—"}
+              label="功耗"
+              value={gpu && gpu.powerLimitW > 0 ? `${livePower.toFixed(0)} / ${gpu.powerLimitW.toFixed(0)} W` : "—"}
               sub={gpu && gpu.powerDefaultW > 0 ? `出厂 ${gpu.powerDefaultW.toFixed(0)} W` : ""}
               tone={powerLimited ? "warn" : "normal"}
             />
             <StatCard
               label="GPU 当前频率"
               value={gpu && gpu.clockMhz > 0 ? `${gpu.clockMhz.toFixed(0)} MHz` : "—"}
-              sub={gpu && gpu.maxClockMhz > 0 ? `最高 ${gpu.maxClockMhz.toFixed(0)} MHz` : ""}
+              sub={gpu && gpu.maxClockMhz > 0 ? `最高 ${gpu.maxClockMhz.toFixed(0)} MHz · 显存 ${gpu.memoryClockMhz.toFixed(0)} MHz` : ""}
+            />
+            <StatCard
+              label="温度 / 风扇"
+              value={liveTemp > 0 ? `${liveTemp.toFixed(0)}°C` : "—"}
+              sub={liveFan > 0 ? `风扇 ${liveFan.toFixed(0)}% · ${livePState}` : `P-State ${livePState}`}
+              tone={liveTemp >= 80 ? "warn" : liveTemp > 0 ? "ok" : "normal"}
+            />
+            <StatCard
+              label="GPU 进程"
+              value={String(gpuProcessCount)}
+              sub={gpuProcessCount > 0 ? "占用显存的计算进程" : "当前无计算进程"}
             />
             <StatCard
               label="CPU 调频"
@@ -329,6 +421,83 @@ export function HostAccelPage() {
               sub={profile.endpointReady ? "推理端点就绪" : "未配置 AI 加速端点"}
               tone={profile.accelEnabled ? "ok" : "normal"}
             />
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+              <p className="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+                <Activity size={12} className="text-brand" />
+                GPU 运行态
+              </p>
+              <span className="text-[10px] text-ink3">{profile.gpus.length} 块 · 驱动 {profile.driver || "未知"}</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[9.5px] ${live ? "bg-okSoft text-ok" : "bg-subtle text-ink3"}`}>
+                {live ? "实时" : liveEnabled ? "采样中" : "静态"}
+              </span>
+              <span className="ml-auto text-[10px] text-ink3">每 5 秒刷新 · 页面不可见时暂停</span>
+            </div>
+            {gpuRows.length === 0 ? (
+              <Empty title="未检测到 GPU" description="安装 NVIDIA 驱动后重新检测" />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] border-collapse text-[11px]">
+                  <thead>
+                    <tr className="border-b border-line bg-subtle/60 text-left text-[10px] text-ink3">
+                      <th className="px-3 py-1.5 font-medium">设备</th>
+                      <th className="px-3 py-1.5 font-medium">利用率</th>
+                      <th className="px-3 py-1.5 font-medium">显存</th>
+                      <th className="px-3 py-1.5 font-medium">温度</th>
+                      <th className="px-3 py-1.5 font-medium">功耗</th>
+                      <th className="px-3 py-1.5 font-medium">风扇</th>
+                      <th className="px-3 py-1.5 font-medium">P-State</th>
+                      <th className="px-3 py-1.5 font-medium">降频</th>
+                      <th className="px-3 py-1.5 font-medium">计算进程</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gpuRows.map(({ gpu: item, live: itemLive }) => {
+                      const util = itemLive?.utilization ?? item.utilization;
+                      const memUsed = itemLive?.memoryUsedMb ?? item.memoryUsedMb;
+                      const memUtil = itemLive?.memoryUtilization ?? item.memoryUtilization;
+                      const temp = itemLive?.tempC ?? item.tempC;
+                      const power = itemLive?.powerDrawW ?? item.powerDrawW;
+                      const fan = itemLive?.fanPercent ?? item.fanPercent;
+                      const pstate = itemLive?.pstate || item.pstate || "—";
+                      const throttle = itemLive?.throttle || item.throttle || "—";
+                      const processes = item.processes ?? [];
+                      return (
+                        <tr key={item.uuid || item.index} className="border-b border-line/60 last:border-0">
+                          <td className="px-3 py-1.5">
+                            <span className="block text-[11.5px] font-medium text-ink">#{item.index} {item.name.replace(/^NVIDIA\s+/, "")}</span>
+                            <span className="block truncate font-mono text-[9.5px] text-ink3">{item.uuid || "无 UUID"}</span>
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-ink2">
+                            {util.toFixed(1)}%
+                            <span className="block text-[9.5px] text-ink3">显存 {memUtil.toFixed(0)}%</span>
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-[10.5px] text-ink2">
+                            {formatKB(memUsed * 1024)}
+                            <span className="block text-[9.5px] text-ink3">/ {formatKB(item.memoryMb * 1024)}</span>
+                          </td>
+                          <td className={`px-3 py-1.5 font-mono text-[10.5px] ${temp >= 80 ? "text-warn" : "text-ink2"}`}>{temp > 0 ? `${temp.toFixed(0)}°C` : "—"}</td>
+                          <td className="px-3 py-1.5 font-mono text-[10.5px] text-ink2">
+                            {power > 0 ? `${power.toFixed(0)} W` : "—"}
+                            <span className="block text-[9.5px] text-ink3">上限 {item.powerLimitW.toFixed(0)} W</span>
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-[10.5px] text-ink2">{fan > 0 ? `${fan.toFixed(0)}%` : "—"}</td>
+                          <td className="px-3 py-1.5 font-mono text-[10.5px] text-ink2">{pstate}</td>
+                          <td className="max-w-[150px] truncate px-3 py-1.5 text-[10px] text-ink3" title={throttle}>{throttle}</td>
+                          <td className="max-w-[220px] px-3 py-1.5 text-[10px] text-ink3" title={processes.map((p) => `${p.name} (${p.pid})`).join(", ")}>
+                            {processes.length === 0
+                              ? "—"
+                              : processes.map((p) => `${p.name} · ${formatKB(p.memoryMb * 1024)}`).join("、")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-3">

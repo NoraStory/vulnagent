@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.1-dev"
+	appVersion  = "0.7.2-dev"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -99,6 +99,10 @@ type App struct {
 	// 服务加速：最近的加速能力探测结果（用于调度节点列表）
 	accelMu       sync.Mutex
 	accelProfiles map[int64]sshHostAccelProfile
+
+	// 服务加速：轻量实时 GPU 指标缓存（3 秒）
+	accelLiveMu sync.Mutex
+	accelLive   map[int64]sshAccelLive
 
 	// SSH 会话协同：在线会话与分享链接
 	liveMu sync.Mutex
@@ -210,6 +214,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/gpu", a.handleSSHHostGPU)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/gpu/benchmark", a.handleSSHHostGPUBenchmark)
 	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/accel", a.handleSSHHostAccel)
+	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/accel/live", a.handleSSHHostAccelLive)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/accel/baseline", a.handleSSHHostAccelBaseline)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/accel/compare", a.handleSSHHostAccelCompare)
 	mux.HandleFunc("GET /api/v1/accel/hosts", a.handleAccelHosts)

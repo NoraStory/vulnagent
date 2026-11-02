@@ -187,9 +187,12 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 							"TOP|1234|12.3|4.5|nginx\n"
 					case strings.Contains(payload.Command, "scaling_governor"):
 						output = "NVSMI|1\n" +
-							"GPU|NVIDIA GeForce RTX 4090, 24564, 1024, 550.54.14, 37, Enabled, 450.00, 450.00, 2100, 2520\n" +
-							"CUDA|12.4\nTHROTTLE|Not Active\n" +
+							"GPU|0, GPU-4090-0001, NVIDIA GeForce RTX 4090, 24564, 1024, 12, 37, 550.54.14, Enabled, 450.00, 450.00, 500.00, 120.50, 2100, 2520, 10501, 62, 45, P2, Default, Not Active\n" +
+							"CUDA|12.4\nDRIVER|550.54.14\nMIG|Disabled\n" +
+							"PROC|GPU-4090-0001, 1234, python, 512\n" +
 							"CPU|Intel Xeon Gold 6338\nGOV|performance\nCORES|32\nMEM|64000000\nSWAP|0\nHASHCAT|v6.2.6\n"
+					case strings.Contains(payload.Command, "utilization.memory") && strings.Contains(payload.Command, "power.draw"):
+						output = "GPU|0, GPU-4090-0001, NVIDIA GeForce RTX 4090, 24564, 2048, 45, 30, 120.5, 450.0, 62, 45, P2, Not Active\n"
 					case strings.Contains(payload.Command, "hashcat --version"):
 						output = "v6.2.6\n"
 					case strings.Contains(payload.Command, "hashcat -b") && strings.Contains(payload.Command, "-D 2"):

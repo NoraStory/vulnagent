@@ -59,6 +59,7 @@ import type {
   SshGpuInfo,
   SshGpuBenchmark,
   SshAccelProfile,
+  SshAccelLive,
   SshAccelComparison,
   AccelBaselineResult,
   AccelNode,
@@ -1086,6 +1087,10 @@ export const api = {
 
   sshHostAccel(id: number, refresh = false): Promise<SshAccelProfile> {
     return request(`/ssh/hosts/${id}/accel${refresh ? "?refresh=1" : ""}`);
+  },
+
+  sshHostAccelLive(id: number, refresh = false): Promise<SshAccelLive> {
+    return request(`/ssh/hosts/${id}/accel/live${refresh ? "?refresh=1" : ""}`);
   },
 
   sshHostAccelBaseline(id: number): Promise<AccelBaselineResult> {

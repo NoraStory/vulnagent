@@ -1014,17 +1014,62 @@ export interface SshGpuBenchmark {
 }
 
 export interface AccelGPU {
+  index: number;
+  uuid: string;
   name: string;
   memoryMb: number;
   memoryUsedMb: number;
+  memoryUtilization: number;
   driver: string;
   utilization: number;
   persistenceMode: string;
   powerLimitW: number;
   powerDefaultW: number;
+  powerMaxW: number;
+  powerDrawW: number;
   clockMhz: number;
   maxClockMhz: number;
+  memoryClockMhz: number;
+  tempC: number;
+  fanPercent: number;
+  pstate: string;
+  computeMode: string;
+  migMode: string;
   throttle: string;
+  processes?: AccelProcess[];
+}
+
+export interface AccelProcess {
+  pid: number;
+  name: string;
+  memoryMb: number;
+}
+
+export interface AccelLiveGPU {
+  index: number;
+  uuid: string;
+  name: string;
+  memoryMb: number;
+  memoryUsedMb: number;
+  utilization: number;
+  memoryUtilization: number;
+  powerDrawW: number;
+  powerLimitW: number;
+  tempC: number;
+  fanPercent: number;
+  pstate: string;
+  throttle: string;
+}
+
+export interface SshAccelLive {
+  hostId: number;
+  hostName: string;
+  hostAddr: string;
+  sampledAt: string;
+  elapsedMs: number;
+  available: boolean;
+  gpus: AccelLiveGPU[];
+  error?: string;
 }
 
 export interface AccelSuggestion {
@@ -1046,6 +1091,7 @@ export interface SshAccelProfile {
   nvidiaSmi: boolean;
   gpus: AccelGPU[];
   cuda: string;
+  driver: string;
   cpuModel: string;
   cpuCores: number;
   cpuGovernor: string;

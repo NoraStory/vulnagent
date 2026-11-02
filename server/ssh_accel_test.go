@@ -69,6 +69,60 @@ func TestParseSSHAccelProfile(t *testing.T) {
 	}
 }
 
+func TestParseSSHAccelProfileExtended(t *testing.T) {
+	output := strings.Join([]string{
+		"NVSMI|1",
+		"GPU|0, GPU-4090-0001, NVIDIA GeForce RTX 4090, 24564, 1024, 12, 37, 550.54.14, Enabled, 450.00, 450.00, 500.00, 120.50, 2100, 2520, 10501, 82, 45, P2, Default, Not Active",
+		"CUDA|12.4",
+		"DRIVER|550.54.14",
+		"MIG|Disabled",
+		"PROC|GPU-4090-0001, 1234, python, 512",
+		"CPU|Intel Xeon Gold 6338", "GOV|powersave", "CORES|32", "MEM|64000000", "SWAP|0", "HASHCAT|v6.2.6",
+	}, "\n")
+	profile, err := parseSSHAccelProfile(output)
+	if err != nil {
+		t.Fatalf("解析扩展加速信息失败：%v", err)
+	}
+	if profile.Driver != "550.54.14" || len(profile.GPUs) != 1 {
+		t.Fatalf("驱动或 GPU 解析异常：%+v", profile)
+	}
+	gpu := profile.GPUs[0]
+	if gpu.UUID != "GPU-4090-0001" || gpu.MemoryUtilization != 12 || gpu.TempC != 82 ||
+		gpu.PowerDrawW != 120.5 || gpu.PowerMaxW != 500 || gpu.FanPercent != 45 ||
+		gpu.PState != "P2" || gpu.ComputeMode != "Default" || gpu.MigMode != "Disabled" {
+		t.Fatalf("扩展 GPU 字段解析异常：%+v", gpu)
+	}
+	if len(gpu.Processes) != 1 || gpu.Processes[0].PID != 1234 || gpu.Processes[0].MemoryMB != 512 {
+		t.Fatalf("GPU 进程解析异常：%+v", gpu.Processes)
+	}
+	suggestions := buildAccelSuggestions(&profile)
+	foundTemp := false
+	for _, item := range suggestions {
+		if item.ID == "temp-0" {
+			foundTemp = true
+		}
+	}
+	if !foundTemp {
+		t.Fatalf("高温建议缺失：%+v", suggestions)
+	}
+}
+
+func TestParseSSHAccelLive(t *testing.T) {
+	live := parseSSHAccelLive("GPU|0, GPU-4090-0001, NVIDIA GeForce RTX 4090, 24564, 2048, 45, 30, 120.5, 450.0, 62, 45, P2, Not Active\n")
+	if !live.Available || len(live.GPUs) != 1 {
+		t.Fatalf("实时指标解析异常：%+v", live)
+	}
+	gpu := live.GPUs[0]
+	if gpu.Utilization != 45 || gpu.MemoryUtilization != 30 || gpu.TempC != 62 || gpu.PowerDrawW != 120.5 ||
+		gpu.FanPercent != 45 || gpu.PState != "P2" || gpu.Throttle != "Not Active" {
+		t.Fatalf("实时 GPU 字段异常：%+v", gpu)
+	}
+	noGPU := parseSSHAccelLive("NOGPU|未检测到 nvidia-smi\n")
+	if noGPU.Available || noGPU.Error == "" {
+		t.Fatalf("无 GPU 实时结果异常：%+v", noGPU)
+	}
+}
+
 func TestBuildAccelComparison(t *testing.T) {
 	before := sshHostAccelProfile{
 		HostID: 1, HostName: "gpu-01", Governor: "powersave",
@@ -154,6 +208,24 @@ func TestSSHHostAccelHandlers(t *testing.T) {
 	}
 	if _, ok := app.cachedAccelProfile(id); !ok {
 		t.Fatalf("探测结果未进入缓存")
+	}
+
+	// 轻量实时指标
+	rec = httptest.NewRecorder()
+	req = withPathValue(newCatalogRequest(t, "GET", "/api/v1/ssh/hosts/x/accel/live", nil, "viewer"), "id", idText)
+	app.handleSSHHostAccelLive(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("实时指标返回 %d：%s", rec.Code, rec.Body.String())
+	}
+	var live sshAccelLive
+	if err := json.Unmarshal(rec.Body.Bytes(), &live); err != nil {
+		t.Fatalf("解析实时指标失败：%v", err)
+	}
+	if !live.Available || len(live.GPUs) != 1 || live.GPUs[0].TempC != 62 {
+		t.Fatalf("实时指标异常：%+v", live)
+	}
+	if _, ok := app.cachedAccelLive(id); !ok {
+		t.Fatalf("实时指标未进入缓存")
 	}
 
 	// 记录基线
