@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -882,7 +883,10 @@ func (a *App) checkClusterNode(ctx context.Context, node clusterNodeRecord) (str
 		target := node.URL
 		if target == "" {
 			if node.Port <= 0 {
-				return "failed", 0, "HTTP 检查需要 URL 或端口"
+				return "failed", 0, "HTTP 检查需要 URL 或服务端口"
+			}
+			if node.Port == 22 {
+				return "failed", 0, "22 通常是 SSH 端口，不能用于后端 HTTP 健康检查；请填写服务端口（如 8787）或完整 URL"
 			}
 			target = fmt.Sprintf("http://%s/api/v1/healthz", net.JoinHostPort(node.Host, strconv.Itoa(node.Port)))
 		}
@@ -893,7 +897,7 @@ func (a *App) checkClusterNode(ctx context.Context, node clusterNodeRecord) (str
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return "failed", time.Since(started).Milliseconds(), truncateRunes(err.Error(), 200)
+			return "failed", time.Since(started).Milliseconds(), httpCheckFailure(target, node, err)
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -963,6 +967,26 @@ df -Pk "$(dirname "$p")" 2>/dev/null | awk 'NR==2 {print "DISK|"$2"|"$3"|"$4"|"$
 	default:
 		return "failed", 0, "不支持的检查方式"
 	}
+}
+
+// httpCheckFailure 把底层连接错误转换为可操作的排查提示
+func httpCheckFailure(target string, node clusterNodeRecord, err error) string {
+	detail := truncateRunes(err.Error(), 200)
+	parsed, parseErr := url.Parse(target)
+	if parseErr != nil {
+		return detail
+	}
+	port := parsed.Port()
+	if port == "" {
+		detail += "；URL 未指定端口，HTTP 默认使用 80"
+	}
+	if port == "22" || (port == "" && node.Port == 22) {
+		detail += "；22 通常是 SSH 端口，请填写服务端口（如 8787）"
+	}
+	if strings.Contains(strings.ToLower(detail), "eof") {
+		detail += "；目标可能未监听 HTTP，或 URL/端口不正确"
+	}
+	return detail
 }
 
 func (a *App) runClusterNodeCheck(ctx context.Context, node clusterNodeRecord) clusterNodeRecord {

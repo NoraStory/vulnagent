@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   ScanLine,
+  SquareTerminal,
   Trash2,
   TriangleAlert,
   X
@@ -593,6 +594,17 @@ export function ClustersPage() {
                               </td>
                               <td className="px-3 py-1.5 text-right">
                                 <span className="inline-flex items-center gap-1">
+                                  {node.sshHostId > 0 && (
+                                    <button
+                                      type="button"
+                                      className="rounded p-1 text-ink3 hover:bg-subtle hover:text-brand"
+                                      onClick={() => navigate(`/terminal?hostId=${node.sshHostId}`)}
+                                      title="在 SSH 终端打开"
+                                      aria-label="在 SSH 终端打开"
+                                    >
+                                      <SquareTerminal size={11} />
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     className="rounded p-1 text-ink3 hover:bg-subtle hover:text-ink"
@@ -846,6 +858,8 @@ export function ClustersPage() {
           onDone={async () => {
             setNodeOpen(false);
             setEditingNode(null);
+            const hostResult = await api.sshHosts();
+            setSshHosts(hostResult.items);
             await loadDetail(currentCluster.id);
           }}
         />
@@ -1069,6 +1083,10 @@ function NodeDialog({
   const [dbUser, setDbUser] = useState(node?.dbUser ?? "");
   const [dbPassword, setDbPassword] = useState("");
   const [dbSslMode, setDbSslMode] = useState(node?.dbSslMode || "disable");
+  const [sshCreateMode, setSshCreateMode] = useState(false);
+  const [sshPort, setSshPort] = useState("22");
+  const [sshUsername, setSshUsername] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function submit() {
@@ -1076,24 +1094,41 @@ function NodeDialog({
       toast.push("请填写节点名称", "error");
       return;
     }
-    const payload = {
-      name: name.trim(),
-      role,
-      host: host.trim(),
-      port: Number(port) || 0,
-      url: url.trim(),
-      sshHostId: Number(sshHostId) || 0,
-      checkType,
-      path: path.trim(),
-      note: note.trim(),
-      dbEngine,
-      dbName: dbName.trim(),
-      dbUser: dbUser.trim(),
-      dbPassword,
-      dbSslMode
-    };
     setSaving(true);
     try {
+      let linkedSSHHostID = Number(sshHostId) || 0;
+      if (sshCreateMode) {
+        if (!host.trim() || !sshUsername.trim() || !sshPassword) {
+          throw new Error("新建 SSH 凭据需要填写主机、用户名与密码");
+        }
+        const created = await api.sshCreateHost({
+          name: `${name.trim()}-ssh`,
+          host: host.trim(),
+          port: Number(sshPort) || 22,
+          username: sshUsername.trim(),
+          authType: "password",
+          password: sshPassword,
+          note: `集群节点 ${name.trim()} 自动创建`,
+          tags: "cluster"
+        });
+        linkedSSHHostID = created.host.id;
+      }
+      const payload = {
+        name: name.trim(),
+        role,
+        host: host.trim(),
+        port: Number(port) || 0,
+        url: url.trim(),
+        sshHostId: linkedSSHHostID,
+        checkType,
+        path: path.trim(),
+        note: note.trim(),
+        dbEngine,
+        dbName: dbName.trim(),
+        dbUser: dbUser.trim(),
+        dbPassword,
+        dbSslMode
+      };
       if (node) {
         await api.updateClusterNode(node.id, payload);
         toast.push("节点已更新", "success");
@@ -1131,11 +1166,11 @@ function NodeDialog({
           <input className="input h-9 font-mono text-[11.5px]" value={host} onChange={(event) => setHost(event.target.value)} placeholder="10.0.0.12" />
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] text-ink2">端口</span>
-          <input className="input h-9 font-mono text-[11.5px]" value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" placeholder="5432" />
+          <span className="mb-1 block text-[11px] text-ink2">服务端口（HTTP/TCP）</span>
+          <input className="input h-9 font-mono text-[11.5px]" value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" placeholder="8787 / 5432" />
         </label>
         <label className="col-span-2 block">
-          <span className="mb-1 block text-[11px] text-ink2">健康检查 URL（后端）</span>
+          <span className="mb-1 block text-[11px] text-ink2">健康检查 URL（后端，优先于端口）</span>
           <input className="input h-9 font-mono text-[11.5px]" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="http://10.0.0.12:8787/api/v1/healthz" />
         </label>
         <label className="block">
@@ -1159,6 +1194,38 @@ function NodeDialog({
             ))}
           </select>
         </label>
+        <div className="col-span-2 space-y-2">
+          <label className="flex items-center gap-2 text-[11px] text-ink2">
+            <input type="checkbox" checked={sshCreateMode} onChange={(event) => setSshCreateMode(event.target.checked)} />
+            没有已保存的 SSH 主机？直接填写用户名和密码新建
+          </label>
+          {sshCreateMode && (
+            <div className="grid grid-cols-2 gap-3 rounded-[8px] border border-line bg-subtle/40 p-3">
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-ink2">SSH 端口</span>
+                <input className="input h-9 font-mono text-[11.5px]" value={sshPort} onChange={(event) => setSshPort(event.target.value)} inputMode="numeric" placeholder="22" />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-ink2">SSH 用户名</span>
+                <input className="input h-9 font-mono text-[11.5px]" value={sshUsername} onChange={(event) => setSshUsername(event.target.value)} placeholder="root" />
+              </label>
+              <label className="col-span-2 block">
+                <span className="mb-1 block text-[11px] text-ink2">SSH 密码</span>
+                <input
+                  type="password"
+                  className="input h-9 font-mono text-[11.5px]"
+                  value={sshPassword}
+                  onChange={(event) => setSshPassword(event.target.value)}
+                  placeholder="保存到 SSH 主机凭据，节点本身不存明文"
+                  autoComplete="new-password"
+                />
+              </label>
+              <p className="col-span-2 text-[10px] leading-[15px] text-ink3">
+                保存时会先在终端主机列表创建 SSH 凭据，并自动关联到本节点；之后可在终端直接打开该主机。
+              </p>
+            </div>
+          )}
+        </div>
         <label className="col-span-2 block">
           <span className="mb-1 block text-[11px] text-ink2">文件路径（SQLite 数据库 / 存储）</span>
           <input className="input h-9 font-mono text-[11.5px]" value={path} onChange={(event) => setPath(event.target.value)} placeholder="/var/lib/app/app.db" />
@@ -1224,7 +1291,7 @@ function NodeDialog({
           </div>
         )}
         <p className="col-span-2 rounded-[8px] bg-subtle px-2.5 py-2 text-[10.5px] leading-[16px] text-ink3">
-          后端填 URL 走 HTTP 健康检查；数据库填主机+端口走 TCP；SQLite 数据库填关联 SSH 主机与文件路径走远程文件检查。关联 SSH 主机后可一键做只读漏洞扫描。
+          后端填服务端口（常见 8787）或完整 URL 走 HTTP 健康检查；数据库填主机+服务端口走 TCP；SQLite 数据库填关联 SSH 主机与文件路径走远程文件检查。SSH 端口（常见 22）用于终端与扫描，不要填到 HTTP 服务端口里。关联 SSH 主机后可一键做只读漏洞扫描。
         </p>
       </div>
       <footer className="flex items-center justify-end gap-2 border-t border-line px-5 py-3">

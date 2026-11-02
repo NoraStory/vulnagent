@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -220,6 +221,57 @@ func TestBuildDatabaseDSN(t *testing.T) {
 	driver, dsn = buildDatabaseDSN(pgNode, "secret")
 	if driver != "postgres" || !strings.Contains(dsn, "/postgres") || !strings.Contains(dsn, "sslmode=disable") {
 		t.Fatalf("PostgreSQL DSN 异常：%s %s", driver, dsn)
+	}
+}
+
+func TestClusterHealthSnapshotAndCheckTool(t *testing.T) {
+	app := newRuntimeTestApp(t)
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer health.Close()
+
+	res, err := app.db.Exec(`INSERT INTO projects(name, description, owner, created_at, updated_at)
+		VALUES('项目 H','','tester','','')`)
+	if err != nil {
+		t.Fatalf("写入项目失败：%v", err)
+	}
+	projectID, _ := res.LastInsertId()
+	res, err = app.db.Exec(`INSERT INTO clusters(project_id, name, environment, provider, region, description, created_at, updated_at)
+		VALUES(?,'cluster-h','prod','','','','','')`, projectID)
+	if err != nil {
+		t.Fatalf("写入集群失败：%v", err)
+	}
+	clusterID, _ := res.LastInsertId()
+	if _, err := app.db.Exec(`INSERT INTO cluster_nodes(cluster_id, name, role, host, port, url, ssh_host_id,
+		check_type, path, note, status, latency_ms, detail, checked_at, created_at, updated_at)
+		VALUES(?,'backend-h','backend','',0,?,0,'http','','','unknown',0,'','','','')`, clusterID, health.URL); err != nil {
+		t.Fatalf("写入节点失败：%v", err)
+	}
+
+	snapshots, err := app.clusterHealthSnapshots(context.Background())
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("集群快照异常：%+v / %v", snapshots, err)
+	}
+	if snapshots[0].NodeCount != 1 || len(snapshots[0].Nodes) != 1 || snapshots[0].Nodes[0].Name != "backend-h" {
+		t.Fatalf("集群节点快照异常：%+v", snapshots[0])
+	}
+
+	tool := app.toolCheckCluster()
+	out, err := tool.Run(json.RawMessage(fmt.Sprintf(`{"clusterId":%d}`, clusterID)))
+	if err != nil {
+		t.Fatalf("集群检查工具失败：%v", err)
+	}
+	payload, _ := out.(map[string]any)
+	summary, _ := payload["summary"].(map[string]int)
+	if summary["healthy"] != 1 || summary["failed"] != 0 {
+		t.Fatalf("集群检查结果异常：%+v", payload)
+	}
+	var status string
+	_ = app.db.QueryRow(`SELECT status FROM cluster_nodes WHERE cluster_id = ?`, clusterID).Scan(&status)
+	if status != "ok" {
+		t.Fatalf("节点状态未更新：%s", status)
 	}
 }
 

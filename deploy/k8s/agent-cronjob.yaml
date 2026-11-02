@@ -25,7 +25,7 @@ spec:
           hostPID: false
           containers:
             - name: agent
-              image: vulnagent:0.7.2
+              image: vulnagent:0.7.3
               imagePullPolicy: IfNotPresent
               command: ["/app/server/vulnagent"]
               args:

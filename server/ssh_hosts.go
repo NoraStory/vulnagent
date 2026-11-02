@@ -41,6 +41,9 @@ type sshHost struct {
 	LastConnectedAt string `json:"lastConnectedAt"`
 	HasSecret       bool   `json:"hasSecret"`
 	GPUAccel        bool   `json:"gpuAccel"`
+	ClusterID       int64  `json:"clusterId"`
+	ClusterName     string `json:"clusterName"`
+	ProjectName     string `json:"projectName"`
 
 	Secret     string `json:"-"`
 	Passphrase string `json:"-"`
@@ -158,17 +161,28 @@ func (a *App) openSSHSecret(encoded string) (string, error) {
 // ---------- 查询与校验 ----------
 
 func (a *App) listSSHHosts(ctx context.Context) ([]sshHost, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT `+sshHostColumns+` FROM ssh_hosts ORDER BY name COLLATE NOCASE ASC, id ASC`)
+	const listColumns = `h.id, h.name, h.host, h.port, h.username, h.auth_type, h.secret, h.passphrase,
+		h.host_key, h.note, h.tags, h.created_by, h.created_at, h.updated_at, h.last_connected_at, h.gpu_accel,
+		COALESCE(c.id, 0), COALESCE(c.name, ''), COALESCE(p.name, '')`
+	rows, err := a.db.QueryContext(ctx, `SELECT `+listColumns+`
+		FROM ssh_hosts h
+		LEFT JOIN cluster_nodes n ON n.id = (SELECT MIN(n2.id) FROM cluster_nodes n2 WHERE n2.ssh_host_id = h.id)
+		LEFT JOIN clusters c ON c.id = n.cluster_id
+		LEFT JOIN projects p ON p.id = c.project_id
+		ORDER BY h.name COLLATE NOCASE ASC, h.id ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make([]sshHost, 0, 8)
 	for rows.Next() {
-		h, err := scanSSHHost(rows)
-		if err != nil {
+		var h sshHost
+		if err := rows.Scan(&h.ID, &h.Name, &h.Host, &h.Port, &h.Username, &h.AuthType, &h.Secret, &h.Passphrase,
+			&h.HostKey, &h.Note, &h.Tags, &h.CreatedBy, &h.CreatedAt, &h.UpdatedAt, &h.LastConnectedAt, &h.GPUAccel,
+			&h.ClusterID, &h.ClusterName, &h.ProjectName); err != nil {
 			return nil, err
 		}
+		h.HasSecret = h.Secret != ""
 		out = append(out, h)
 	}
 	return out, rows.Err()

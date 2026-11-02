@@ -19,6 +19,8 @@ import (
 func (a *App) harnessTools() []harness.Tool {
 	return []harness.Tool{
 		a.toolOverviewSummary(),
+		a.toolListClusters(),
+		a.toolCheckCluster(),
 		a.toolListAssets(),
 		a.toolGetAsset(),
 		a.toolHostMetrics(),
@@ -102,10 +104,12 @@ func (a *App) toolOverviewSummary() harness.Tool {
 			}
 			agents, _ := a.statsRepo().AgentSummary(ctx)
 			checks, found, _ := a.statsRepo().LatestSelfcheck(ctx)
+			clusters, _ := a.clusterHealthSnapshots(ctx)
 			return map[string]any{
 				"byPriority": prio,
 				"byStatus":   status,
 				"agents":     agents,
+				"clusters":   clusters,
 				"sync":       a.loadSync(),
 				"selfcheck":  map[string]any{"found": found, "summary": checks},
 			}, nil

@@ -968,6 +968,9 @@ export interface SshHost {
   lastConnectedAt: string;
   hasSecret: boolean;
   gpuAccel: boolean;
+  clusterId: number;
+  clusterName: string;
+  projectName: string;
 }
 
 export interface SshGpuDevice {

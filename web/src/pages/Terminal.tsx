@@ -8,7 +8,7 @@ import {
   useState
 } from "react";
 import type { CSSProperties } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Terminal as XTerm } from "@xterm/xterm";
@@ -470,6 +470,8 @@ function computePanelLimits(
 export function TerminalPage() {
   const toast = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const autoOpenedHost = useRef(false);
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [sessions, setSessions] = useState<SshSessionItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -566,6 +568,20 @@ export function TerminalPage() {
     void loadSessions();
   }, [loadHosts, loadSessions]);
 
+  // 支持从集群节点跳转：/terminal?hostId=3 自动打开对应主机
+  useEffect(() => {
+    if (autoOpenedHost.current || hosts.length === 0) return;
+    const target = Number(searchParams.get("hostId"));
+    if (!target) return;
+    const host = hosts.find((item) => item.id === target);
+    if (!host) return;
+    autoOpenedHost.current = true;
+    openHost(host);
+    const next = new URLSearchParams(searchParams);
+    next.delete("hostId");
+    setSearchParams(next, { replace: true });
+  }, [hosts, searchParams, setSearchParams]);
+
   useEffect(() => {
     try {
       localStorage.setItem("va.ssh.hostsCollapsed", hostsCollapsed ? "1" : "0");
@@ -621,7 +637,9 @@ export function TerminalPage() {
     const keyword = filter.trim().toLowerCase();
     if (!keyword) return hosts;
     return hosts.filter((host) =>
-      `${host.name} ${host.host} ${host.username} ${host.tags}`.toLowerCase().includes(keyword)
+      `${host.name} ${host.host} ${host.username} ${host.tags} ${host.projectName} ${host.clusterName}`
+        .toLowerCase()
+        .includes(keyword)
     );
   }, [hosts, filter]);
 
@@ -1696,6 +1714,12 @@ export function TerminalPage() {
                     <span className="mt-0.5 block truncate font-mono text-[10.5px] text-ink3">
                       {host.username}@{host.host}:{host.port}
                     </span>
+                    {(host.projectName || host.clusterName) && (
+                      <span className="mt-0.5 block truncate text-[9.5px] text-brand">
+                        {host.projectName}
+                        {host.clusterName ? ` / ${host.clusterName}` : ""}
+                      </span>
+                    )}
                     {host.tags && (
                       <span className="mt-1 flex flex-wrap gap-1">
                         {host.tags.split(/[,，\s]+/).filter(Boolean).slice(0, 3).map((tag) => (
