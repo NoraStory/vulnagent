@@ -10,8 +10,8 @@
 ## 决策
 
 1. 保留 React 18 + Vite 6 + Tailwind 3，不引入图表库与重型 UI 库。
-2. 新建 `shared/styles/tokens.css`，用 CSS 变量定义表面、文字、品牌、状态、圆距、阴影、动效。
-3. 新建 `shared/ui` 组件层（Button/Card/Table/Drawer/Modal 等），统一焦点陷阱与可访问性。
+2. 新建 `web/src/styles/tokens.css`，用 CSS 变量定义表面、文字、品牌、状态、圆距、阴影、动效。
+3. 新建 `web/src/components/ui.tsx` UI 原语层（卡片、表格、抽屉、空状态等），统一焦点与可访问性。
 4. 图表使用自研 SVG 原语（Sparkline/AreaTrend/StackedBars/Donut）。
 5. 页面按 feature 目录重组；业务字典与风险公式来自 `GET /api/v1/meta`。
 

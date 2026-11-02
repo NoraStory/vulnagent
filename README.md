@@ -27,6 +27,7 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 - **可解释的风险排序**：CVSS × EPSS × 在野利用 × 资产权重，每一分都能在详情页拆解。
 - **默认安全**：写操作必须经过会话审批模式与多重闸门，高风险再认证，一次性审批按参数指纹绑定，全程留痕。
 - **能落地的助手**：32 个静态注册工具 + `/` 技能调用，只读诊断直接执行，变更操作走审批。
+- **可观测与可加速**：SSH 主机性能曲线、服务加速能力探测、hashcat CPU/GPU 对比与基线前后差异一屏可见；上下文按预算分级压缩。
 
 ---
 
@@ -111,8 +112,11 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 | 处置闭环 | 状态流转、责任人、本地工单、复扫验证（升级到修复版本自动转「已验证」） |
 | 情报同步 | CVE/POC 默认每 12 小时增量同步；EPSS 支持全量导入与在线刷新；自检阈值随同步周期联动 |
 | 主机遥测 | CPU、内存、磁盘、网络、负载、进程数，内存占用 Top10 进程，硬件/服务/端口清单 |
+| 主机性能监控 | SSH 只读实时采样 CPU、内存、Swap、负载、磁盘、网络与 Top 进程，曲线 + 表格，支持 2/3/5/10 秒轮询与暂停 |
+| 服务加速 | 按主机检测 NVIDIA GPU/CUDA/持久化模式/功耗/频率与 CPU 调频策略，给出只读调优建议；记录基线后对比加速前后指标；hashcat CPU/GPU 基准与批量口令审计 |
+| 上下文压缩 | Agent 与问答按 token 预算分级压缩历史与输出，SSE/响应返回占用统计，前端展示占用条与已压缩项 |
 | 主机作业 | Agent 拉取模型、HMAC-SHA256 签名、幂等键、指数退避、同资产并发闸门 |
-| Agent 助手 | OpenAI 兼容模型接入，SSE 流式返回，32 个静态工具按角色裁剪 |
+| Agent 助手 | OpenAI 兼容模型接入，SSE 流式返回，32 个静态工具按角色裁剪；支持 GPU 推理端点按主机切换 |
 | SSH 智能终端 | 多主机会话、AES-256-GCM 加密凭据、TOFU 指纹校验、WebSocket 终端、AI 问答与命令参考检索、Agent 自动执行与运行历史、SFTP、会话录制回放、快捷命令广播、会话协同、主机漏洞扫描 |
 | 运维技能 | `skill/*.zip` 启动解压，`/` 菜单调用，技能文档分页读取，语义化主机诊断 |
 | 审计与轨迹 | 审计日志多维筛选；轨迹页统一呈现审计、主机作业与工具调用 |
@@ -130,10 +134,13 @@ flowchart LR
   S --> D[("SQLite WAL<br/>资产 · 漏洞 · 审计 · SSH 凭据")]
   S --> W["React 控制台"]
   W <-->|"WebSocket 终端"| S
-  S <-->|"SSH PTY"| H
+  S <-->|"SSH PTY / 只读采样"| H
   S --> G["Agent Harness<br/>32 工具 · 审批闸门"]
   G -->|"SSE 流式"| W
   G -->|"只读诊断 / 受控变更"| H
+  S --> X["服务加速<br/>GPU · CUDA · hashcat"]
+  X -->|"只读探测 / 基线对比"| H
+  X -->|"OpenAI 兼容"| M["GPU 推理端点<br/>vLLM / TensorRT-LLM"]
 ```
 
 服务端按 DDD 四层组织，`package main` 只做组装：
@@ -210,6 +217,10 @@ npm run build    # tsc --noEmit + vite build，产物在 web/dist
 | `VA_LLM_BASE_URL` | — | OpenAI 兼容模型地址 |
 | `VA_LLM_API_KEY` | — | 模型密钥 |
 | `VA_LLM_MODEL` | — | 模型名称；三项齐备才启用助手 |
+| `VA_GPU_LLM_BASE_URL` | — | GPU 推理端点（OpenAI 兼容，如 vLLM）；与 `VA_GPU_LLM_MODEL` 齐备即启用 |
+| `VA_GPU_LLM_API_KEY` | — | GPU 推理端点密钥；本地服务可留空，服务端使用占位值 `local` |
+| `VA_GPU_LLM_MODEL` | — | GPU 推理模型名称 |
+| `VA_AGENT_CONTEXT_BUDGET` | `16000` | Agent/问答上下文 token 预算（4000–128000） |
 | `VA_SYNC_INTERVAL` | `12h` | CVE/POC 增量同步周期，`0`/`off` 关闭 |
 | `VA_RESCAN_INTERVAL` | `30m` | 定时复扫周期 |
 | `VA_RESCAN_DEBOUNCE` | `10m` | 同一资产复扫的最小间隔 |
@@ -259,6 +270,10 @@ SSH 面板的登录凭据使用 AES-256-GCM 加密保存在数据目录，密钥
 - **快捷命令与广播**：团队共享脚本库支持新建、编辑、删除、插入、单机执行与「广播到全部已连接会话」；底部快捷命令栏可直接输入并一键广播，使用次数与变更写入审计。
 - **命令参考联网检索**：AI 问答与 Agent 自动执行均有独立的「联网检索命令参考」开关；按问题/目标检索 cheat.sh 的命令示例（tar/df/ss/lastb 等），清洗后注入模型并要求先用 `command -v` / `--help` 验证；本地关键词无法判断时由模型提取命令主题，失败自动回退到模型知识。
 - **SSH 主机漏洞扫描**：已保存的主机可一键触发只读软件清单采集，结果直接进入资产与漏洞流水线；结果弹窗展示组件数与新增/更新漏洞，可跳转资产详情。
+- **实时性能监控**：终端顶部「性能监控」跳转主机监控页，展示 CPU/内存/负载/网络曲线、磁盘与 Top 进程表，支持 2/3/5/10 秒轮询、暂停与立即刷新。
+- **服务加速**：终端顶部「服务加速」检测 NVIDIA GPU、CUDA、持久化模式、功耗/频率、CPU 调频与 hashcat 状态，给出只读调优建议；记录基线后可对比加速前后 CPU/内存/负载/GPU 指标。hashcat 可用时提供 CPU/GPU 基准与批量字典审计（仅 operator，临时文件自动清理）。
+- **上下文占用**：Agent 每一步通过 SSE `context` 事件返回已用/预算 token、压缩项与节省量，问答响应同样返回；面板显示占用条（≥70% 黄色、≥90% 红色），预算由 `VA_AGENT_CONTEXT_BUDGET` 控制。
+- **连接复用**：性能监控、服务加速、GPU 探测与 hashcat 共用只读 SSH 连接池，空闲 3 分钟回收，避免高频轮询重复握手。
 - **布局与路径**：主机栏与 AI 面板均可折叠并记忆状态，为终端与输入框释放空间；文件管理支持复制当前路径、条目路径与预览文件路径。
 - **会话协同**：为在线会话生成一次性分享链接（只读 / 可写，5 分钟–24 小时有效），协作者登录后即可实时观看或共同操作；新加入者自动补齐最近 16KB 输出，协作者人数实时同步，链接可随时撤销。
 - **终端检索**：终端内 `Ctrl/Cmd + F` 唤起搜索框，Enter / Shift+Enter 上下跳转，Esc 关闭。
@@ -325,7 +340,7 @@ vulnagent sync --bundle <file>       导入离线情报包
 vulnagent sync --epss-file <csv>     导入 EPSS 并重算排序
 vulnagent sshscan --host <ip>        无 Agent 兜底采集（只读）
 vulnagent osvscan [--asset id|--all] OSV 在线版本匹配
-vulnagent backup --out <file>        备份数据库（VACUUM INTO）
+vulnagent backup --out <file>        备份数据库（VACUUM INTO，可加 --compress 生成 .db.gz）
 vulnagent keygen / sign / self-update 签名与自更新
 ```
 
@@ -357,11 +372,12 @@ npm run build
 # 在仓库根目录执行；自动检查 Go/Node/端口/磁盘/网络，构建并安装
 pwsh -File deploy\windows\install.ps1 -InstallDeps
 
-# 可选：同时配置模型、放行防火墙、自定义目录与端口
+# 可选：同时配置模型、GPU 推理端点、放行防火墙、自定义目录与端口
 pwsh -File deploy\windows\install.ps1 `
   -InstallDir E:\VulnAgent -Port 8787 -OpenFirewall `
   -LLMBaseUrl https://ark.cn-beijing.volces.com/api/v3 `
-  -LLMApiKey "<key>" -LLMModel deepseek-v4-1-flash-261017
+  -LLMApiKey "<key>" -LLMModel deepseek-v4-1-flash-261017 `
+  -GPUBaseUrl http://127.0.0.1:8000/v1 -GPUModel Qwen2.5-32B-Instruct
 ```
 
 安装脚本会完成：环境与端口检查 → （可选）通过 winget 安装 Go/Node → `npm ci` 与 `go build` → 部署到安装目录 → 生成 `.env`（首次初始化管理员口令）→ 注册 `VulnAgentServer` / `VulnAgentAgent` 计划任务 → 健康检查 → 输出 `install-summary.txt`。
@@ -374,7 +390,8 @@ sudo bash deploy/linux/install.sh --install-deps
 # 可选
 sudo bash deploy/linux/install.sh --port 8787 --open-firewall \
   --llm-base-url https://ark.cn-beijing.volces.com/api/v3 \
-  --llm-api-key "<key>" --llm-model deepseek-v4-1-flash-261017
+  --llm-api-key "<key>" --llm-model deepseek-v4-1-flash-261017 \
+  --gpu-base-url http://127.0.0.1:8000/v1 --gpu-model Qwen2.5-32B-Instruct
 ```
 
 脚本会检查系统/磁盘/端口/外网，缺少 Go/Node 时从官方源下载校验后放入安装目录工具链，完成构建、创建 `vulnagent` 系统用户、写入 `/etc/vulnagent/server.env`（0600）、安装并启动 `vulnagent-server.service` 与本机 Agent，健康检查失败自动回滚上一版二进制。
@@ -395,8 +412,11 @@ sudo bash deploy/linux/install.sh --port 8787 --open-firewall \
 
 - [详细设计](docs/architecture/detailed-design.md)
 - [API 契约](docs/architecture/api-contract.md)
+- [CMDB 分页契约](docs/architecture/cmdb-pagination-contract.md)
 - [架构决策记录](docs/architecture/adr/)
 - [品牌与设计系统](docs/design/brand.md)
+- [回归测试报告](docs/quality/test-report.md)
+- [性能压测报告](docs/reports/perf-benchmark-2026-11-01/perf-benchmark-2026-11-01.html)
 
 ---
 
@@ -425,3 +445,8 @@ Copyright (C) 2026 Signal 项目贡献者。你可以在遵守 GPL-3.0 条款的
 - 外部 CMDB 首版支持 GET JSON（数组或 `items/data/assets` 包裹），不支持分页游标与回写外部系统。
 - 会话录制单会话上限 2MB，超出后标记截断；回放按输出时间偏移重放，不包含终端尺寸变化等非输出事件。
 - Agent 自动执行依赖当前浏览器连接（SSE），关闭页面会中断运行；运行记录与步骤仍会保存在审计中。
+- 服务加速为只读检测与建议，不会自动修改目标机；基线对比反映采样时刻的 CPU/内存/负载/GPU 状态，不能替代压测。
+- hashcat 审计需要目标机自行安装 hashcat 与字典；结果包含明文口令，仅限 operator 在授权资产上使用。
+- GPU 推理加速需要可访问的 OpenAI 兼容本地端点；未配置时主机加速开关不生效。
+- 备份压缩为多协程并行 gzip，未链接 CUDA/nvCOMP，因此不是 GPU 压缩；大库备份仍需预留与数据库同量级的磁盘空间。
+- 上下文压缩为启发式估算（中文 1 字 1 token、其他 4 字符 1 token），实际 token 数以模型分词器为准。

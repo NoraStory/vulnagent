@@ -9,7 +9,7 @@
 
 ## 决策
 
-采用 `domain / application / infrastructure / interfaces` 四层，按阶段渐进迁移：
+采用 `domain / application / infrastructure / platform` 四层，按阶段渐进迁移：
 
 1. 先抽纯领域（risk、vuln、version、asset）。
 2. 再定义端口并由 SQLite 实现仓储。
@@ -23,8 +23,8 @@
 - `domain` 仅依赖标准库。
 - `application` 仅依赖 `domain` 与 `application/ports`。
 - `infrastructure` 实现端口。
-- `interfaces` 依赖 `application`，不得持有 `*sql.DB`。
-- `app` 是唯一组装点。
+- `platform` 提供配置、时钟等平台能力，不反向依赖业务包。
+- `package main` 是唯一组装点，同时承载 HTTP handler 与 CLI 入口。
 
 ## 后果
 

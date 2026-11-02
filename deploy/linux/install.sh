@@ -24,6 +24,9 @@ ADMIN_PASSWORD=""
 LLM_BASE_URL=""
 LLM_API_KEY=""
 LLM_MODEL=""
+GPU_BASE_URL=""
+GPU_API_KEY=""
+GPU_MODEL=""
 CVE_API_KEY=""
 COOKIE_SECURE=0
 OPEN_FIREWALL=0
@@ -64,6 +67,9 @@ usage() {
   --llm-base-url URL      OpenAI 兼容模型地址
   --llm-api-key VALUE     模型密钥
   --llm-model NAME        模型名称
+  --gpu-base-url URL      GPU 推理端点（OpenAI 兼容，如 vLLM）
+  --gpu-api-key VALUE     GPU 推理端点密钥（本地服务可留空）
+  --gpu-model NAME        GPU 推理模型名称
   --cve-api-key VALUE     情报平台密钥（可选）
   --https-cookie          启用 Secure Cookie（反向代理终止 TLS 时）
   --open-firewall         自动放行端口（ufw/firewalld）
@@ -84,6 +90,9 @@ while [[ $# -gt 0 ]]; do
     --llm-base-url) LLM_BASE_URL="$2"; shift 2 ;;
     --llm-api-key) LLM_API_KEY="$2"; shift 2 ;;
     --llm-model) LLM_MODEL="$2"; shift 2 ;;
+    --gpu-base-url) GPU_BASE_URL="$2"; shift 2 ;;
+    --gpu-api-key) GPU_API_KEY="$2"; shift 2 ;;
+    --gpu-model) GPU_MODEL="$2"; shift 2 ;;
     --cve-api-key) CVE_API_KEY="$2"; shift 2 ;;
     --https-cookie) COOKIE_SECURE=1; shift ;;
     --open-firewall) OPEN_FIREWALL=1; shift ;;
@@ -99,7 +108,7 @@ done
 [[ $EUID -eq 0 ]] || die "请使用 root 运行：sudo bash $0 $*"
 [[ -f "${REPO_ROOT}/server/go.mod" ]] || die "未找到仓库根目录（需要 server/go.mod）：${REPO_ROOT}"
 [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT > 0 && PORT < 65536 )) || die "端口不合法：$PORT"
-for value in "$LLM_BASE_URL" "$LLM_API_KEY" "$LLM_MODEL" "$ADMIN_PASSWORD" "$CVE_API_KEY"; do
+for value in "$LLM_BASE_URL" "$LLM_API_KEY" "$LLM_MODEL" "$GPU_BASE_URL" "$GPU_API_KEY" "$GPU_MODEL" "$ADMIN_PASSWORD" "$CVE_API_KEY"; do
   [[ "$value" != *$'\n'* ]] || die "参数中不允许包含换行"
 done
 
@@ -301,6 +310,9 @@ if [[ -f "$SERVER_ENV" ]]; then
   [[ -z "$LLM_BASE_URL" ]] && LLM_BASE_URL="$(env_value VA_LLM_BASE_URL)"
   [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="$(env_value VA_LLM_API_KEY)"
   [[ -z "$LLM_MODEL" ]] && LLM_MODEL="$(env_value VA_LLM_MODEL)"
+  [[ -z "$GPU_BASE_URL" ]] && GPU_BASE_URL="$(env_value VA_GPU_LLM_BASE_URL)"
+  [[ -z "$GPU_API_KEY" ]] && GPU_API_KEY="$(env_value VA_GPU_LLM_API_KEY)"
+  [[ -z "$GPU_MODEL" ]] && GPU_MODEL="$(env_value VA_GPU_LLM_MODEL)"
   [[ "$COOKIE_SECURE" == "0" && "$(env_value VA_COOKIE_SECURE)" == "1" ]] && COOKIE_SECURE=1
   ok "已合并现有 server.env"
 fi
@@ -326,6 +338,10 @@ fi
   if [[ -n "$LLM_BASE_URL" ]]; then printf 'VA_LLM_BASE_URL=%s\n' "$LLM_BASE_URL"; else printf '# VA_LLM_BASE_URL=\n'; fi
   if [[ -n "$LLM_API_KEY" ]]; then printf 'VA_LLM_API_KEY=%s\n' "$LLM_API_KEY"; else printf '# VA_LLM_API_KEY=\n'; fi
   if [[ -n "$LLM_MODEL" ]]; then printf 'VA_LLM_MODEL=%s\n' "$LLM_MODEL"; else printf '# VA_LLM_MODEL=\n'; fi
+  if [[ -n "$GPU_BASE_URL" ]]; then printf 'VA_GPU_LLM_BASE_URL=%s\n' "$GPU_BASE_URL"; else printf '# VA_GPU_LLM_BASE_URL=\n'; fi
+  if [[ -n "$GPU_API_KEY" ]]; then printf 'VA_GPU_LLM_API_KEY=%s\n' "$GPU_API_KEY"; else printf '# VA_GPU_LLM_API_KEY=\n'; fi
+  if [[ -n "$GPU_MODEL" ]]; then printf 'VA_GPU_LLM_MODEL=%s\n' "$GPU_MODEL"; else printf '# VA_GPU_LLM_MODEL=\n'; fi
+  printf '# VA_AGENT_CONTEXT_BUDGET=16000\n'
 } > "$SERVER_ENV"
 chmod 0600 "$SERVER_ENV"
 chown root:root "$SERVER_ENV"
@@ -475,8 +491,8 @@ cat > "${INSTALL_DIR}/scripts/backup.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 out="${DATA_DIR}/backups/vulnagent-\$(date +%Y%m%d-%H%M%S).db"
-VA_ENV_FILE="${SERVER_ENV}" "${INSTALL_DIR}/server/vulnagent" backup --out "\$out"
-echo "备份完成：\$out"
+VA_ENV_FILE="${SERVER_ENV}" "${INSTALL_DIR}/server/vulnagent" backup --out "\$out" --compress
+echo "备份完成：\$out.gz"
 EOF
 uninstall_script="${INSTALL_DIR}/scripts/uninstall.sh"
 {

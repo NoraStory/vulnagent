@@ -77,6 +77,27 @@ spec:
                   name: vulnagent-secrets
                   key: llm-model
                   optional: true
+            # 可选 GPU 推理端点（OpenAI 兼容，如 vLLM）
+            - name: VA_GPU_LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vulnagent-secrets
+                  key: gpu-llm-base-url
+                  optional: true
+            - name: VA_GPU_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vulnagent-secrets
+                  key: gpu-llm-api-key
+                  optional: true
+            - name: VA_GPU_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: vulnagent-secrets
+                  key: gpu-llm-model
+                  optional: true
+            - name: VA_AGENT_CONTEXT_BUDGET
+              value: "16000"
           volumeMounts:
             - name: data
               mountPath: /app/data

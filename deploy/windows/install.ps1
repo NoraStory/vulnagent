@@ -24,6 +24,9 @@
 .PARAMETER LLMBaseUrl / LLMApiKey / LLMModel
   OpenAI 兼容模型配置，三项齐备才启用 AI 助手与 Agent 自动执行。
 
+.PARAMETER GPUBaseUrl / GPUApiKey / GPUModel
+  可选 GPU 推理端点（OpenAI 兼容，如 vLLM）；BaseUrl 与 Model 齐备即启用，按主机开关生效。
+
 .PARAMETER CVEApiKey
   可选的情报平台密钥（写入 VULNAGENT_CVE_API_KEY）。
 
@@ -52,6 +55,9 @@
   pwsh -File deploy\windows\install.ps1 -Port 8787 -LLMBaseUrl https://ark.cn-beijing.volces.com/api/v3 -LLMApiKey "..." -LLMModel deepseek-v4-1-flash-261017
 
 .EXAMPLE
+  pwsh -File deploy\windows\install.ps1 -GPUBaseUrl http://127.0.0.1:8000/v1 -GPUModel Qwen2.5-32B-Instruct
+
+.EXAMPLE
   pwsh -File deploy\windows\install.ps1 -InstallDir E:\VulnAgent -InstallDeps -OpenFirewall
 #>
 [CmdletBinding()]
@@ -63,6 +69,9 @@ param(
     [string]$LLMBaseUrl,
     [string]$LLMApiKey,
     [string]$LLMModel,
+    [string]$GPUBaseUrl,
+    [string]$GPUApiKey,
+    [string]$GPUModel,
     [string]$CVEApiKey,
     [switch]$EnableHttpsCookie,
     [switch]$OpenFirewall,
@@ -333,7 +342,8 @@ try {
     $order = @(
         'VA_ADDR','VA_DATA_DIR','VA_WEB_DIST','VA_SEED_DEMO','VA_SESSION_IDLE',
         'VA_RESCAN_INTERVAL','VA_RESCAN_DEBOUNCE','VA_SYNC_INTERVAL','VA_COOKIE_SECURE',
-        'VA_ADMIN_PASSWORD','VULNAGENT_CVE_API_KEY','VA_LLM_BASE_URL','VA_LLM_API_KEY','VA_LLM_MODEL'
+        'VA_ADMIN_PASSWORD','VULNAGENT_CVE_API_KEY','VA_LLM_BASE_URL','VA_LLM_API_KEY','VA_LLM_MODEL',
+        'VA_GPU_LLM_BASE_URL','VA_GPU_LLM_API_KEY','VA_GPU_LLM_MODEL','VA_AGENT_CONTEXT_BUDGET'
     )
     if (Test-Path $envFile) {
         foreach ($line in Get-Content $envFile) {
@@ -359,6 +369,9 @@ try {
     if ($LLMBaseUrl) { $values['VA_LLM_BASE_URL'] = $LLMBaseUrl }
     if ($LLMApiKey) { $values['VA_LLM_API_KEY'] = $LLMApiKey }
     if ($LLMModel) { $values['VA_LLM_MODEL'] = $LLMModel }
+    if ($GPUBaseUrl) { $values['VA_GPU_LLM_BASE_URL'] = $GPUBaseUrl }
+    if ($GPUApiKey) { $values['VA_GPU_LLM_API_KEY'] = $GPUApiKey }
+    if ($GPUModel) { $values['VA_GPU_LLM_MODEL'] = $GPUModel }
 
     Write-EnvFile -Values $values -Order $order
     Ok "配置已写入：$envFile"
@@ -422,8 +435,8 @@ if (Test-Path `$log) {
 New-Item -ItemType Directory -Force `$dir | Out-Null
 `$out = Join-Path `$dir ("vulnagent-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + ".db")
 Set-Location (Join-Path `$root 'server')
-& (Join-Path `$root 'server\vulnagent.exe') backup --out `$out
-if (`$LASTEXITCODE -eq 0) { Write-Host "备份完成：`$out" -ForegroundColor Green } else { Write-Host "备份失败" -ForegroundColor Red }
+& (Join-Path `$root 'server\vulnagent.exe') backup --out `$out --compress
+if (`$LASTEXITCODE -eq 0) { Write-Host "备份完成：`$out.gz" -ForegroundColor Green } else { Write-Host "备份失败" -ForegroundColor Red }
 "@
     [System.IO.File]::WriteAllText((Join-Path $scriptDir 'backup.ps1'), $backupScript, (New-Object System.Text.UTF8Encoding($false)))
 

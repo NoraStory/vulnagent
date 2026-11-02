@@ -1,6 +1,6 @@
 # 安全漏洞运维 Agent · 详细设计
 
-> 对应架构图：`vuln-agent-architecture.html` / `diagram.excalidraw`（v0.2）
+> 架构总览见仓库根目录 README 的 Mermaid 图；本文档细化各模块的实现与契约。
 > 技术栈基线：Go 单二进制 + SQLite（可切 PostgreSQL）+ 内嵌 Web 控制台
 > 采集方式：Agent 为主，SSH 无 Agent 兜底
 > 情报源：漏洞平台 API（`cve.imfht.com`）+ EPSS
@@ -1055,7 +1055,7 @@ internal/application/harness 注册表、对话循环、九道闸门、审批、
 internal/application/ports   LLM 与 HarnessRepository 端口
 internal/infrastructure/llm/openai  OpenAI 兼容 Chat Completions（含 tools）
 internal/infrastructure/sqlite/harness_repo.go  四张表的仓储
-harness_tools.go             29 个工具的绑定（读工具走 mode=ro 连接）
+harness_tools.go             32 个工具的绑定（读工具走 mode=ro 连接）
 harness_handlers.go          SSE 会话接口与审批接口
 ```
 
@@ -1219,7 +1219,7 @@ harness_handlers.go          SSE 会话接口与审批接口
 #### 7.6.11 主机性能监控
 
 - 入口：SSH 终端顶部工具栏「性能监控」按钮，仅在打开主机标签后可用；跳转 `/terminal/monitor/{hostId}`。
-- 采集：`GET /api/v1/ssh/hosts/{id}/metrics`（viewer+）复用 `dialSSHHost` 建立一次性只读会话，执行采集脚本后立即断开；不写审计、不改主机。
+- 采集：`GET /api/v1/ssh/hosts/{id}/metrics`（viewer+）从只读 SSH 连接池获取连接，执行采集脚本后释放（不关闭共享连接）；不写审计、不改主机。
 - 指标：CPU 使用率（`/proc/stat` 两次快照差值）、内存/Swap（`/proc/meminfo`）、负载（`/proc/loadavg`）、运行时长与进程数、磁盘挂载点（`df -P -k`）、网络收发速率（`/proc/net/dev` 差值，采样间隔 0.6s）、CPU 占用 Top 5（`ps --sort=-%cpu`）。
 - 页面：滚动曲线（CPU/内存/负载/网络）、KPI 卡片（含阈值配色）、磁盘挂载点表、Top 进程表与最近采样记录表；支持 2/3/5/10 秒轮询、暂停/继续与立即刷新，最多保留 90 个采样点。
 - 超时与容错：单次采样 15 秒总超时、命令 10 秒超时；解析失败或 SSH 失败返回 JSON 错误，页面展示可重试提示。
@@ -1386,14 +1386,16 @@ server/                 Go 控制面 + 采集器（同一份二进制）
   security.go           会话空闲过期、登录限速、账号管理、令牌轮换、安全响应头
   assets/fonts/         Noto Sans SC（SIL OFL 1.1），编译期 embed
   selfcheck.go          16 项真实自检 + 历史
+  ssh_*.go              SSH 终端/AI/Agent、性能监控、服务加速、hashcat 与连接池
+  parallel_gzip.go      备份文件多协程并行 gzip
   internal/collect/     系统包采集：dpkg / rpm / apk / Windows 注册表 / 自身 SBOM
 web/                    React 18 + Vite + TypeScript + Tailwind
-  src/pages/            登录、概览、漏洞、资产、资产详情、自检、审计与设置
-  src/components/       AppShell、FindingDrawer、TrendChart、PasswordDialog、UI 原语
+  src/pages/            登录、概览、漏洞、资产、资产详情、发现、拓扑、治理、集成、助手、SSH 终端、性能监控、服务加速、自检与设置
+  src/components/       AppShell、FindingDrawer、TrendChart、ContextMeter、MetricTrend、SFTP/Snippet/回放面板、UI 原语
 Dockerfile              多阶段构建（前端 + Go，单镜像）
 deploy/systemd/         控制面服务、Agent oneshot + timer、环境变量样例
 deploy/k8s/             控制面 Deployment/Service/PVC、Agent CronJob
-docs/architecture/      架构图、详细设计、API 契约
+docs/architecture/      详细设计、API 契约、CMDB 分页契约、ADR
 data/vulnagent.db       首次启动自动生成（默认空库，VA_SEED_DEMO=on 才灌演示数据）
 data/agent.token        Agent 接入令牌（0600）
 ```
