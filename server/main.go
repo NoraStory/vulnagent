@@ -451,6 +451,12 @@ func spaHandler(root string) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean := path.Clean("/" + r.URL.Path)
+		// API 命名空间不参与 SPA 回退：未匹配的接口应返回 JSON 404，
+		// 否则前端会把 index.html 当 JSON 解析，报 "Unexpected token '<'"。
+		if clean == "/api" || strings.HasPrefix(clean, "/api/") {
+			writeErr(w, http.StatusNotFound, "not_found", "接口不存在")
+			return
+		}
 		if clean == "/" || clean == "/index.html" {
 			serveIndex(w, r)
 			return

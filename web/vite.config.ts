@@ -13,6 +13,17 @@ export default defineConfig({
       }
     }
   },
+  // vite preview 同样代理 API，避免预览构建产物时收到 index.html 当作 JSON
+  preview: {
+    port: 4173,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+        ws: true
+      }
+    }
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

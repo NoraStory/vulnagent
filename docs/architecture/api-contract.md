@@ -4,6 +4,7 @@
 - 编码：JSON（UTF-8）；时间统一 RFC3339 字符串
 - 认证：Cookie `va_session`（HttpOnly）。除 `POST /auth/login`、`GET /healthz` 外均需登录
 - 错误：HTTP 4xx/5xx，body `{ "error": { "code": "forbidden", "message": "..." } }`
+- 不存在的 `/api/*` 路径固定返回 JSON `404 not_found`，不参与前端 SPA 回退（避免把 index.html 当 JSON 解析）
 - 角色：`admin` > `operator` > `viewer`；写操作需 `operator`+，账号/策略/同步需 `admin`
 
 > 演示数据标记：所有响应根对象带 `"demo": true`，前端展示"演示数据"标识。

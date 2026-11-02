@@ -107,7 +107,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  return await readJSON<T>(response);
 }
 
 async function toApiError(response: Response, fallback: string): Promise<ApiError> {
@@ -123,6 +123,19 @@ async function toApiError(response: Response, fallback: string): Promise<ApiErro
     /* 非 JSON 错误响应，保留默认文案 */
   }
   return new ApiError(response.status, code, message);
+}
+
+// readJSON 校验响应确实是 JSON；避免把 SPA 回退的 index.html 当 JSON 解析，
+// 抛出 "Unexpected token '<'" 这类无法定位的底层异常。
+async function readJSON<T>(response: Response): Promise<T> {
+  const type = (response.headers.get("content-type") || "").toLowerCase();
+  if (!type.includes("application/json") && !type.includes("+json")) {
+    const hint = type.includes("text/html")
+      ? "服务端返回了页面而不是 JSON，请确认后端已启动且前后端版本一致"
+      : "服务端返回了非 JSON 响应，请检查接口地址与服务状态";
+    throw new ApiError(response.status || 0, "invalid_response", `${hint}（HTTP ${response.status}）`);
+  }
+  return (await response.json()) as T;
 }
 
 function query(params: Record<string, string | number | undefined>): string {
@@ -434,7 +447,7 @@ export const api = {
     if (!response.ok) {
       throw await toApiError(response, "导入失败");
     }
-    return (await response.json()) as AssetImportReport;
+    return await readJSON<AssetImportReport>(response);
   },
 
   async exportAssets(params: {
@@ -777,7 +790,15 @@ export const api = {
       }
       throw new ApiError(response.status, code, message);
     }
-    return response.json();
+    return await readJSON<{
+      ok: boolean;
+      rows: number;
+      matched: number;
+      unmatched: number;
+      invalid: number;
+      recomputed: number;
+      cursor: string;
+    }>(response);
   },
 
   productMap(q?: string): Promise<{ demo: boolean; total: number; items: ProductMapping[] }> {
@@ -1022,7 +1043,7 @@ export const api = {
     if (!response.ok) {
       throw await toApiError(response, "上传失败");
     }
-    return (await response.json()) as { ok: boolean; path: string; size: number };
+    return await readJSON<{ ok: boolean; path: string; size: number }>(response);
   },
 
   sftpDownloadURL(hostId: number, path: string): string {
