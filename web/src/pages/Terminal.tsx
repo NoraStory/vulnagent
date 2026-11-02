@@ -51,6 +51,7 @@ import { timeAgo } from "../lib/format";
 import { terminalTheme } from "../lib/terminalTheme";
 import { useToast } from "../lib/toast";
 import { Markdown } from "../components/Markdown";
+import { ContextMeter } from "../components/ContextMeter";
 import { SftpPanel } from "../components/SftpPanel";
 import { SnippetPanel } from "../components/SnippetPanel";
 import { SessionReplay } from "../components/SessionReplay";
@@ -60,6 +61,7 @@ import { ScanResultDialog } from "../components/ScanResultDialog";
 import { ResizeHandle } from "../components/ResizeHandle";
 import { Skeleton } from "../components/ui";
 import type {
+  ContextUsage,
   SshAgentEvent,
   SshAgentMode,
   SshAssistantReply,
@@ -124,6 +126,7 @@ type AgentRunView = {
   referenceError?: string;
   search?: boolean;
   contextRuns?: number;
+  context?: ContextUsage;
   warnings?: string[];
 };
 
@@ -499,6 +502,7 @@ export function TerminalPage() {
       return false;
     }
   });
+  const [aiContextByTab, setAiContextByTab] = useState<Record<string, ContextUsage>>({});
   const [hostsCollapsed, setHostsCollapsed] = useState(() => {
     try {
       return localStorage.getItem("va.ssh.hostsCollapsed") === "1";
@@ -732,6 +736,9 @@ export function TerminalPage() {
         references: reply.references,
         referenceError: reply.referenceError
       });
+      if (reply.context) {
+        setAiContextByTab((prev) => ({ ...prev, [key]: reply.context as ContextUsage }));
+      }
     } catch (err) {
       pushAi(key, {
         id: `a-${Date.now()}`,
@@ -868,6 +875,16 @@ export function TerminalPage() {
             );
             break;
           }
+          case "context":
+            next.context = {
+              usedTokens: Number(data.usedTokens ?? 0),
+              budgetTokens: Number(data.budgetTokens ?? 0),
+              percent: Number(data.percent ?? 0),
+              compressedItems: Number(data.compressedItems ?? 0),
+              savedTokens: Number(data.savedTokens ?? 0),
+              historyItems: Number(data.historyItems ?? 0)
+            };
+            break;
           case "done":
             next.status = "done";
             next.summary = String(data.summary ?? "");
@@ -1163,6 +1180,7 @@ export function TerminalPage() {
                 </button>
               )}
             </div>
+            {agentState.context && <ContextMeter usage={agentState.context} compact />}
             {renderAgentRun()}
           </div>
         )}
@@ -1229,6 +1247,9 @@ export function TerminalPage() {
           )}
           <span>多轮上下文；自动执行最多 8 步，命令与输出写入审计。</span>
         </div>
+        {activeTab && aiContextByTab[activeTab.key] && (
+          <ContextMeter usage={aiContextByTab[activeTab.key]} className="mt-1.5" compact />
+        )}
       </div>
         </>
       ) : (
@@ -1277,6 +1298,7 @@ export function TerminalPage() {
                 <span className="ml-auto font-mono text-[9px] text-ink3">运行 {agentState.runId.slice(0, 8)}</span>
               )}
             </div>
+            {agentState?.context && <ContextMeter usage={agentState.context} className="mt-1 w-full" />}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ink3">
               <label className="flex items-center gap-1">
                 <input

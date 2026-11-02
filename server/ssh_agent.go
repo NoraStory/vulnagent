@@ -228,8 +228,13 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		)
 		// 单步内对模型格式错误与临时调用失败做有限重试，避免一次异常中断整个任务
 		for {
-			current, err := a.askSSHAgent(ctx, host, goal, referenceBlock, previousBlock, history, remaining)
+			current, usage, err := a.askSSHAgent(ctx, host, goal, referenceBlock, previousBlock, history, remaining)
 			if err == nil {
+				stream.emit(harnessapp.Event{Type: "context", Data: map[string]any{
+					"usedTokens": usage.UsedTokens, "budgetTokens": usage.BudgetTokens, "percent": usage.Percent,
+					"compressedItems": usage.CompressedItems, "savedTokens": usage.SavedTokens,
+					"historyItems": usage.HistoryItems, "step": index,
+				}})
 				if current.Done {
 					decision = current
 					break
@@ -478,54 +483,20 @@ func sshRiskReason(risk string) string {
 	}
 }
 
-func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (sshAgentDecision, error) {
-	var user strings.Builder
-	user.WriteString("目标主机：")
-	user.WriteString(host.Name)
-	user.WriteString("（")
-	user.WriteString(host.Username)
-	user.WriteString("@")
-	user.WriteString(host.addr())
-	user.WriteString("）\n目标：")
-	user.WriteString(goal)
-	if reference != "" {
-		user.WriteString("\n")
-		user.WriteString(reference)
-	}
-	if previous != "" {
-		user.WriteString("\n")
-		user.WriteString(previous)
-	}
-	user.WriteString("\n剩余可执行步数：")
-	user.WriteString(strconv.Itoa(remaining))
-	user.WriteString("\n")
-
-	start := 0
-	if len(history) > 6 {
-		start = len(history) - 6
-	}
-	if len(history) == 0 {
-		user.WriteString("尚未执行任何命令。\n")
-	} else {
-		user.WriteString("已执行步骤：\n")
-		for _, step := range history[start:] {
-			user.WriteString(fmt.Sprintf("步骤 %d\n命令：%s\n结果：%s\n",
-				step.Index+1, step.Command, truncateRunes(step.Output, 1500)))
-		}
-	}
-
+func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (sshAgentDecision, contextUsage, error) {
+	userText, usage := buildSSHAgentPrompt(host, goal, reference, previous, history, remaining)
 	callCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	messages := []ports.LLMMessage{
 		{Role: "system", Content: sshAgentSystemPrompt},
-		{Role: "user", Content: user.String()},
+		{Role: "user", Content: userText},
 	}
 	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Messages: messages})
 	if err != nil {
-		return sshAgentDecision{}, err
+		return sshAgentDecision{}, usage, err
 	}
 	if decision, parseErr := parseSSHAgentDecision(resp.Content); parseErr == nil {
-		return decision, nil
+		return decision, usage, nil
 	}
 	// 格式修复：把上一次原始输出回填给模型，要求只输出合法 JSON
 	repairMessages := append(append([]ports.LLMMessage{}, messages...),
@@ -541,10 +512,10 @@ func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, pr
 	repairResp, repairErr := a.harness.LLM.Chat(repairCtx, ports.LLMRequest{Messages: repairMessages})
 	if repairErr == nil {
 		if decision, parseErr := parseSSHAgentDecision(repairResp.Content); parseErr == nil {
-			return decision, nil
+			return decision, usage, nil
 		}
 	}
-	return sshAgentDecision{}, errAgentDecisionFormat
+	return sshAgentDecision{}, usage, errAgentDecisionFormat
 }
 
 // errAgentDecisionFormat 表示模型输出无法解析为决策（可重试，不应直接中断任务）

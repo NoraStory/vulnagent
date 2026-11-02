@@ -916,12 +916,22 @@ export interface SshShareInfo {
   serverVersion: string;
 }
 
+export interface ContextUsage {
+  usedTokens: number;
+  budgetTokens: number;
+  percent: number;
+  compressedItems: number;
+  savedTokens: number;
+  historyItems: number;
+}
+
 export interface SshAssistantReply {
   answer: string;
   commands: string[];
   model: string;
   references: SshCommandReference[];
   referenceError?: string;
+  context?: ContextUsage;
 }
 
 export interface SshCommandReference {

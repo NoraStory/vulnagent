@@ -31,6 +31,7 @@ type sshAIResponse struct {
 	Model          string                `json:"model"`
 	References     []sshCommandReference `json:"references"`
 	ReferenceError string                `json:"referenceError,omitempty"`
+	Context        contextUsage          `json:"context"`
 }
 
 const sshAISystemPrompt = `你是 VulnAgent 的 SSH 终端智能助手，面向运维与安全工程师。
@@ -108,9 +109,15 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	user.WriteString("问题：")
 	user.WriteString(question)
 
+	historyMessages, compressed, savedTokens, historyItems := budgetedSSHAIHistory(req.History, 8)
 	messages := []ports.LLMMessage{{Role: "system", Content: sshAISystemPrompt}}
-	messages = append(messages, normalizeSSHAIHistory(req.History, 8)...)
+	messages = append(messages, historyMessages...)
 	messages = append(messages, ports.LLMMessage{Role: "user", Content: user.String()})
+	usedTokens := 0
+	for _, message := range messages {
+		usedTokens += estimateTokens(message.Content)
+	}
+	usage := buildContextUsage(usedTokens, agentContextBudget(), compressed, savedTokens, historyItems)
 	resp, err := a.harness.LLM.Chat(r.Context(), ports.LLMRequest{Messages: messages})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "llm_failed", "模型调用失败："+err.Error())
@@ -127,6 +134,7 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 		Model:          a.harness.LLM.Model(),
 		References:     references,
 		ReferenceError: refErr,
+		Context:        usage,
 	})
 }
 

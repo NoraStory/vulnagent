@@ -1321,10 +1321,12 @@ vulnagent_selfcheck_failed 0
 ```
 
 ```json
-{ "answer": "根分区使用率 88%，建议…", "commands": ["df -i", "journalctl --disk-usage"], "model": "deepseek-v4-1-flash-261017" }
+{ "answer": "根分区使用率 88%，建议…", "commands": ["df -i", "journalctl --disk-usage"], "model": "deepseek-v4-1-flash-261017",
+  "context": { "usedTokens": 4210, "budgetTokens": 16000, "percent": 26.3, "compressedItems": 2, "savedTokens": 860, "historyItems": 10 } }
 ```
 
 - `question` 上限 2000 字符，`context` 上限 8000 字符（前端只发送最近终端输出）。
+- 历史超过 8 条或 6000 字时，较早对话会压缩成一段摘要，`context.compressedItems` 表示被压缩条数。
 - 模型未配置返回 `503 llm_unavailable`；调用失败返回 `502 llm_failed`。
 - 返回命令只是建议，前端默认仅插入终端，执行前需要人工二次确认。
 
@@ -1657,6 +1659,7 @@ Agent 的 `status` 事件新增：
 | type | data | 说明 |
 |---|---|---|
 | `warning` | `{message}` | 自动重试、格式修复或提前结束提示 |
+| `context` | `{usedTokens, budgetTokens, percent, compressedItems, savedTokens, historyItems, step}` | 每次模型调用前的上下文占用与压缩统计 |
 | `done` | `{runId, steps, summary, truncated}` | `truncated=true` 表示因模型格式异常提前结束 |
 
 ### 12.6 SSH 主机漏洞扫描
