@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   Activity,
+  Bot,
   Boxes,
   ChevronRight,
   ClipboardCheck,
@@ -33,7 +34,8 @@ const navGroups = [
       { to: "/assets", label: "资产", icon: Server },
       { to: "/discovery", label: "发现", icon: Radar },
       { to: "/topology", label: "拓扑", icon: Network },
-      { to: "/clusters", label: "项目集群", icon: Boxes }
+      { to: "/clusters", label: "项目集群", icon: Boxes },
+      { to: "/agents", label: "Agent 管理", icon: Bot }
     ]
   },
   {
@@ -62,6 +64,7 @@ const pageMeta: Record<string, { title: string; subtitle: string; crumb: string 
   "/discovery": { title: "资产发现", subtitle: "授权网段探活、候选审核与资产入库", crumb: "发现" },
   "/topology": { title: "资产拓扑", subtitle: "业务系统、资产与依赖关系全景", crumb: "拓扑" },
   "/clusters": { title: "项目与集群", subtitle: "跨主机后端、数据库与扫描目标的统一运维视图", crumb: "项目集群" },
+  "/agents": { title: "Agent 管理", subtitle: "单机身份注册、心跳在线与双向命令通道", crumb: "Agent 管理" },
   "/governance": { title: "资产治理", subtitle: "责任人、失联、重复与暴露面变化待办", crumb: "治理" },
   "/integrations": { title: "集成中心", subtitle: "云厂商与外部 CMDB 只读同步", crumb: "集成" },
   "/assistant": { title: "Agent 助手", subtitle: "只读工具直接执行，写操作需审批", crumb: "助手" },

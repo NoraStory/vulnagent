@@ -117,7 +117,9 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if !strings.HasPrefix(p, "/api/v1/") || p == "/api/v1/auth/login" || p == "/api/v1/healthz" ||
-			p == "/api/v1/agent/report" || strings.HasPrefix(p, "/api/v1/agent/jobs") {
+			p == "/api/v1/agent/report" || strings.HasPrefix(p, "/api/v1/agent/jobs") ||
+			p == "/api/v1/agents/enroll" || p == "/api/v1/agents/heartbeat" ||
+			p == "/api/v1/agents/commands" || strings.HasPrefix(p, "/api/v1/agents/commands/") {
 			next.ServeHTTP(w, r)
 			return
 		}

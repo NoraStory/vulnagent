@@ -114,45 +114,42 @@ func runCollectCommand(args []string) {
 func runAgentCommand(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	server := fs.String("server", "http://127.0.0.1:8787", "控制面地址")
-	token := fs.String("token", "", "Agent 令牌（不建议写在命令行历史里）")
-	tokenFile := fs.String("token-file", "", "Agent 令牌文件路径")
+	token := fs.String("token", "", "全局 Agent 令牌（不建议写在命令行历史里）")
+	tokenFile := fs.String("token-file", "", "全局 Agent 令牌文件路径")
+	enrollToken := fs.String("enroll-token", "", "一次性注册令牌（首次接入时使用）")
+	identityPath := fs.String("identity", "", "Agent 身份文件路径，默认数据目录下 agent.identity.json")
+	agentName := fs.String("name", "", "Agent 显示名称，默认使用主机名")
 	withSelf := fs.Bool("self", true, "附带自身依赖 SBOM")
 	onlyPrint := fs.Bool("print", false, "只打印采集结果，不上报")
 	timeout := fs.Duration("timeout", 60*time.Second, "上报超时时间")
-	watch := fs.Bool("watch", false, "常驻运行并拉取主机作业")
-	interval := fs.Duration("interval", 15*time.Second, "作业轮询间隔（--watch 模式）")
+	watch := fs.Bool("watch", false, "常驻运行并拉取主机作业与命令")
+	interval := fs.Duration("interval", 15*time.Second, "作业/命令轮询与心跳间隔（--watch 模式）")
 	reportInterval := fs.Duration("report-interval", 5*time.Minute, "遥测/清单重新上报间隔（--watch 模式，0 关闭）")
 	_ = fs.Parse(args)
-
-	if *watch && !*onlyPrint {
-		accessToken, err := resolveAgentToken(*token, *tokenFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "读取 Agent 令牌失败：%v\n", err)
-			os.Exit(1)
-		}
-		if err := runAgentWatch(*server, accessToken, *interval, *reportInterval, *timeout); err != nil {
-			fmt.Fprintf(os.Stderr, "Agent 常驻运行失败：%v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
 
 	report, err := collect.Collect(collect.Options{IncludeSelf: *withSelf})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "采集失败：%v\n", err)
 		os.Exit(1)
 	}
-
 	if *onlyPrint {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Println(string(data))
 		return
 	}
 
-	accessToken, err := resolveAgentToken(*token, *tokenFile)
+	auth, err := resolveAgentAuth(*server, *token, *tokenFile, *enrollToken, *identityPath, *agentName, report, *timeout)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取 Agent 令牌失败：%v\n", err)
+		fmt.Fprintf(os.Stderr, "读取 Agent 凭据失败：%v\n", err)
 		os.Exit(1)
+	}
+
+	if *watch {
+		if err := runAgentWatch(*server, auth, report, *interval, *reportInterval, *timeout); err != nil {
+			fmt.Fprintf(os.Stderr, "Agent 常驻运行失败：%v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	body, err := json.Marshal(report)
@@ -167,7 +164,7 @@ func runAgentCommand(args []string) {
 		os.Exit(1)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	auth.apply(req)
 
 	client := &http.Client{Timeout: *timeout}
 	resp, err := client.Do(req)

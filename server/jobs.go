@@ -25,7 +25,11 @@ type signedJob struct {
 }
 
 func (a *App) signJob(job ports.HostJob) signedJob {
-	return signedJob{HostJob: job, Signature: jobSignature(a.jobKey, job)}
+	return a.signJobWith(a.jobKey, job)
+}
+
+func (a *App) signJobWith(key []byte, job ports.HostJob) signedJob {
+	return signedJob{HostJob: job, Signature: jobSignature(key, job)}
 }
 
 func jobSignature(key []byte, job ports.HostJob) string {
@@ -137,8 +141,9 @@ func (a *App) assetHostname(assetID int64) (string, error) {
 
 // handleAgentJobs 返回该主机当前可执行的作业
 func (a *App) handleAgentJobs(w http.ResponseWriter, r *http.Request) {
-	if !a.agentAuthorized(r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 令牌无效")
+	principal, ok := a.authenticateAgent(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 身份无效")
 		return
 	}
 	hostname := strings.TrimSpace(r.URL.Query().Get("hostname"))
@@ -153,15 +158,16 @@ func (a *App) handleAgentJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	signed := make([]signedJob, 0, len(jobs))
 	for _, job := range jobs {
-		signed = append(signed, a.signJob(job))
+		signed = append(signed, a.signJobWith(principal.Key, job))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": signed})
 }
 
 // handleAgentJobClaim 抢占作业
 func (a *App) handleAgentJobClaim(w http.ResponseWriter, r *http.Request) {
-	if !a.agentAuthorized(r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 令牌无效")
+	principal, ok := a.authenticateAgent(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 身份无效")
 		return
 	}
 	var req struct {
@@ -185,13 +191,13 @@ func (a *App) handleAgentJobClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "not_available", "作业不存在、已被取走或未到执行时间")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job": a.signJob(job)})
+	writeJSON(w, http.StatusOK, map[string]any{"job": a.signJobWith(principal.Key, job)})
 }
 
 // handleAgentJobResult 接收 Agent 执行结果并按需安排重试
 func (a *App) handleAgentJobResult(w http.ResponseWriter, r *http.Request) {
 	if !a.agentAuthorized(r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 令牌无效")
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 身份无效")
 		return
 	}
 	var req struct {

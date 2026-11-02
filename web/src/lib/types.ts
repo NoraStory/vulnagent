@@ -758,6 +758,57 @@ export interface ClusterJob {
   finishedAt: string;
 }
 
+export interface AgentItem {
+  id: string;
+  name: string;
+  hostname: string;
+  os: string;
+  osVersion: string;
+  version: string;
+  projectId: number;
+  projectName: string;
+  clusterId: number;
+  clusterName: string;
+  lastSeenAt: string;
+  lastIp: string;
+  enrolledAt: string;
+  enrolledBy: string;
+  revokedAt: string;
+  online: boolean;
+  status: "online" | "offline" | "revoked" | string;
+  pendingCommands: number;
+  totalCommands: number;
+}
+
+export interface AgentEnrollTokenItem {
+  id: string;
+  nameHint: string;
+  projectId: number;
+  projectName: string;
+  clusterId: number;
+  clusterName: string;
+  expiresAt: string;
+  usedAt: string;
+  usedByAgent: string;
+  createdBy: string;
+  createdAt: string;
+  status: "active" | "used" | "expired" | string;
+}
+
+export interface AgentCommandItem {
+  id: string;
+  agentId: string;
+  action: string;
+  params: string;
+  status: string;
+  output: string;
+  error: string;
+  requestedBy: string;
+  createdAt: string;
+  claimedAt: string;
+  finishedAt: string;
+}
+
 export interface ClusterNodeItem {
   id: number;
   clusterId: number;

@@ -44,6 +44,9 @@ import type {
   ClusterDetailData,
   ClusterScanResult,
   ClusterJob,
+  AgentItem,
+  AgentEnrollTokenItem,
+  AgentCommandItem,
   SyncSource,
   Ticket,
   TrajectoryItem,
@@ -838,6 +841,33 @@ export const api = {
   },
   cancelClusterJob(id: string): Promise<{ ok: boolean; status: string }> {
     return request(`/cluster-jobs/${id}/cancel`, { method: "POST", body: "{}" });
+  },
+
+  agents(): Promise<{ items: AgentItem[]; total: number; online: number }> {
+    return request("/agents");
+  },
+  createAgentEnrollToken(input: {
+    nameHint?: string;
+    projectId?: number;
+    clusterId?: number;
+    ttlMinutes?: number;
+  }): Promise<{ id: string; token: string; expiresAt: string }> {
+    return request("/agents/enroll-tokens", { method: "POST", body: JSON.stringify(input) });
+  },
+  agentEnrollTokens(): Promise<{ items: AgentEnrollTokenItem[] }> {
+    return request("/agents/enroll-tokens");
+  },
+  deleteAgentEnrollToken(id: string): Promise<{ ok: boolean }> {
+    return request(`/agents/enroll-tokens/${id}`, { method: "DELETE" });
+  },
+  revokeAgent(id: string): Promise<{ ok: boolean }> {
+    return request(`/agents/${id}/revoke`, { method: "POST", body: "{}" });
+  },
+  createAgentCommand(id: string, action: "ping" | "collect"): Promise<{ ok: boolean; id: string }> {
+    return request(`/agents/${id}/commands`, { method: "POST", body: JSON.stringify({ action }) });
+  },
+  agentCommands(id: string): Promise<{ items: AgentCommandItem[] }> {
+    return request(`/agents/${id}/commands`);
   },
 
   linkClusterAssets(id: number, assetIds: number[]): Promise<{ ok: boolean; count: number }> {

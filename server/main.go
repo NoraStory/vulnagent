@@ -153,6 +153,19 @@ func (a *App) routes(mux *http.ServeMux) {
 	// Agent 上报使用 Bearer 令牌，与人类用户的会话相互独立
 	mux.HandleFunc("POST /api/v1/agent/report", a.handleAgentReport)
 
+	// 多 Agent 身份：一次性注册、心跳在线与双向命令通道
+	mux.HandleFunc("POST /api/v1/agents/enroll", a.handleAgentEnroll)
+	mux.HandleFunc("POST /api/v1/agents/heartbeat", a.handleAgentHeartbeat)
+	mux.HandleFunc("GET /api/v1/agents/commands", a.handleAgentCommandPoll)
+	mux.HandleFunc("POST /api/v1/agents/commands/{id}/result", a.handleAgentCommandResult)
+	mux.HandleFunc("GET /api/v1/agents", a.handleAgents)
+	mux.HandleFunc("GET /api/v1/agents/enroll-tokens", a.handleAgentEnrollTokens)
+	mux.HandleFunc("POST /api/v1/agents/enroll-tokens", a.handleAgentEnrollTokenCreate)
+	mux.HandleFunc("DELETE /api/v1/agents/enroll-tokens/{id}", a.handleAgentEnrollTokenDelete)
+	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", a.handleAgentRevoke)
+	mux.HandleFunc("GET /api/v1/agents/{id}/commands", a.handleAgentCommands)
+	mux.HandleFunc("POST /api/v1/agents/{id}/commands", a.handleAgentCommandCreate)
+
 	mux.HandleFunc("GET /api/v1/overview", a.handleOverview)
 
 	// 项目与集群：分布式后端/数据库/扫描目标的统一运维视图
@@ -475,7 +488,9 @@ func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Agent 作业轮询与健康检查频率高，跳过访问日志避免刷屏
 		if r.Method == http.MethodGet &&
-			(strings.HasPrefix(r.URL.Path, "/api/v1/agent/jobs") || r.URL.Path == "/api/v1/healthz") {
+			(strings.HasPrefix(r.URL.Path, "/api/v1/agent/jobs") ||
+				r.URL.Path == "/api/v1/healthz" ||
+				r.URL.Path == "/api/v1/agents/commands") {
 			next.ServeHTTP(w, r)
 			return
 		}

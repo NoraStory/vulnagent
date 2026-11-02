@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -60,33 +59,15 @@ func ensureAgentToken(db *sql.DB, dataDir string) (string, error) {
 }
 
 func (a *App) agentAuthorized(r *http.Request) bool {
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
-		return false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-	if token == "" {
-		return false
-	}
-	sum := sha256.Sum256([]byte(token))
-	sumHex := hex.EncodeToString(sum[:])
-
-	stored, err := a.identityRepo().ListTokenHashes(r.Context())
-	if err != nil {
-		return false
-	}
-	for _, hash := range stored {
-		if subtle.ConstantTimeCompare([]byte(hash), []byte(sumHex)) == 1 {
-			return true
-		}
-	}
-	return false
+	_, ok := a.authenticateAgent(r)
+	return ok
 }
 
 // handleAgentReport 接收 Agent 上报的 SBOM，落库后立即匹配。
 func (a *App) handleAgentReport(w http.ResponseWriter, r *http.Request) {
-	if !a.agentAuthorized(r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 令牌无效")
+	principal, ok := a.authenticateAgent(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 身份无效")
 		return
 	}
 
@@ -121,6 +102,15 @@ func (a *App) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db_error", "写入资产失败")
 		return
 	}
+	if !principal.Legacy {
+		if principal.Agent.ClusterID > 0 && outcome.AssetID > 0 {
+			_, _ = a.db.ExecContext(r.Context(), `UPDATE assets SET cluster_id = ? WHERE id = ?`,
+				principal.Agent.ClusterID, outcome.AssetID)
+		}
+		a.touchAgent(r.Context(), principal.Agent.ID, clientIP(r))
+		_, _ = a.db.ExecContext(r.Context(), `UPDATE agents SET hostname=?, os=?, os_version=? WHERE id=?`,
+			hostname, payload.OS, payload.OSVersion, principal.Agent.ID)
+	}
 	// 遥测写入失败不影响清单入库与漏洞匹配，只记录告警
 	if payload.Telemetry != nil {
 		if err := a.telemetryRepo().Save(r.Context(), outcome.AssetID, toPortsTelemetry(*payload.Telemetry)); err != nil {
@@ -128,7 +118,11 @@ func (a *App) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	a.auditAs("Agent "+hostname, "agent", clientIP(r), r.UserAgent(), "agent.report",
+	actor := "Agent " + hostname
+	if !principal.Legacy && principal.Agent.Name != "" {
+		actor = "Agent " + principal.Agent.Name
+	}
+	a.auditAs(actor, "agent", clientIP(r), r.UserAgent(), "agent.report",
 		fmt.Sprintf("%s · %d 个组件", hostname, outcome.Components),
 		fmt.Sprintf("新增 %d 条漏洞，更新 %d 条，验证 %d 条，关闭 %d 条，重新打开 %d 条",
 			outcome.Created, outcome.Updated, outcome.Verified, outcome.Closed, outcome.Reopened))
