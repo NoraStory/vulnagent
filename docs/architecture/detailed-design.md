@@ -112,7 +112,7 @@
 
 #### 4.1.3 SSH 兜底采集
 
-- 由**控制面**发起（Agent 侧无 SSH 能力），支持口令或私钥认证，凭据只用于本次连接，不落库、不写日志。
+- 由**控制面**发起（Agent 侧无 SSH 能力），支持口令或私钥认证；默认凭据只用于本次连接、不落库、不写日志。控制台勾选「保存为 SSH 主机」时，采集成功后通过 `POST /assets/{id}/ssh-host` 使用 AES-256-GCM 加密沉淀，终端、集群节点与后续扫描复用同一份凭据。
 - 远程执行只读脚本：优先 `dpkg-query`，其次 `rpm -qa`，最后解析 `/lib/apk/db/installed`，输出 `生态→名称→版本→架构` 的 TSV。
 - 主机指纹：留空时接受并回报 `SHA256:...`（TOFU），填入后指纹不匹配立即拒绝，防止中间人。
 - 结果进入与 Agent 完全相同的 `ingestComponents` 管道（资产 upsert → 组件替换 → 区间匹配 → 状态收敛），资产来源标记为 `ssh`。
@@ -1492,9 +1492,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.4 -t vulnagent:0.7.4 .
+docker build --build-arg VERSION=0.7.5 -t vulnagent:0.7.5 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.4
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.5
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```

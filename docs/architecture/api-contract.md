@@ -514,10 +514,52 @@ Webhook 请求体：
 - `processes` 为按工作集内存（Windows WorkingSet64 / Linux VmRSS）排序的 Top10，用于定位内存占用最高的进程。
 - Windows 的 `load1/5/15` 无对应语义，统一返回 0；网卡 `speedMbps` 已从 bit/s 换算并对异常值归零。
 
+### GET /assets/{id}/ssh-host（viewer+）
+
+返回资产已关联的 SSH 主机，按资产 IP 优先、其次主机名匹配 `ssh_hosts.host`；未关联返回 `404 not_found`。
+
+```json
+{
+  "host": { "id": 12, "name": "web-01", "host": "10.20.1.11", "port": 22, "username": "root", "hasSecret": true },
+  "matchedBy": "10.20.1.11"
+}
+```
+
+- 用于资产详情「打开终端」与资产列表终端入口，前端无需加载全部 SSH 主机。
+- 仅返回脱敏字段，口令/私钥不回显。
+
+### POST /assets/{id}/ssh-host（operator+）
+
+从资产创建或更新 SSH 凭据，重复调用不会产生重复主机；同一资产已有主机时直接复用并更新凭据。
+
+```json
+{
+  "name": "web-01",
+  "username": "root",
+  "port": 22,
+  "authType": "password",
+  "password": "******"
+}
+```
+
+200（复用已有主机）或 201（新建）：
+
+```json
+{
+  "host": { "id": 12, "name": "web-01", "host": "10.20.1.11", "port": 22, "username": "root", "hasSecret": true },
+  "created": true,
+  "matchedBy": "10.20.1.11"
+}
+```
+
+- 目标地址取资产 IP，缺失时回退主机名；凭据使用 AES-256-GCM 加密存储，写 `ssh.host.link` 审计。
+- 终端、集群节点与本接口共用同一份 `ssh_hosts` 凭据，避免重复录入。
+- 错误：`400 bad_request`（缺少地址/用户名/口令）、`404 not_found`（资产不存在）、`409 host_exists`（端口与账号冲突）。
+
 ### POST /assets/ssh-scan（operator+）
 
 无 Agent 兜底采集：控制面 SSH 直连目标机执行只读脚本，结果走与 Agent 相同的入库/匹配/收敛流程。
-凭据仅用于本次连接，不写入数据库与日志。
+默认仅用于本次连接；控制台可勾选「保存为 SSH 主机」，采集成功后调用 `POST /assets/{id}/ssh-host` 加密沉淀凭据。
 
 ```json
 {
@@ -877,7 +919,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.4-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.5-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -978,7 +1020,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.4-dev", "demo": true }
+{ "ok": true, "version": "0.7.5-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1146,7 +1188,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.4-dev",
+  "version": "0.7.5-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
