@@ -42,6 +42,7 @@ import type {
   User,
   SshHost,
   SshHostInput,
+  SshHostMetrics,
   SshHostScanResult,
   SshHostTestResult,
   SshSessionItem,
@@ -910,6 +911,10 @@ export const api = {
 
   sshScanHost(id: number): Promise<SshHostScanResult> {
     return request(`/ssh/hosts/${id}/scan`, { method: "POST", body: "{}" });
+  },
+
+  sshHostMetrics(id: number): Promise<SshHostMetrics> {
+    return request(`/ssh/hosts/${id}/metrics`);
   },
 
   sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {

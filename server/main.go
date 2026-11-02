@@ -154,6 +154,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/ssh/hosts/{id}", a.handleSSHHostDelete)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/test", a.handleSSHHostTest)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/scan", a.handleSSHHostScan)
+	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/metrics", a.handleSSHHostMetrics)
 	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
 	mux.HandleFunc("GET /api/v1/ssh/sessions/{id}/recording", a.handleSSHRecording)
 	mux.HandleFunc("POST /api/v1/ssh/sessions/{id}/share", a.handleSSHShareCreate)

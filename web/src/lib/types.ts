@@ -766,6 +766,47 @@ export interface SshHost {
   hasSecret: boolean;
 }
 
+export interface SshDiskUsage {
+  mount: string;
+  totalKb: number;
+  usedKb: number;
+  availKb: number;
+  percent: number;
+}
+
+export interface SshProcessUsage {
+  pid: number;
+  command: string;
+  cpuPercent: number;
+  memPercent: number;
+}
+
+export interface SshHostMetrics {
+  hostId: number;
+  hostName: string;
+  hostAddr: string;
+  sampledAt: string;
+  elapsedMs: number;
+  cpuPercent: number;
+  cpuCores: number;
+  memTotalKb: number;
+  memUsedKb: number;
+  memAvailableKb: number;
+  memPercent: number;
+  swapTotalKb: number;
+  swapUsedKb: number;
+  swapPercent: number;
+  load1: number;
+  load5: number;
+  load15: number;
+  uptimeSeconds: number;
+  processes: number;
+  netRxBps: number;
+  netTxBps: number;
+  disks: SshDiskUsage[];
+  top: SshProcessUsage[];
+}
+
 export interface SshHostInput {
   name?: string;
   host?: string;

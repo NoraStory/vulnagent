@@ -1682,3 +1682,29 @@ Agent 的 `status` 事件新增：
 - 凭据不可用：`400 credential_error`；主机不存在：`404 not_found`。
 - SSH 连接或采集失败：`502 ssh_scan_failed`；未采集到软件包：`422 no_components`。
 - 首次扫描若主机未记录指纹，会回写 TOFU 指纹；写审计 `scan.ssh`（成功/失败均记录）。
+
+### 12.7 SSH 主机性能采样
+
+#### GET /ssh/hosts/{id}/metrics（viewer+）
+
+只读采集一次主机性能，不写审计、不修改目标机。连接使用已保存的加密凭据与 TOFU 指纹，单次 15 秒总超时。
+
+200：
+
+```json
+{
+  "hostId": 7, "hostName": "web-01", "hostAddr": "10.0.0.1:22",
+  "sampledAt": "2026-11-02T16:20:31+08:00", "elapsedMs": 820,
+  "cpuPercent": 12.3, "cpuCores": 4,
+  "memTotalKb": 16000000, "memUsedKb": 8000000, "memAvailableKb": 8000000, "memPercent": 50,
+  "swapTotalKb": 2000000, "swapUsedKb": 500000, "swapPercent": 25,
+  "load1": 0.52, "load5": 0.40, "load15": 0.35,
+  "uptimeSeconds": 123456, "processes": 123,
+  "netRxBps": 20480, "netTxBps": 8192,
+  "disks": [{ "mount": "/", "totalKb": 100000000, "usedKb": 42000000, "availKb": 58000000, "percent": 42 }],
+  "top": [{ "pid": 1234, "command": "nginx", "cpuPercent": 12.3, "memPercent": 4.5 }]
+}
+```
+
+- 主机不存在：`404 not_found`；SSH 连接失败：`502 ssh_failed`；采集/解析失败：`502 metrics_failed`。
+- CPU 与网络速率来自两次快照（间隔 0.6s）的差值；磁盘与进程为单次快照。

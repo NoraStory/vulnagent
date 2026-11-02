@@ -8,11 +8,13 @@ import {
   useState
 } from "react";
 import type { CSSProperties } from "react";
+import { useNavigate } from "react-router-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
+  Activity,
   ArrowRight,
   BookOpen,
   Bot,
@@ -461,6 +463,7 @@ function computePanelLimits(
 
 export function TerminalPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [sessions, setSessions] = useState<SshSessionItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1510,6 +1513,18 @@ export function TerminalPage() {
             onClick={() => setHostsCollapsed((value) => !value)}
           >
             {hostsCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary h-8 px-2.5 text-[12px]"
+            onClick={() => {
+              if (activeTab) navigate(`/terminal/monitor/${activeTab.host.id}`);
+            }}
+            disabled={!activeTab}
+            title="实时查看 CPU、内存、负载、磁盘与网络"
+          >
+            <Activity size={13} />
+            性能监控
           </button>
           <button
             type="button"

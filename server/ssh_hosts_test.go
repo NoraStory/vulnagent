@@ -178,6 +178,13 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 					output := "ok\n"
 					exit := uint32(0)
 					switch {
+					case strings.Contains(payload.Command, "cpu_snap"):
+						output = "CPU|100|900|200|1000\n" +
+							"NET|1000|500|1120|620\n" +
+							"MEM|MemTotal|16000000\nMEM|MemAvailable|8000000\nMEM|SwapTotal|2000000\nMEM|SwapFree|1500000\n" +
+							"LOAD|0.52|0.40|0.35\nUPTIME|123456\nCPUS|4\nPROCS|123\n" +
+							"DISK|/|100000000|42000000|58000000|42%\n" +
+							"TOP|1234|12.3|4.5|nginx\n"
 					case strings.Contains(payload.Command, "dpkg-query"):
 						output = "#os\tubuntu\t22.04\ndeb\topenssl\t3.0.2-0ubuntu1.10\tamd64\ndeb\tbash\t5.1-6ubuntu1\tamd64\n"
 					case strings.HasPrefix(payload.Command, "echo "):
