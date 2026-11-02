@@ -1473,7 +1473,9 @@ export function TerminalPage() {
             <Check size={12} className="text-ok" />
             执行完成
           </div>
-          <p className="mt-1 text-[10.5px] leading-[17px] text-ink2">{agentState.summary || "目标已完成"}</p>
+          <div className="mt-1 text-[10.5px] leading-[17px] text-ink2">
+            <Markdown content={agentState.summary || "目标已完成"} />
+          </div>
         </div>
       )}
       {agentState?.status === "error" && (

@@ -62,7 +62,9 @@ const sshAgentSystemPrompt = `你是 VulnAgent 的 SSH 智能体，直接操作�
 2. 命令必须单行、非交互、可自动结束；禁止 vim、top、less、交互式登录等命令。
 3. 命令必须包含必要的非交互参数，例如 apt-get -y、systemctl --no-pager。
 4. 删除、覆盖、重启、停止服务、批量变更等危险操作会被人工确认，不要试图绕过。
-5. 输出不足以判断时继续执行下一条命令；目标完成时返回 {"thought":"...","command":"","done":true,"summary":"结论"}。
+5. 输出不足以判断时继续执行下一条命令；目标完成时返回 {"thought":"结论已生成","command":"","done":true,"summary":"<最终结论>"}。
+   summary 必须使用中文 Markdown，字段内用 \n 换行，严格按以下结构，总长不超过 300 字；不要粘贴命令原文、日志或退出码：
+   **结论**\n<一句话，不超过 50 字>\n\n**关键发现**\n- <最多 3 条，每条一行，不超过 40 字>\n\n**建议**\n- <最多 3 条，每条一行，可执行；没有则写“无”>
 6. 不要输出密码、密钥、令牌；不要执行与目标无关的操作。
 7. 最多执行有限步数，优先用最少命令完成任务。
 8. 不熟悉的命令或参数必须先在目标机验证（command -v、--help），禁止臆造参数；若提供了命令参考资料，优先采用其中的写法。`
@@ -275,7 +277,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		formatFailures, modelFailures = 0, 0
 		if decision.Done {
 			status = "completed"
-			summary = strings.TrimSpace(decision.Summary)
+			summary = normalizeAgentSummary(strings.TrimSpace(decision.Summary))
 			if summary == "" {
 				summary = "目标已完成"
 			}
@@ -398,7 +400,41 @@ func formatPreviousAgentRuns(runs []sshAgentRunBrief) string {
 	return truncateRunes(builder.String(), 2000)
 }
 
+// agentSummaryRuneLimit 最终总结的硬上限，避免模型长篇输出撑爆面板
+const agentSummaryRuneLimit = 600
+
+var (
+	summaryHeadingPattern = regexp.MustCompile(`\n(\*\*(?:结论|关键发现|建议|风险|后续)\*\*)`)
+	summaryBlankPattern   = regexp.MustCompile(`\n{3,}`)
+)
+
+// normalizeAgentSummary 统一最终总结的 Markdown 结构并限制长度：
+//   - 去掉误输出的代码围栏
+//   - 小标题前补空行，避免 Markdown 把多段折叠成一大段
+//   - 连续空行归一为一段间隔
+//   - 超过硬上限时按行边界截断并加省略号
+func normalizeAgentSummary(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	text = strings.ReplaceAll(text, "```", "")
+	text = summaryHeadingPattern.ReplaceAllString(text, "\n\n$1")
+	text = summaryBlankPattern.ReplaceAllString(text, "\n\n")
+	text = strings.TrimSpace(text)
+	runes := []rune(text)
+	if len(runes) > agentSummaryRuneLimit {
+		cut := string(runes[:agentSummaryRuneLimit])
+		if index := strings.LastIndex(cut, "\n"); index > agentSummaryRuneLimit/2 {
+			cut = cut[:index]
+		}
+		text = strings.TrimSpace(cut) + "…"
+	}
+	return text
+}
+
 // summarizeSSHAgent 在达到步数上限时，基于已有观察生成收尾结论
+
 func (a *App) summarizeSSHAgent(ctx context.Context, host sshHost, goal string, history []sshAgentStep) string {
 	if len(history) == 0 {
 		return ""
@@ -418,17 +454,18 @@ func (a *App) summarizeSSHAgent(ctx context.Context, host sshHost, goal string, 
 	for _, step := range history[start:] {
 		user.WriteString(fmt.Sprintf("- 命令：%s\n  输出：%s\n", step.Command, truncateRunes(step.Output, 1200)))
 	}
-	user.WriteString("\n请基于以上观察给出最终结论与建议（中文，300 字以内），不要再要求执行命令。")
+	user.WriteString("\n请基于以上观察给出最终结论。严格按以下中文 Markdown 结构输出，总长不超过 300 字，不要再要求执行命令，也不要粘贴命令原文、日志或退出码：\n")
+	user.WriteString("**结论**\n<一句话，不超过 50 字>\n\n**关键发现**\n- <最多 3 条，每条一行，不超过 40 字>\n\n**建议**\n- <最多 3 条，每条一行，可执行；没有则写“无”>")
 
 	resp, err := a.harness.LLM.Chat(ctx, ports.LLMRequest{Messages: []ports.LLMMessage{
-		{Role: "system", Content: "你是资深 SRE，请根据已收集的主机信息给出简洁、可执行的结论。"},
+		{Role: "system", Content: "你是资深 SRE。只输出最终结论，使用中文 Markdown，严格按 结论 / 关键发现 / 建议 三段组织，全篇不超过 300 字。"},
 		{Role: "user", Content: user.String()},
 	}})
 	if err != nil {
 		slog.Warn("SSH Agent 收尾总结失败", "host", host.Name, "err", err)
 		return ""
 	}
-	return strings.TrimSpace(resp.Content)
+	return normalizeAgentSummary(strings.TrimSpace(resp.Content))
 }
 func sshRiskReason(risk string) string {
 	switch risk {
