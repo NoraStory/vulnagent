@@ -19,7 +19,7 @@
 | `v0.7.2` | 2026-11-02 | 硬件加速服务并发采样与 GPU 实时运行态 | `bd17b5b` | [bd17b5b](https://github.com/NoraStory/vulnagent/commit/bd17b5b) |
 | `v0.7.3` | 2026-11-02 | 集群检查提示、节点凭据、终端联动与 Agent 集群优先 | `fe3e01f` | [fe3e01f](https://github.com/NoraStory/vulnagent/commit/fe3e01f) |
 | `v0.7.4` | 2026-11-02 | 强制 SSH 检查配置凭据并提示修复路径 | `11d021e` | [11d021e](https://github.com/NoraStory/vulnagent/commit/11d021e) |
-| `v0.7.5` | 2026-11-02 | 资产与 SSH 终端凭据复用 | `c35233d` | [c35233d](https://github.com/NoraStory/vulnagent/commit/c35233d) |
+| `v0.7.5` | 2026-11-02 | 资产与 SSH 终端凭据复用 | `c35233d..2574d46` | [2574d46](https://github.com/NoraStory/vulnagent/commit/2574d46) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > `v0.7.5` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -48,7 +48,8 @@
 - `npm run build` 通过。
 
 ### 主要提交
-`c35233d feat(asset): 打通资产与 SSH 终端凭据复用`
+- `c35233d feat(asset): 打通资产与 SSH 终端凭据复用`
+- `2574d46 fix(asset): 等待 SSH 主机查询完成后再自动打开终端`
 
 ---
 
