@@ -919,7 +919,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.6-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.7-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -1020,7 +1020,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.6-dev", "demo": true }
+{ "ok": true, "version": "0.7.7-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1188,7 +1188,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.6-dev",
+  "version": "0.7.7-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1393,7 +1393,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 { "hostId": 1, "question": "解释最近输出",
-  "context": "$ df -h\nFilesystem …", "sessionId": "9f2c…" }
+  "context": "$ df -h\nFilesystem …", "sessionId": "9f2c…", "skillId": "" }
 ```
 
 ```json
@@ -1406,13 +1406,15 @@ vulnagent_selfcheck_failed 0
 - 主机开启 GPU 加速且服务端已配置 GPU 端点时，请求走 GPU 端点，响应 `accelerated=true`，`model` 为 GPU 端点模型。
 - 模型未配置返回 `503 llm_unavailable`；调用失败返回 `502 llm_failed`。
 - 返回命令只是建议，前端默认仅插入终端，执行前需要人工二次确认。
+- `skillId` 可选；填写后服务端读取该技能的 `SKILL.md` 与 `guides/workflow.md`、`guides/capability-index.md`、`guides/scenario-routing.md`（存在时）并注入系统提示，未知技能返回 `400 bad_request`。
+- 终端助手无法直接读取技能子文件；注入时明确要求模型不得假装已读取未提供的文档，也不得把控制面路径当作目标机路径。
 
 ### POST /ssh/agent/run（SSE，operator+）
 
 请求：
 
 ```json
-{ "hostId": 1, "goal": "检查磁盘使用率并找出占用最大的目录", "mode": "safe" }
+{ "hostId": 1, "goal": "检查磁盘使用率并找出占用最大的目录", "mode": "safe", "skillId": "" }
 ```
 
 `mode` 取值：
@@ -1427,15 +1429,16 @@ vulnagent_selfcheck_failed 0
 
 | type | data | 说明 |
 |---|---|---|
-| `status` | `{runId, mode, maxSteps, maxFailures, host}` | 运行开始；`maxSteps` 为 8，`maxFailures` 为 5 |
+| `status` | `{runId, mode, unlimited, maxFailures, skillId, host}` | 运行开始；`unlimited=true`，`maxFailures` 为 5 |
 | `step` | `{index, thought, command, risk, approval}` | 规划出的命令；`risk` 为 `normal/high/critical`，`approval` 为 `pending/not_required` |
 | `await_approval` | `{approvalId, index, command, risk, reason}` | 等待人工批准（5 分钟有效） |
 | `approval_result` | `{index, approved}` | 审批结果 |
 | `output` | `{index, output, exitCode}` | 命令输出（单步最多 16KB） |
-| `done` | `{runId, steps, summary, truncated}` | 结束；达到步数上限或连续失败熔断时 summary 为模型生成的收尾结论 |
+| `done` | `{runId, steps, summary, truncated}` | 结束；连续失败熔断时 summary 为模型生成的收尾结论 |
 | `error` | `{message}` | 运行失败 |
 
-- 每次运行最多 8 步；连续 5 条命令执行失败（退出码非 0 或执行错误）时提前停止并生成收尾结论，成功命令会重置连续失败计数。单条命令 90 秒超时；运行与每一步写入 `ssh_agent_runs` / `ssh_agent_steps`。
+- 不限制执行步数，直到模型返回 `done=true`、用户停止或触发失败熔断；连续 5 条命令执行失败（退出码非 0 或执行错误）时自动停止并生成收尾结论，成功命令会重置连续失败计数。单条命令 90 秒超时；运行与每一步写入 `ssh_agent_runs` / `ssh_agent_steps`。
+- `skillId` 可选；填写后按 `/ssh/assistant` 相同规则注入技能资料，并在 `ssh.agent.run` 审计中记录技能 ID。
 - 运行与当前浏览器 SSE 连接绑定，断开即终止；审计记录 `ssh.agent.run` / `ssh.agent.done`。
 
 ### POST /ssh/agent/approvals/{id}（operator+）
