@@ -313,6 +313,36 @@ func (r *SkillRegistry) Context(id string) (string, bool) {
 执行主机诊断时优先使用 host_diagnose / host_metrics / host_hardware；所有变更必须走审批，不得绕过。`, skill.ID, skill.ID, skill.DisplayName, skill.ID), true
 }
 
+// TerminalContext 构建终端助手与 SSH Agent 可用的技能上下文（入口文档 + 核心指引）。
+func (r *SkillRegistry) TerminalContext(id string, maxRunes int) (string, bool) {
+	skill, ok := r.Get(id)
+	if !ok {
+		return "", false
+	}
+	if maxRunes <= 0 {
+		maxRunes = 6000
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[技能] 用户通过 /%s 启用了「%s」。请严格遵循该技能的适用边界、安全约束与诊断流程。\n", skill.ID, skill.DisplayName)
+	b.WriteString("以下资料来自控制面技能包，终端助手无法直接读取未提供的子文件；不要假装已读取，也不要把控制面路径当作目标机路径。\n\n")
+	for _, rel := range []string{"SKILL.md", "guides/workflow.md", "guides/capability-index.md", "guides/scenario-routing.md"} {
+		content, truncated, found, err := r.ReadFile(skill.ID, rel, 64<<10)
+		if err != nil || !found || strings.TrimSpace(content) == "" {
+			continue
+		}
+		b.WriteString("===== " + rel + " =====\n")
+		b.WriteString(content)
+		if truncated {
+			b.WriteString("\n…（内容过长已截断）")
+		}
+		b.WriteString("\n\n")
+		if len([]rune(b.String())) >= maxRunes {
+			break
+		}
+	}
+	return truncateRunes(b.String(), maxRunes), true
+}
+
 // ReadFile 安全读取技能目录内的文本文件
 func (r *SkillRegistry) ReadFile(id, rel string, maxBytes int64) (string, bool, bool, error) {
 	skill, ok := r.Get(id)

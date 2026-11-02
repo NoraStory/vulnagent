@@ -22,6 +22,7 @@ type sshAIRequest struct {
 	Context   string             `json:"context"`
 	SessionID string             `json:"sessionId"`
 	Search    *bool              `json:"search"`
+	SkillID   string             `json:"skillId"`
 	History   []sshAIHistoryItem `json:"history"`
 }
 
@@ -68,6 +69,16 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	question = truncateRunes(question, 2000)
+	skillID := strings.TrimSpace(req.SkillID)
+	skillContext := ""
+	if skillID != "" {
+		contextText, found := a.skills.TerminalContext(skillID, 6000)
+		if !found {
+			writeErr(w, http.StatusBadRequest, "bad_request", "未知技能："+skillID)
+			return
+		}
+		skillContext = contextText
+	}
 
 	hostName := "未指定主机"
 	hostLine := ""
@@ -118,7 +129,11 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	user.WriteString(question)
 
 	historyMessages, compressed, savedTokens, historyItems := budgetedSSHAIHistory(req.History, 8)
-	messages := []ports.LLMMessage{{Role: "system", Content: sshAISystemPrompt}}
+	systemPrompt := sshAISystemPrompt
+	if skillContext != "" {
+		systemPrompt += "\n\n" + skillContext
+	}
+	messages := []ports.LLMMessage{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, historyMessages...)
 	messages = append(messages, ports.LLMMessage{Role: "user", Content: user.String()})
 	usedTokens := 0
@@ -134,8 +149,8 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	answer := strings.TrimSpace(resp.Content)
 	commands := extractShellCommands(answer)
 	a.audit(r, "ssh.ai.ask", hostName,
-		fmt.Sprintf("%s（会话 %s，命令 %d 条，参考 %d 条，历史 %d 条）",
-			truncateRunes(question, 120), req.SessionID, len(commands), len(references), len(req.History)))
+		fmt.Sprintf("%s（会话 %s，技能 %s，命令 %d 条，参考 %d 条，历史 %d 条）",
+			truncateRunes(question, 120), req.SessionID, firstNonEmpty(skillID, "无"), len(commands), len(references), len(req.History)))
 	writeJSON(w, http.StatusOK, sshAIResponse{
 		Answer:         answer,
 		Commands:       commands,

@@ -63,6 +63,7 @@ import { ResizeHandle } from "../components/ResizeHandle";
 import { Skeleton } from "../components/ui";
 import type {
   ContextUsage,
+  HarnessSkill,
   SshAgentEvent,
   SshAgentMode,
   SshAssistantReply,
@@ -500,6 +501,10 @@ export function TerminalPage() {
   const [broadcastAll, setBroadcastAll] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [aiSearch, setAiSearch] = useState(true);
+  const [skills, setSkills] = useState<HarnessSkill[]>([]);
+  const [activeSkillId, setActiveSkillId] = useState("");
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
   const [qaAutoRun, setQaAutoRun] = useState(() => {
     try {
       return localStorage.getItem("va.ssh.qaAutoRun") === "1";
@@ -538,9 +543,22 @@ export function TerminalPage() {
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
   const agentScrollRef = useRef<HTMLDivElement | null>(null);
   const agentAbort = useRef(new Map<string, AbortController>());
+  const aiInputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null;
   const activeAi = activeTab ? aiByTab[activeTab.key] ?? [] : [];
   const agentState = activeTab ? agentByTab[activeTab.key] : undefined;
+  const activeSkill = skills.find((skill) => skill.id === activeSkillId);
+  const slashQuery = aiInput.startsWith("/") && !aiInput.includes(" ") ? aiInput.slice(1).toLowerCase() : "";
+  const slashMatches = slashOpen
+    ? skills
+        .filter((skill) => `${skill.id} ${skill.displayName}`.toLowerCase().includes(slashQuery))
+        .sort(
+          (a, b) =>
+            Number(b.id.toLowerCase().startsWith(slashQuery)) -
+            Number(a.id.toLowerCase().startsWith(slashQuery))
+        )
+        .slice(0, 8)
+    : [];
 
   const loadHosts = useCallback(async () => {
     try {
@@ -566,6 +584,10 @@ export function TerminalPage() {
   useEffect(() => {
     void loadHosts();
     void loadSessions();
+    api
+      .harnessSkills()
+      .then((result) => setSkills(result.skills ?? []))
+      .catch(() => undefined);
   }, [loadHosts, loadSessions]);
 
   // 支持从集群节点跳转：/terminal?hostId=3 自动打开对应主机
@@ -706,10 +728,36 @@ export function TerminalPage() {
     setAiByTab((prev) => ({ ...prev, [key]: [...(prev[key] ?? []), message] }));
   }
 
+  function parseSkillInput(raw: string, fallbackSkillId = "") {
+    let text = raw.trim();
+    let skillId = fallbackSkillId;
+    if (text.startsWith("/")) {
+      const [head, ...rest] = text.split(/\s+/);
+      const id = head.slice(1);
+      if (skills.some((skill) => skill.id === id)) {
+        skillId = id;
+        text = rest.join(" ").trim();
+      }
+    }
+    return { text, skillId };
+  }
+
+  function selectSkill(skill: HarnessSkill) {
+    setActiveSkillId(skill.id);
+    setAiInput("");
+    setSlashOpen(false);
+    setSlashIndex(0);
+    requestAnimationFrame(() => aiInputRef.current?.focus());
+  }
+
   async function ask(question: string) {
     if (!activeTab || aiBusy) return;
-    const text = question.trim();
+    const parsed = parseSkillInput(question, activeSkillId);
+    const skillId = parsed.skillId;
+    const text = parsed.text || (skillId ? "请按技能指引开始：先说明你能做的诊断项，然后等待我描述具体问题。" : "");
     if (!text) return;
+    if (skillId !== activeSkillId) setActiveSkillId(skillId);
+    setSlashOpen(false);
     const key = activeTab.key;
     if (qaAutoRun) {
       if (agentState?.status === "running") {
@@ -729,7 +777,7 @@ export function TerminalPage() {
         .join("\n\n");
       pushAi(key, { id: `u-${Date.now()}`, role: "user", content: text });
       setAiInput("");
-      await runAgent(goal, agentMode, "qa");
+      await runAgent(goal, agentMode, "qa", skillId);
       return;
     }
     const pane = paneRefs.current.get(key);
@@ -747,6 +795,7 @@ export function TerminalPage() {
         context: pane?.recent() ?? "",
         sessionId: activeTab.sessionId,
         search: aiSearch,
+        skillId: skillId || undefined,
         history
       });
       pushAi(key, {
@@ -812,10 +861,12 @@ export function TerminalPage() {
   }
 
   async function startAgent() {
-    await runAgent(agentGoal.trim(), agentMode);
+    const parsed = parseSkillInput(agentGoal);
+    const goal = parsed.text || (parsed.skillId ? "请按技能指引开始：先说明你能做的诊断项，然后等待我描述具体问题。" : "");
+    await runAgent(goal, agentMode, "agent", parsed.skillId);
   }
 
-  async function runAgent(goal: string, mode: SshAgentMode, source: "agent" | "qa" = "agent") {
+  async function runAgent(goal: string, mode: SshAgentMode, source: "agent" | "qa" = "agent", skillId = "") {
     if (!activeTab || agentState?.status === "running") return;
     if (!goal) return;
     const key = activeTab.key;
@@ -924,7 +975,7 @@ export function TerminalPage() {
     };
 
     try {
-      await api.sshAgentRun(activeTab.host.id, goal, mode, aiSearch, handle, controller.signal);
+      await api.sshAgentRun(activeTab.host.id, goal, mode, aiSearch, handle, controller.signal, skillId || undefined);
       void loadSessions();
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -1216,13 +1267,79 @@ export function TerminalPage() {
         )}
       </div>
 
-      <div className="border-t border-line px-3 py-2.5">
+      <div className="relative border-t border-line px-3 py-2.5">
+        {slashOpen && slashMatches.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 z-20 mb-1 max-h-[220px] overflow-y-auto rounded-[10px] border border-line bg-surface p-1 shadow-float">
+            {slashMatches.map((skill, index) => (
+              <button
+                key={skill.id}
+                type="button"
+                onMouseEnter={() => setSlashIndex(index)}
+                onClick={() => selectSkill(skill)}
+                className={`flex w-full items-start gap-2 rounded-[8px] px-2 py-1.5 text-left ${
+                  index === slashIndex ? "bg-brand-soft" : "hover:bg-subtle"
+                }`}
+              >
+                <span className="mono shrink-0 text-[11px] text-brand-strong">/{skill.id}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[11px] text-ink">{skill.displayName}</span>
+                  <span className="line-clamp-1 block text-[9.5px] text-ink3">{skill.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {activeSkill && (
+          <div className="mb-1.5 flex items-center gap-1.5 rounded-[8px] bg-brand-soft px-2 py-1 text-[10px]">
+            <span className="mono text-brand-strong">/{activeSkill.id}</span>
+            <span className="min-w-0 flex-1 truncate text-ink2">{activeSkill.displayName}</span>
+            <button
+              type="button"
+              onClick={() => setActiveSkillId("")}
+              className="rounded p-0.5 text-ink3 hover:bg-white/40 hover:text-ink"
+              aria-label="取消技能"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
+            ref={aiInputRef}
             value={aiInput}
-            onChange={(event) => setAiInput(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setAiInput(value);
+              if (value.startsWith("/") && !value.includes(" ")) {
+                setSlashOpen(true);
+                setSlashIndex(0);
+              } else {
+                setSlashOpen(false);
+              }
+            }}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (slashOpen && slashMatches.length > 0) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSlashIndex((index) => (index + 1) % slashMatches.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length);
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  selectSkill(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  setSlashOpen(false);
+                  return;
+                }
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void ask(aiInput);
@@ -1230,14 +1347,18 @@ export function TerminalPage() {
             }}
             rows={2}
             disabled={!activeTab || aiBusy || agentState?.status === "running"}
-            placeholder={activeTab ? "描述问题，Enter 发送，Shift + Enter 换行" : "连接主机后可提问"}
+            placeholder={
+              activeTab ? "描述问题，输入 / 调用技能，Enter 发送，Shift + Enter 换行" : "连接主机后可提问"
+            }
             className="input min-h-[38px] flex-1 resize-none py-2 text-[12px] leading-[18px]"
           />
           <button
             type="button"
             className="btn btn-primary h-[38px] w-[38px] shrink-0 px-0"
             onClick={() => void ask(aiInput)}
-            disabled={!activeTab || aiBusy || agentState?.status === "running" || !aiInput.trim()}
+            disabled={
+              !activeTab || aiBusy || agentState?.status === "running" || (!aiInput.trim() && !activeSkillId)
+            }
             aria-label="发送"
           >
             {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
@@ -1275,7 +1396,7 @@ export function TerminalPage() {
               <option value="auto">全自动执行</option>
             </select>
           )}
-          <span>多轮上下文；自动执行最多 8 步，连续 5 条命令失败自动停止；命令与输出写入审计。</span>
+          <span>多轮上下文；输入 / 调用技能；自动执行不限步数，连续 5 条命令失败自动停止；命令与输出写入审计。</span>
         </div>
         {activeTab && aiContextByTab[activeTab.key] && (
           <ContextMeter usage={aiContextByTab[activeTab.key]} className="mt-1.5" compact />
@@ -1294,7 +1415,7 @@ export function TerminalPage() {
               value={agentGoal}
               onChange={(event) => setAgentGoal(event.target.value)}
               disabled={!activeTab || agentState?.status === "running"}
-              placeholder="例如：检查磁盘使用率并找出占用最大的目录"
+              placeholder="例如：/tencentos-expert 排查磁盘告警，或直接描述目标"
               className="input min-h-[52px] resize-none py-2 text-[11.5px] leading-[17px]"
             />
             <div className="flex flex-wrap items-center gap-2">
@@ -1340,7 +1461,7 @@ export function TerminalPage() {
                 />
                 联网检索命令参考
               </label>
-              <span>运行前按目标检索命令示例，失败自动回退</span>
+              <span>运行前按目标检索命令示例，失败自动回退；输入 /技能 调用技能，连续 5 条命令失败自动停止</span>
             </div>
             {agentMode === "auto" && (
               <p className="rounded-[6px] bg-dangerSoft px-2 py-1 text-[9.5px] leading-[14px] text-danger">

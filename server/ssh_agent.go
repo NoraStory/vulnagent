@@ -23,10 +23,11 @@ import (
 // ---------- 数据结构 ----------
 
 type sshAgentRequest struct {
-	HostID int64  `json:"hostId"`
-	Goal   string `json:"goal"`
-	Mode   string `json:"mode"` // confirm | safe | auto
-	Search *bool  `json:"search"`
+	HostID  int64  `json:"hostId"`
+	Goal    string `json:"goal"`
+	Mode    string `json:"mode"` // confirm | safe | auto
+	Search  *bool  `json:"search"`
+	SkillID string `json:"skillId"`
 }
 
 type sshAgentDecision struct {
@@ -47,7 +48,6 @@ type sshAgentStep struct {
 }
 
 const (
-	sshAgentMaxSteps    = 8
 	sshAgentMaxFailures = 5
 	sshAgentTimeout     = 90 * time.Second
 	sshAgentOutputCap   = 16 << 10
@@ -67,7 +67,7 @@ const sshAgentSystemPrompt = `你是 VulnAgent 的 SSH 智能体，直接操作�
    summary 必须使用中文 Markdown，字段内用 \n 换行，严格按以下结构，总长不超过 300 字；不要粘贴命令原文、日志或退出码：
    **结论**\n<一句话，不超过 50 字>\n\n**关键发现**\n- <最多 3 条，每条一行，不超过 40 字>\n\n**建议**\n- <最多 3 条，每条一行，可执行；没有则写“无”>
 6. 不要输出密码、密钥、令牌；不要执行与目标无关的操作。
-7. 最多执行有限步数，优先用最少命令完成任务。
+7. 步数不限，但优先用最少命令完成任务；连续命令失败会被自动停止。目标完成时必须返回 done=true。
 8. 不熟悉的命令或参数必须先在目标机验证（command -v、--help），禁止臆造参数；若提供了命令参考资料，优先采用其中的写法。`
 
 var (
@@ -135,6 +135,16 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	goal = truncateRunes(goal, 1000)
+	skillID := strings.TrimSpace(req.SkillID)
+	skillContext := ""
+	if skillID != "" {
+		contextText, found := a.skills.TerminalContext(skillID, 6000)
+		if !found {
+			writeErr(w, http.StatusBadRequest, "bad_request", "未知技能："+skillID)
+			return
+		}
+		skillContext = contextText
+	}
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
 	if mode != "confirm" && mode != "safe" && mode != "auto" {
 		mode = "safe"
@@ -197,11 +207,11 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	a.audit(r, "ssh.agent.run", host.Name,
-		fmt.Sprintf("%s（参考 %d 条）", truncateRunes(goal, 100), len(references)))
-	slog.Info("SSH Agent 启动", "run", runID, "host", host.Name, "mode", mode, "goal", truncateRunes(goal, 80))
+		fmt.Sprintf("%s（技能 %s，参考 %d 条）", truncateRunes(goal, 100), firstNonEmpty(skillID, "无"), len(references)))
+	slog.Info("SSH Agent 启动", "run", runID, "host", host.Name, "mode", mode, "skill", skillID, "goal", truncateRunes(goal, 80))
 	stream.emit(harnessapp.Event{Type: "status", Data: map[string]any{
-		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "maxFailures": sshAgentMaxFailures,
-		"host":       host.Name,
+		"runId": runID, "mode": mode, "unlimited": true, "maxFailures": sshAgentMaxFailures,
+		"host": host.Name, "skillId": skillID,
 		"references": referenceMeta(references), "referenceError": refErr, "search": searchEnabled,
 		"contextRuns": len(previousRuns), "accelerated": accelerated, "model": llm.Model(),
 	}})
@@ -221,7 +231,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	history := make([]sshAgentStep, 0, sshAgentMaxSteps)
+	history := make([]sshAgentStep, 0, 16)
 	gracefulSummary := func(reason string) string {
 		if text := a.summarizeSSHAgent(ctx, llm, host, goal, history); text != "" {
 			return text
@@ -233,19 +243,19 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	formatFailures, modelFailures := 0, 0
 	consecutiveFailures := 0
-	for index := 0; index < sshAgentMaxSteps; index++ {
+	for index := 0; ; index++ {
 		if ctx.Err() != nil {
 			errText = "请求已取消"
 			return
 		}
-		remaining := sshAgentMaxSteps - index
+		remaining := 0
 		var (
 			decision sshAgentDecision
 			command  string
 		)
 		// 单步内对模型格式错误与临时调用失败做有限重试，避免一次异常中断整个任务
 		for {
-			current, usage, err := a.askSSHAgent(ctx, llm, host, goal, referenceBlock, previousBlock, history, remaining)
+			current, usage, err := a.askSSHAgent(ctx, llm, host, goal, referenceBlock, previousBlock, skillContext, history, remaining)
 			if err == nil {
 				stream.emit(harnessapp.Event{Type: "context", Data: map[string]any{
 					"usedTokens": usage.UsedTokens, "budgetTokens": usage.BudgetTokens, "percent": usage.Percent,
@@ -382,15 +392,6 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	status = "completed"
-	summary = a.summarizeSSHAgent(ctx, llm, host, goal, history)
-	if summary == "" {
-		summary = "已达到最大步数，请补充目标后继续"
-	}
-	stream.emit(harnessapp.Event{Type: "done", Data: map[string]any{
-		"runId": runID, "steps": stepsDone, "summary": summary, "truncated": true,
-	}})
 }
 
 type sshAgentRunBrief struct {
@@ -515,12 +516,16 @@ func sshRiskReason(risk string) string {
 	}
 }
 
-func (a *App) askSSHAgent(ctx context.Context, llm ports.LLM, host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (sshAgentDecision, contextUsage, error) {
+func (a *App) askSSHAgent(ctx context.Context, llm ports.LLM, host sshHost, goal, reference, previous, skillContext string, history []sshAgentStep, remaining int) (sshAgentDecision, contextUsage, error) {
 	userText, usage := buildSSHAgentPrompt(host, goal, reference, previous, history, remaining)
 	callCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
+	systemPrompt := sshAgentSystemPrompt
+	if skillContext != "" {
+		systemPrompt += "\n\n" + skillContext
+	}
 	messages := []ports.LLMMessage{
-		{Role: "system", Content: sshAgentSystemPrompt},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userText},
 	}
 	resp, err := llm.Chat(callCtx, ports.LLMRequest{Messages: messages})

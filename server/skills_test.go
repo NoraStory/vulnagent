@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -119,6 +120,36 @@ func TestSkillRegistryKeepsLatestVersion(t *testing.T) {
 	skill, ok := registry.Get("demo")
 	if !ok || skill.Version != "2.0.0" {
 		t.Fatalf("应保留最高版本：%+v", skill)
+	}
+}
+
+func TestSkillTerminalContext(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: demo\ndisplay_name: 演示技能\n---\n# 演示\n先做只读检查。\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "guides"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "guides", "workflow.md"), []byte("## 工作流\n1. 收集信息\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := &SkillRegistry{
+		items: map[string]Skill{"demo": {ID: "demo", DisplayName: "演示技能", Dir: dir}},
+		order: []string{"demo"},
+	}
+	text, ok := registry.TerminalContext("demo", 400)
+	if !ok {
+		t.Fatal("技能上下文应可用")
+	}
+	if !strings.Contains(text, "/demo") || !strings.Contains(text, "先做只读检查") || !strings.Contains(text, "guides/workflow.md") {
+		t.Fatalf("技能上下文缺少入口或指引：%s", text)
+	}
+	if len([]rune(text)) > 400 {
+		t.Fatalf("技能上下文未按预算截断：%d", len([]rune(text)))
+	}
+	if _, ok := registry.TerminalContext("missing", 200); ok {
+		t.Fatal("未知技能不应返回上下文")
 	}
 }
 

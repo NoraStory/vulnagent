@@ -1184,6 +1184,7 @@ export const api = {
     context: string;
     sessionId?: string;
     search?: boolean;
+    skillId?: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
   }): Promise<SshAssistantReply> {
     return request("/ssh/assistant", { method: "POST", body: JSON.stringify(input) });
@@ -1195,9 +1196,10 @@ export const api = {
     mode: SshAgentMode,
     search: boolean,
     onEvent: (event: SshAgentEvent) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    skillId?: string
   ): Promise<void> {
-    return streamSSE("/ssh/agent/run", { hostId, goal, mode, search }, onEvent, signal);
+    return streamSSE("/ssh/agent/run", { hostId, goal, mode, search, skillId: skillId ?? "" }, onEvent, signal);
   },
 
   sshAgentDecision(approvalId: string, decision: "approve" | "reject"): Promise<{ ok: boolean }> {

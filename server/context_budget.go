@@ -224,9 +224,13 @@ func composeAgentPrompt(host sshHost, goal, reference, previous string, history 
 		user.WriteString("\n")
 		user.WriteString(previous)
 	}
-	user.WriteString("\n剩余可执行步数：")
-	user.WriteString(strconv.Itoa(remaining))
-	user.WriteString("\n")
+	if remaining > 0 {
+		user.WriteString("\n剩余可执行步数：")
+		user.WriteString(strconv.Itoa(remaining))
+		user.WriteString("\n")
+	} else {
+		user.WriteString("\n可执行步数：不限（连续 5 条命令失败会自动停止）\n")
+	}
 
 	if len(history) == 0 {
 		user.WriteString("尚未执行任何命令。\n")
