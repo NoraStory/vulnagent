@@ -877,7 +877,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.2-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.3-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -978,7 +978,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.2-dev", "demo": true }
+{ "ok": true, "version": "0.7.3-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1146,7 +1146,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.2-dev",
+  "version": "0.7.3-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1179,12 +1179,12 @@ vulnagent_selfcheck_failed 0
               "readOnly": true, "minRole": "viewer", "params": { "type": "object" } }] }
 ```
 
-工具共 32 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
+工具共 34 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
 
 | 风险 | 工具 |
 |---|---|
-| low（只读，直接执行） | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
-| low（operator） | host_diagnose、recall_memory |
+| low（只读，直接执行） | overview_summary、list_clusters、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
+| low（只读，operator+） | check_cluster、host_diagnose、recall_memory |
 | low（admin） | list_audit_logs |
 | medium（需审批） | rescan_asset、read_host_file、create_snapshot、remember |
 | medium（admin，需审批） | run_selfcheck |
@@ -1284,7 +1284,10 @@ vulnagent_selfcheck_failed 0
       "updatedAt": "2026-10-27T10:30:00+08:00",
       "lastConnectedAt": "2026-10-27T10:36:00+08:00",
       "hasSecret": true,
-      "gpuAccel": false
+      "gpuAccel": false,
+      "clusterId": 2,
+      "clusterName": "prod-a",
+      "projectName": "GitHubHot"
     }
   ]
 }

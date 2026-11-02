@@ -627,7 +627,8 @@ CREATE TABLE integration_sources (
 - 目标：控制面、后端、数据库与扫描目标分处不同主机时，用「项目 → 集群 → 节点」描述真实部署，并把资产与漏洞按集群汇总。
 - 表：`projects`、`clusters`、`cluster_nodes`；`assets` 新增 `cluster_id`（默认 0）。
 - 节点角色：`backend / database / cache / proxy / storage / scan_target`；检查方式 `auto / http / tcp / ssh / ssh_file`。
-- 健康检查：HTTP 获取后端健康地址；TCP 检查数据库/缓存/代理端口；SSH 复用已保存主机凭据；`ssh_file` 通过 SSH 检查 SQLite 文件大小与分区使用率；数据库节点可配置只读账号做 MySQL/PostgreSQL 深检（迁移 0024）。
+- 健康检查：HTTP 获取后端健康地址；TCP 检查数据库/缓存/代理端口；SSH 复用已保存主机凭据；`ssh_file` 通过 SSH 检查 SQLite 文件大小与分区使用率；数据库节点可配置只读账号做 MySQL/PostgreSQL 深检（迁移 0024）。HTTP 检查会提示 22/缺端口等常见配置错误。
+- SSH 凭据与终端：节点表单可直接选择已保存的 SSH 主机，也可填写用户名/密码新建；新建时先创建 `ssh_hosts` 凭据再关联节点。节点行可跳转 `/terminal?hostId=…` 自动打开会话，终端主机列表显示项目/集群归属。
 - 异步任务：`cluster_jobs`（迁移 0023）保存检查/扫描进度与逐节点结果，最多 3 节点并发，支持取消与重启中断恢复。
 - 扫描：仅对关联 `ssh_host_id` 的节点执行 `sshscan` 只读采集，结果进入既有资产/漏洞流水线，并自动回填 `assets.cluster_id`。
 - Agent 归集：通过一次性注册令牌（迁移 0025）绑定集群的 Agent，上报资产时自动写入 `cluster_id`。
@@ -1076,7 +1077,7 @@ internal/application/harness 注册表、对话循环、九道闸门、审批、
 internal/application/ports   LLM 与 HarnessRepository 端口
 internal/infrastructure/llm/openai  OpenAI 兼容 Chat Completions（含 tools）
 internal/infrastructure/sqlite/harness_repo.go  四张表的仓储
-harness_tools.go             32 个工具的绑定（读工具走 mode=ro 连接）
+harness_tools.go             34 个工具的绑定（读工具走 mode=ro 连接）
 harness_handlers.go          SSE 会话接口与审批接口
 ```
 
@@ -1096,12 +1097,14 @@ harness_handlers.go          SSE 会话接口与审批接口
 
 所有调用写入 `agent_tool_calls`，审批写入 `agent_approvals`，并在 `audit_logs` 留下动作记录；工具输出经脱敏（password/secret/token/api_key/authorization）。
 
-### 7.5.3 工具清单（32 个）
+**集群优先约束**：系统提示要求涉及集群、节点或跨主机操作时，先调用 `overview_summary`（含 `clusters`）或 `list_clusters`；需要实时状态再调用 `check_cluster` 做只读检查。确认异常节点、错误原因与影响范围后，才允许继续主机命令、扫描或修复类工具。
+
+### 7.5.3 工具清单（34 个）
 
 | 风险 | 工具 | 最小角色 |
 |---|---|---|
-| low | overview_summary、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job | viewer |
-| low | host_diagnose、recall_memory | operator |
+| low | overview_summary、list_clusters、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job | viewer |
+| low | check_cluster、host_diagnose、recall_memory | operator |
 | low | list_audit_logs | admin |
 | medium | rescan_asset、read_host_file、create_snapshot、remember | operator |
 | medium | run_selfcheck | admin |
@@ -1489,9 +1492,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.2 -t vulnagent:0.7.2 .
+docker build --build-arg VERSION=0.7.3 -t vulnagent:0.7.3 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.2
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.3
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```
