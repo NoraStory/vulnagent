@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Check,
   CheckCircle2,
@@ -180,7 +181,12 @@ export function FindingDrawer({
             <div className="flex flex-col gap-6">
               <section className="grid grid-cols-2 gap-x-4 gap-y-3.5">
                 <Meta label="资产">
-                  <span className="text-[13px] font-medium text-ink">{detail.asset.hostname}</span>
+                  <Link
+                    to={`/assets/${detail.asset.id}`}
+                    className="text-[13px] font-medium text-ink underline-offset-2 hover:text-brand hover:underline"
+                  >
+                    {detail.asset.hostname}
+                  </Link>
                   <span className="ml-1.5 text-[11px] text-ink3">
                     {envMeta[detail.asset.env] ?? detail.asset.env} ·{" "}
                     {detail.asset.exposure === "public" ? "公网" : detail.asset.exposure === "internal" ? "内网" : "隔离"}

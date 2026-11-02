@@ -23,6 +23,7 @@ export function SshScanDialog({
   const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [fingerprint, setFingerprint] = useState("");
+  const [saveHost, setSaveHost] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -73,6 +74,28 @@ export function SshScanDialog({
       });
       const summary = `采集 ${result.components} 个组件 · 新增 ${result.created} 条漏洞 · 耗时 ${result.elapsedMs} ms`;
       toast.push(`SSH 采集完成：${summary}`);
+      if (saveHost) {
+        try {
+          const linked = await api.assetSshLink(result.assetId, {
+            name: host.trim(),
+            username: username.trim(),
+            port: Number(port) || 22,
+            authType: authMode,
+            password: authMode === "password" ? password : undefined,
+            privateKey: authMode === "key" ? privateKey : undefined,
+            passphrase: authMode === "key" ? passphrase : undefined
+          });
+          toast.push(
+            linked.created ? "已保存为 SSH 主机，可直接打开终端" : "已复用并更新该主机的 SSH 凭据",
+            "success"
+          );
+        } catch (err) {
+          toast.push(
+            `采集完成，但保存 SSH 主机失败：${err instanceof ApiError ? err.message : "请稍后在资产详情中重试"}`,
+            "error"
+          );
+        }
+      }
       setPassword("");
       setPrivateKey("");
       setPassphrase("");
@@ -222,6 +245,21 @@ export function SshScanDialog({
             />
           </label>
 
+          <label className="mt-3 flex items-start gap-2 rounded-[10px] border border-line bg-subtle px-3 py-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={saveHost}
+              onChange={(event) => setSaveHost(event.target.checked)}
+            />
+            <span className="text-[11.5px] leading-[17px] text-ink2">
+              保存为 SSH 主机
+              <span className="mt-0.5 block text-[10.5px] text-ink3">
+                加密保存后，终端、集群节点与漏洞扫描可直接复用，无需重复录入凭据
+              </span>
+            </span>
+          </label>
+
           {error && (
             <div className="animate-fade mt-3 flex items-start gap-2 rounded-[10px] border border-[#FFD5D1] bg-[#FFECEA] px-3 py-2 text-[11.5px] leading-[17px] text-[#C4170E]">
               <AlertCircle size={14} className="mt-0.5 shrink-0" />
@@ -230,7 +268,10 @@ export function SshScanDialog({
           )}
 
           <p className="mt-3 text-[10.5px] leading-[16px] text-ink3">
-            凭据仅用于本次连接，不写入数据库与日志；采集脚本只读取包清单，不修改目标主机。
+            {saveHost
+              ? "勾选后凭据使用 AES-256-GCM 加密写入本机数据库，仅在服务端解密使用，不在页面回显。"
+              : "未勾选时凭据仅用于本次连接，不写入数据库与日志。"}
+            采集脚本只读取包清单，不修改目标主机。
           </p>
         </div>
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity,
   ArrowLeftRight,
@@ -14,12 +14,21 @@ import {
   Server,
   Share2,
   ShieldAlert,
+  SquareTerminal,
   Terminal,
   Trash2,
   User
 } from "lucide-react";
-import { api } from "../lib/api";
-import type { AssetDetail, AssetJobs, AssetRelation, AssetTelemetry, HostTelemetry, MetricPoint } from "../lib/types";
+import { api, ApiError } from "../lib/api";
+import type {
+  AssetDetail,
+  AssetJobs,
+  AssetRelation,
+  AssetTelemetry,
+  HostTelemetry,
+  MetricPoint,
+  SshHost
+} from "../lib/types";
 import {
   Badge,
   Dot,
@@ -31,6 +40,7 @@ import {
 } from "../components/ui";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { AssetCmdbPanel } from "../components/AssetCmdbPanel";
+import { AssetTerminalDialog } from "../components/AssetTerminalDialog";
 import {
   agentMeta,
   envMeta,
@@ -54,6 +64,8 @@ const relationLabels: Record<string, string> = {
 
 export function AssetDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
   const { canWrite } = useAuth();
   const [data, setData] = useState<AssetDetail | null>(null);
@@ -69,6 +81,9 @@ export function AssetDetailPage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("components");
   const [activeFinding, setActiveFinding] = useState<number | null>(null);
+  const [sshHost, setSshHost] = useState<SshHost | null>(null);
+  const [sshLoading, setSshLoading] = useState(false);
+  const [sshOpen, setSshOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -168,6 +183,43 @@ export function AssetDetailPage() {
     setTelemetry(null);
     setJobs(null);
   }, [id]);
+
+  // 资产 → 终端的联动：优先复用已保存的 SSH 主机，避免在终端重复录入。
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setSshHost(null);
+    setSshLoading(true);
+    api
+      .assetSshHost(id)
+      .then((result) => {
+        if (!cancelled) setSshHost(result.host);
+      })
+      .catch((err) => {
+        if (!(err instanceof ApiError && err.status === 404)) {
+          toast.push(err instanceof Error ? err.message : "查询资产 SSH 主机失败", "error");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSshLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, toast]);
+
+  // 从资产列表点击「终端」时带 ?ssh=1 进入：已有凭据直接打开终端，否则弹出连接表单。
+  useEffect(() => {
+    if (sshLoading || searchParams.get("ssh") !== "1") return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("ssh");
+    setSearchParams(next, { replace: true });
+    if (sshHost) {
+      navigate(`/terminal?hostId=${sshHost.id}`);
+      return;
+    }
+    if (canWrite) setSshOpen(true);
+  }, [sshLoading, sshHost, canWrite, navigate, searchParams, setSearchParams]);
 
   // 遥测与作业按标签页懒加载，避免每次查看资产都产生额外查询
   useEffect(() => {
@@ -270,16 +322,37 @@ export function AssetDetailPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-5 rounded-panel bg-subtle px-5 py-3.5">
-            <Stat label="组件" value={asset.components} />
-            <Stat label="漏洞" value={asset.findings} />
-            <Stat label="P0" value={asset.p0} tone={asset.p0 > 0 ? "#C4170E" : undefined} />
-            <div className="col-span-3 border-t border-line pt-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[11px] text-ink3">最高风险</span>
-                <RiskMeter value={asset.risk} width={72} />
+          <div className="flex flex-col items-stretch gap-2">
+            <div className="grid grid-cols-3 gap-5 rounded-panel bg-subtle px-5 py-3.5">
+              <Stat label="组件" value={asset.components} />
+              <Stat label="漏洞" value={asset.findings} />
+              <Stat label="P0" value={asset.p0} tone={asset.p0 > 0 ? "#C4170E" : undefined} />
+              <div className="col-span-3 border-t border-line pt-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] text-ink3">最高风险</span>
+                  <RiskMeter value={asset.risk} width={72} />
+                </div>
               </div>
             </div>
+            {(canWrite || sshHost) && (
+              <button
+                type="button"
+                className="btn btn-secondary h-8 justify-center"
+                disabled={sshLoading}
+                onClick={() => {
+                  if (sshHost) navigate(`/terminal?hostId=${sshHost.id}`);
+                  else setSshOpen(true);
+                }}
+              >
+                <SquareTerminal size={13} />
+                {sshLoading ? "检查 SSH 主机…" : sshHost ? "打开终端" : "连接终端"}
+              </button>
+            )}
+            {sshHost && (
+              <span className="text-right text-[10.5px] text-ink3">
+                已关联 {sshHost.username}@{sshHost.host}:{sshHost.port}
+              </span>
+            )}
           </div>
         </div>
       </section>
@@ -503,6 +576,18 @@ export function AssetDetailPage() {
           onChanged={() => void load()}
         />
       )}
+
+      <AssetTerminalDialog
+        open={sshOpen}
+        assetId={asset.id}
+        hostname={asset.hostname}
+        ip={asset.ip}
+        onClose={() => setSshOpen(false)}
+        onLinked={(host) => {
+          setSshHost(host);
+          navigate(`/terminal?hostId=${host.id}`);
+        }}
+      />
     </div>
   );
 }

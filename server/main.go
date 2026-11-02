@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.4-dev"
+	appVersion  = "0.7.5-dev"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -261,6 +261,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/tags", a.handleAssetTags)
 	mux.HandleFunc("GET /api/v1/assets/{id}/telemetry", a.handleAssetTelemetry)
 	mux.HandleFunc("GET /api/v1/assets/{id}/jobs", a.handleAssetJobs)
+	mux.HandleFunc("GET /api/v1/assets/{id}/ssh-host", a.handleAssetSSHHost)
+	mux.HandleFunc("POST /api/v1/assets/{id}/ssh-host", a.handleAssetSSHHostLink)
 	mux.HandleFunc("POST /api/v1/assets/ssh-scan", a.handleSSHScan)
 
 	// 业务系统重要性、拓扑与治理待办

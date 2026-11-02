@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Boxes, Download, RefreshCw, ScanSearch, Search, Server, Terminal, Upload } from "lucide-react";
-import { api } from "../lib/api";
+import { Boxes, Download, RefreshCw, ScanSearch, Search, Server, SquareTerminal, Terminal, Upload } from "lucide-react";
+import { api, ApiError } from "../lib/api";
 import type { AssetItem } from "../lib/types";
 import { Badge, Dot, Empty, Pagination, RiskMeter, Skeleton } from "../components/ui";
 import { agentMeta, envMeta, exposureMeta, sourceMeta, timeAgo } from "../lib/format";
@@ -154,6 +154,19 @@ export function AssetsPage() {
       toast.push(err instanceof Error ? err.message : "批量复扫失败", "error");
     } finally {
       setScanning(false);
+    }
+  };
+
+  const openTerminal = async (asset: AssetItem) => {
+    try {
+      const result = await api.assetSshHost(asset.id);
+      navigate(`/terminal?hostId=${result.host.id}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        navigate(`/assets/${asset.id}?ssh=1`);
+        return;
+      }
+      toast.push(err instanceof Error ? err.message : "打开终端失败", "error");
     }
   };
 
@@ -400,7 +413,21 @@ export function AssetsPage() {
                     onClick={() => navigate(`/assets/${asset.id}`)}
                   >
                     <td className="td pl-5">
-                      <span className="block whitespace-nowrap text-[12.5px] font-medium text-ink">{asset.hostname}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="block whitespace-nowrap text-[12.5px] font-medium text-ink">{asset.hostname}</span>
+                        <button
+                          type="button"
+                          title="打开终端"
+                          aria-label={`打开 ${asset.hostname} 终端`}
+                          className="rounded p-0.5 text-ink3 transition-colors hover:bg-subtle hover:text-ink"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void openTerminal(asset);
+                          }}
+                        >
+                          <SquareTerminal size={12} />
+                        </button>
+                      </span>
                       <span className="mt-0.5 block font-mono text-[11px] text-ink3">{asset.ip}</span>
                       {asset.tags.length > 0 && (
                         <span className="mt-1 flex flex-wrap gap-1">

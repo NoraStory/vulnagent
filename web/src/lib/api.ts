@@ -686,6 +686,17 @@ export const api = {
     return request(`/assets/${id}/jobs${query({ limit })}`);
   },
 
+  assetSshHost(id: number | string): Promise<{ host: SshHost; matchedBy: string }> {
+    return request(`/assets/${id}/ssh-host`);
+  },
+
+  assetSshLink(
+    id: number | string,
+    input: SshHostInput
+  ): Promise<{ host: SshHost; created: boolean; matchedBy: string }> {
+    return request(`/assets/${id}/ssh-host`, { method: "POST", body: JSON.stringify(input) });
+  },
+
   sshScan(payload: {
     host: string;
     port: number;
