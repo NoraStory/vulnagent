@@ -164,7 +164,7 @@ function Wait-Health {
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
         try {
-            $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -TimeoutSec 3 -SkipHttpErrorCheck
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/v1/healthz" -TimeoutSec 3 -SkipHttpErrorCheck
             if ($response.StatusCode -eq 200) { return $true }
         } catch { }
         Start-Sleep -Seconds 1
@@ -413,7 +413,7 @@ foreach (`$task in @('$taskServer','$taskAgent')) {
 `$port = $Port
 `$listener = Get-NetTCPConnection -LocalPort `$port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 `$health = 0
-try { `$health = (Invoke-WebRequest -Uri "http://127.0.0.1:`$port/healthz" -TimeoutSec 5 -SkipHttpErrorCheck).StatusCode } catch { }
+try { `$health = (Invoke-WebRequest -Uri "http://127.0.0.1:`$port/api/v1/healthz" -TimeoutSec 5 -SkipHttpErrorCheck).StatusCode } catch { }
 Write-Host "端口 `$port：" -NoNewline
 if (`$listener) { Write-Host "监听中（PID `$(`$listener.OwningProcess)）" -ForegroundColor Green } else { Write-Host "未监听" -ForegroundColor Red }
 Write-Host "健康检查：HTTP `$health"
@@ -511,9 +511,9 @@ if (`$Purge) {
             Write-Host "`n最近服务日志：" -ForegroundColor Yellow
             Get-Content $serverLog -Tail 40
         }
-        Fail "健康检查失败：http://127.0.0.1:$Port/healthz 未在 40 秒内返回 200"
+        Fail "健康检查失败：http://127.0.0.1:$Port/api/v1/healthz 未在 40 秒内返回 200"
     }
-    Ok "健康检查通过：http://127.0.0.1:$Port/healthz"
+    Ok "健康检查通过：http://127.0.0.1:$Port/api/v1/healthz"
 
     if (-not $NoAgent) {
         $tokenFile = Join-Path $DataDir 'agent.token'

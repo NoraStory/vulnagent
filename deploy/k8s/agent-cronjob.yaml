@@ -1,5 +1,8 @@
 # 每小时采集节点上的系统包并上报控制面。
 # 若节点已安装 systemd Agent，可删除本 CronJob。
+# 首次接入也可在「Agent 管理」生成一次性令牌后，先在节点执行
+#   vulnagent agent --server http://vulnagent.vulnagent.svc.cluster.local:8787 --enroll-token <token> --watch
+# 生成 agent.identity.json，再改为挂载身份文件；本清单保留全局令牌兼容方式。
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -22,7 +25,7 @@ spec:
           hostPID: false
           containers:
             - name: agent
-              image: vulnagent:0.1.0
+              image: vulnagent:0.7.2
               imagePullPolicy: IfNotPresent
               command: ["/app/server/vulnagent"]
               args:

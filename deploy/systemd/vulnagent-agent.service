@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=oneshot
 User=root
 EnvironmentFile=-/etc/vulnagent/agent.env
+# 全局令牌兼容方式；若改用一次性注册，请先运行 --enroll-token 生成身份，
+# 再移除 --token-file，让 Agent 读取 VA_AGENT_IDENTITY / 默认身份文件。
 ExecStart=/opt/vulnagent/server/vulnagent agent --server ${VA_SERVER} --token-file /etc/vulnagent/agent.token
 Nice=10
 IOSchedulingClass=idle

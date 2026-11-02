@@ -9,13 +9,18 @@ COPY web/ ./
 RUN npm run build
 
 FROM golang:1.26-alpine AS server
+ARG VERSION=0.7.2
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 COPY server/vendor ./vendor
 COPY server/*.go ./
 COPY server/internal ./internal
 COPY server/assets ./assets
-RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/vulnagent .
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath \
+    -ldflags="-s -w -X main.appVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
+    -o /out/vulnagent .
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata

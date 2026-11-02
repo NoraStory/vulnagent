@@ -39,7 +39,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: server
-          image: vulnagent:0.1.0
+          image: vulnagent:0.7.2
           imagePullPolicy: IfNotPresent
           args: ["server"]
           ports:

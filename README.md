@@ -81,6 +81,7 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 ## 界面预览
 
 > 概览、漏洞、资产、助手截图使用演示数据（`VA_SEED_DEMO=on`）；自检与审计截图来自本机真实运行数据；SSH 终端截图连接的是本地测试 SSH 服务。截图中的「演示数据」标识会随模式自动出现/隐藏。
+> 截图为早期版本，项目集群、Agent 管理、GPU 实时运行态等新增页面以当前版本实际界面为准。
 
 **安全概览**：P0–P3 分布、14 天趋势、情报新鲜度与采集健康度一屏可见。
 
@@ -243,10 +244,10 @@ npm run build    # tsc --noEmit + vite build，产物在 web/dist
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `VA_ADDR` | `:8787` | 控制面监听地址 |
-| `VA_DATA_DIR` | `./data` | 数据目录：SQLite、Agent 令牌、备份 |
+| `VA_DATA_DIR` | `./data` | 数据目录：SQLite、Agent 令牌/身份、SSH 密钥与备份 |
 | `VA_SEED_DEMO` | `off` | `on` 时灌入演示数据并创建演示账号 |
 | `VA_ADMIN_PASSWORD` | — | 生产模式首次启动初始化 admin 的口令（≥10 位，含字母与数字） |
-| `VA_AGENT_TOKEN` | 自动生成 | Agent 接入令牌；缺省时生成并写入 `<数据目录>/agent.token` |
+| `VA_AGENT_TOKEN` | 自动生成 | 全局 Agent 接入令牌；缺省时生成并写入 `<数据目录>/agent.token`。单机 Agent 可改用一次性注册令牌换取独立身份 |
 | `VA_SSH_KEY` | 自动生成 | SSH 凭据加密密钥（32 字节 base64）；缺省时生成 `<数据目录>/ssh.key` |
 | `VA_SESSION_IDLE` | `30m` | 登录会话空闲过期时长 |
 | `VA_COOKIE_SECURE` | `off` | HTTPS 部署时置 `1`，Cookie 增加 `Secure` |
@@ -410,7 +411,7 @@ SSH 面板的登录凭据使用 AES-256-GCM 加密保存在数据目录，密钥
 ├── web/                        # React 控制台（Vite + TypeScript + Tailwind）
 ├── skill/                      # 技能 zip 分发包
 ├── skills/                     # 解压后的技能目录（gitignored）
-├── docs/                       # 架构、API 契约、ADRs、截图
+├── docs/                       # 架构、API 契约、ADRs、版本日志、Roadmap、截图
 ├── deploy/                     # systemd / Windows / 容器部署脚本
 └── Dockerfile
 ```
@@ -507,7 +508,7 @@ sudo bash deploy/linux/install.sh --port 8787 --open-firewall \
 - [架构决策记录](docs/architecture/adr/)
 - [品牌与设计系统](docs/design/brand.md)
 - [回归测试报告](docs/quality/test-report.md)
-- [性能压测报告](docs/reports/perf-benchmark-2026-11-01/perf-benchmark-2026-11-01.html)
+- [性能压测报告（2026-11-01，历史）](docs/reports/perf-benchmark-2026-11-01/perf-benchmark-2026-11-01.html)
 
 ---
 
@@ -521,7 +522,7 @@ Copyright (C) 2026 Signal 项目贡献者。你可以在遵守 GPL-3.0 条款的
 
 ## 已知边界
 
-- 当前为单节点部署，SQLite（WAL）承载全部数据；多节点与集中式存储尚未实现。
+- 控制面当前为单节点部署，SQLite（WAL）承载全部数据；多控制面与集中式存储尚未实现（已支持多集群、多 Agent 采集）。
 - 漏洞情报依赖外部公开源，离线环境需通过 `vulnagent sync --bundle` 导入。
 - Agent 助手需要可访问的 OpenAI 兼容模型服务；不可用时其余功能不受影响。
 - SSH 面板目前为控制面直连目标主机，暂未支持跳板机与端口转发（OrcaTerm 的端口转发为客户端能力）；SFTP 为单文件串行传输，暂不支持目录打包上传与断点续传。
@@ -533,10 +534,10 @@ Copyright (C) 2026 Signal 项目贡献者。你可以在遵守 GPL-3.0 条款的
 - 资产权重 = 暴露面 × 资产业务等级 × 业务系统重要性；未在「业务系统重要性」中登记的业务系统按「一般」计算。
 - 疑似重复仅按 IP / MAC / 序列号提示，不自动合并；拓扑最多展示 300 个节点，超出需按业务系统或环境筛选。
 - 云厂商同步只读调用官方列表接口，需要控制面能出站访问对应云 API；未配置凭据时只能保存配置、无法测试或同步。
-- 外部 CMDB 首版支持 GET JSON（数组或 `items/data/assets` 包裹），不支持分页游标与回写外部系统。
+- 外部 CMDB 支持 GET JSON 与分页游标/多页同步（见 [CMDB 分页契约](docs/architecture/cmdb-pagination-contract.md)），不支持回写外部系统。
 - 会话录制单会话上限 2MB，超出后标记截断；回放按输出时间偏移重放，不包含终端尺寸变化等非输出事件。
 - Agent 自动执行依赖当前浏览器连接（SSE），关闭页面会中断运行；运行记录与步骤仍会保存在审计中。
-- 服务加速为只读检测与建议，不会自动修改目标机；基线对比反映采样时刻的 CPU/内存/负载/GPU 状态，不能替代压测。
+- 服务加速为只读检测与建议，不会自动修改目标机；支持 60 秒能力缓存与 3 秒实时运行态缓存，基线对比反映采样时刻的 CPU/内存/负载/GPU 状态，不能替代压测。
 - hashcat 审计需要目标机自行安装 hashcat 与字典；结果包含明文口令，仅限 operator 在授权资产上使用。
 - GPU 推理加速需要可访问的 OpenAI 兼容本地端点；未配置时主机加速开关不生效。
 - 备份压缩为多协程并行 gzip，未链接 CUDA/nvCOMP，因此不是 GPU 压缩；大库备份仍需预留与数据库同量级的磁盘空间。

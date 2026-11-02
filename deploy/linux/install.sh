@@ -390,7 +390,7 @@ else
 fi
 
 for _ in $(seq 1 40); do
-  if curl -fsS -m 2 "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then HEALTH_OK=1; break; fi
+  if curl -fsS -m 2 "http://127.0.0.1:${PORT}/api/v1/healthz" >/dev/null 2>&1; then HEALTH_OK=1; break; fi
   sleep 1
 done
 if (( HEALTH_OK == 0 )); then
@@ -403,9 +403,9 @@ if (( HEALTH_OK == 0 )); then
     sleep 3
   fi
   (( NO_SERVICE == 0 )) && journalctl -u vulnagent-server.service -n 40 --no-pager || tail -n 40 "${INSTALL_DIR}/logs/server.log"
-  die "健康检查失败：http://127.0.0.1:${PORT}/healthz"
+  die "健康检查失败：http://127.0.0.1:${PORT}/api/v1/healthz"
 fi
-ok "健康检查通过：http://127.0.0.1:${PORT}/healthz"
+ok "健康检查通过：http://127.0.0.1:${PORT}/api/v1/healthz"
 
 if (( WITH_AGENT == 1 )); then
   token_file="${DATA_DIR}/agent.token"
@@ -459,7 +459,7 @@ if (( ${NO_SERVICE} == 0 )) && command -v systemctl >/dev/null; then
   systemctl --no-pager --full status vulnagent-agent.service || true
 fi
 echo
-echo "健康检查：\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT}/healthz || echo 000)"
+echo "健康检查：\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT}/api/v1/healthz || echo 000)"
 if [[ -f "${INSTALL_DIR}/run/server.pid" ]]; then echo "后台 PID：\$(cat "${INSTALL_DIR}/run/server.pid")"; fi
 echo "最近日志："
 journalctl -u vulnagent-server.service -n 20 --no-pager 2>/dev/null || tail -n 20 "${INSTALL_DIR}/logs/server.log" 2>/dev/null || true

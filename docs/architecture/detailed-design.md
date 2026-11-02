@@ -622,21 +622,33 @@ CREATE TABLE integration_sources (
 - 外部 CMDB 支持分页：默认 `auto` 跟随响应 `next`，也可显式选择 `none / page / cursor`；
   配置项、响应形态与同源限制见 [CMDB 分页契约](./cmdb-pagination-contract.md)。
 
-### 5.1.5 项目与集群（迁移 0022）
+### 5.1.5 项目与集群（迁移 0022–0025）
 
 - 目标：控制面、后端、数据库与扫描目标分处不同主机时，用「项目 → 集群 → 节点」描述真实部署，并把资产与漏洞按集群汇总。
 - 表：`projects`、`clusters`、`cluster_nodes`；`assets` 新增 `cluster_id`（默认 0）。
 - 节点角色：`backend / database / cache / proxy / storage / scan_target`；检查方式 `auto / http / tcp / ssh / ssh_file`。
-- 健康检查：HTTP 获取后端健康地址；TCP 检查数据库/缓存/代理端口；SSH 复用已保存主机凭据；`ssh_file` 通过 SSH 检查 SQLite 文件大小与分区使用率。
+- 健康检查：HTTP 获取后端健康地址；TCP 检查数据库/缓存/代理端口；SSH 复用已保存主机凭据；`ssh_file` 通过 SSH 检查 SQLite 文件大小与分区使用率；数据库节点可配置只读账号做 MySQL/PostgreSQL 深检（迁移 0024）。
+- 异步任务：`cluster_jobs`（迁移 0023）保存检查/扫描进度与逐节点结果，最多 3 节点并发，支持取消与重启中断恢复。
 - 扫描：仅对关联 `ssh_host_id` 的节点执行 `sshscan` 只读采集，结果进入既有资产/漏洞流水线，并自动回填 `assets.cluster_id`。
+- Agent 归集：通过一次性注册令牌（迁移 0025）绑定集群的 Agent，上报资产时自动写入 `cluster_id`。
 - 资产关联：已有 Agent 资产可批量关联/解除关联；删除项目/集群只清空关联，不删除资产。
-- 权限：项目/集群创建删除仅 admin；节点、检查、扫描、资产关联为 operator+；查看为 viewer+；全部写操作写审计。
+- 权限：项目/集群创建删除与集群编辑仅 admin；节点、检查、扫描、资产关联、数据库只读凭据、Agent 注册/命令为 operator+；查看为 viewer+；全部写操作写审计。
 - 详细设计见 [多集群与项目运维设计](./multi-cluster-design.md)。
 
-### 5.2 目标模型（规划中，尚未实现）
+### 5.1.6 多 Agent 身份（迁移 0025）
 
-> 以下为后续演进方向（Agent 注册/心跳、SBOM 快照版本化、EPSS 历史、API Token、多租户）。
-> 当前版本没有这些表，不要据此编写查询。
+- 表：`agents`（身份、主机信息、项目/集群归属、secret 摘要、心跳、吊销）、`agent_enroll_tokens`（一次性令牌、作用域、TTL）、`agent_commands`（ping/collect 命令与结果）。
+- 注册：`POST /agents/enroll` 校验一次性令牌后生成 `AGT-*` 与随机 secret；服务端只保存 secret 的 SHA-256 摘要，Agent 本机保存 `agent.identity.json`（0600）。
+- 认证：`X-Agent-Id` + `X-Agent-Secret`；旧版全局 Bearer 令牌继续兼容。心跳 3 分钟内视为在线。
+- 命令：控制台写入 `agent_commands`，Agent 拉取并标记 `claimed`，执行后回传 `succeeded/failed` 与输出。
+- 作业签名：旧版使用全局令牌；单机身份使用 `sha256("vulnagent-job:" + secret)` 派生密钥，避免跨 Agent 伪造作业。
+- 资产归集：令牌绑定集群时，Agent 上报资产自动回填 `assets.cluster_id`。
+
+### 5.2 目标模型（部分已实现，schema 以迁移为准）
+
+> 以下是早期演进草案，仅保留用于参考；实际 schema 一律以 `server/internal/infrastructure/sqlite/migrations/*.sql` 为准。
+> 已落地：资产/组件/CVE/findings、Agent 注册与心跳（0025）、项目集群（0022）、异步任务（0023）、数据库深检（0024）、运行配置（0021）。
+> 仍为规划：SBOM 快照版本化、EPSS 历史表、API Token、多租户、证书指纹。
 
 ```sql
 -- 资产
@@ -657,16 +669,10 @@ CREATE TABLE assets (
   UNIQUE(hostname, tenant_id)
 );
 
--- Agent 注册与心跳
-CREATE TABLE agents (
-  id             TEXT PRIMARY KEY,   -- uuid
-  asset_id       INTEGER REFERENCES assets(id),
-  cert_fp        TEXT NOT NULL,      -- 客户端证书指纹
-  agent_version  TEXT,
-  status         TEXT,               -- active/offline/revoked
-  last_heartbeat TEXT,
-  enrolled_at    TEXT
-);
+-- Agent 注册与心跳已落地，实际表见 0025_agents.sql：
+-- id/name/hostname/os/os_version/version/project_id/cluster_id/secret_hash/
+-- enrolled_by/enrolled_at/last_seen_at/last_ip/revoked_at
+-- 另见 agent_enroll_tokens、agent_commands。
 
 -- SBOM 快照
 CREATE TABLE sbom_snapshots (
@@ -927,14 +933,18 @@ CREATE TABLE sync_cursors (
 
 ## 6. 接口设计
 
-### 6.1 Agent 侧（Bearer 令牌，mTLS 规划中）
+### 6.1 Agent 侧（Bearer 令牌 / 单机身份，mTLS 规划中）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/agent/report` | 上报 SBOM（Bearer 令牌），幂等 upsert 并立即匹配 |
-| POST | `/api/v1/agent/enroll` | 规划中：一次性 bootstrap token 换发 mTLS 证书 |
+| POST | `/api/v1/agent/report` | 上报 SBOM；支持全局 Bearer 或 `X-Agent-Id` + `X-Agent-Secret` |
+| POST | `/api/v1/agents/enroll` | 一次性注册令牌换取 `Agent ID + secret`（已落地） |
+| POST | `/api/v1/agents/heartbeat` | 更新主机信息与心跳，返回待执行命令数（已落地） |
+| GET | `/api/v1/agents/commands` | Agent 拉取待执行 `ping`/`collect` 命令并标记 `claimed`（已落地） |
+| POST | `/api/v1/agents/commands/{id}/result` | 回传命令结果（已落地） |
 | GET | `/api/v1/agent/policy` | 规划中：采集间隔、排除项、自更新通道 |
 | GET | `/api/v1/agent/binary/latest` | 规划中：自更新清单与签名 |
+| POST | `/api/v1/agent/enroll`（旧路径） | 规划中：mTLS 证书换发，当前使用 `/agents/enroll` |
 
 `report` 请求示例：
 
@@ -1478,10 +1488,10 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
   --url https://dl.example.com/vulnagent.exe --version 0.2.0
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
-# 容器化（单镜像，内含前端产物与字体）
-docker build -t vulnagent:0.1.0 .
+# 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
+docker build --build-arg VERSION=0.7.2 -t vulnagent:0.7.2 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.1.0
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.2
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```

@@ -2,7 +2,7 @@
 
 - Base URL：`/api/v1`（开发期 Vite 代理到 `http://127.0.0.1:8787`）
 - 编码：JSON（UTF-8）；时间统一 RFC3339 字符串
-- 认证：Cookie `va_session`（HttpOnly）。除 `POST /auth/login`、`GET /healthz` 外均需登录
+- 认证：Cookie `va_session`（HttpOnly）。除 `POST /auth/login`、`GET /healthz` 与 Agent 专用接口（report/jobs/enroll/heartbeat/commands）外均需登录；Agent 接口使用全局 Bearer 令牌或 `X-Agent-Id` + `X-Agent-Secret` 单机身份。
 - 错误：HTTP 4xx/5xx，body `{ "error": { "code": "forbidden", "message": "..." } }`
 - 不存在的 `/api/*` 路径固定返回 JSON `404 not_found`，不参与前端 SPA 回退（避免把 index.html 当 JSON 解析）
 - 角色：`admin` > `operator` > `viewer`；写操作需 `operator`+，账号/策略/同步需 `admin`
@@ -877,7 +877,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.1.0-dev", "commit": "local", "builtAt": "2026-10-22T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.2-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -978,7 +978,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.1.0-dev", "demo": true }
+{ "ok": true, "version": "0.7.2-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1032,10 +1032,11 @@ vulnagent_selfcheck_failed 0
 
 ---
 
-## 8. Agent 上报（Bearer 令牌）
+## 8. Agent 上报（Bearer 令牌 / 单机身份）
 
-- 认证：`Authorization: Bearer <token>`，与人类用户会话相互独立；无令牌或令牌错误返回 401。
-- 令牌由控制面首次启动生成，写入 `<数据目录>/agent.token`（仅本机可读），数据库只保存 SHA-256 摘要；也可用环境变量 `VA_AGENT_TOKEN` 覆盖。
+- 认证：`Authorization: Bearer <token>`（全局令牌）或 `X-Agent-Id` + `X-Agent-Secret`（单机身份），与人类用户会话相互独立；无令牌或令牌错误返回 401。
+- 全局令牌由控制面首次启动生成，写入 `<数据目录>/agent.token`（仅本机可读），数据库只保存 SHA-256 摘要；也可用环境变量 `VA_AGENT_TOKEN` 覆盖。
+- 单机身份通过「Agent 管理」的一次性注册令牌换取，详见 §14；绑定集群时上报资产自动归入集群。
 
 ### POST /agent/report
 
@@ -1145,7 +1146,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.1.0-dev",
+  "version": "0.7.2-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
