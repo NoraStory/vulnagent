@@ -79,15 +79,13 @@ func saveAgentIdentity(path string, identity agentIdentityFile) error {
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
-// resolveAgentAuth 依次尝试全局令牌、本机 Agent 身份、一次性注册令牌
+// resolveAgentAuth 优先使用显式全局令牌，其次本机身份，再尝试一次性注册令牌，最后回落到默认令牌文件
 func resolveAgentAuth(server, token, tokenFile, enrollToken, identityPath, name string,
 	report collect.Report, timeout time.Duration) (agentAuth, error) {
-	if strings.TrimSpace(token) == "" && strings.TrimSpace(tokenFile) == "" {
-		if resolved, err := resolveAgentToken("", ""); err == nil && resolved != "" {
+	if strings.TrimSpace(token) != "" || strings.TrimSpace(tokenFile) != "" || strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN")) != "" {
+		if resolved, err := resolveAgentToken(token, tokenFile); err == nil && resolved != "" {
 			return agentAuth{Token: resolved}, nil
 		}
-	} else if resolved, err := resolveAgentToken(token, tokenFile); err == nil && resolved != "" {
-		return agentAuth{Token: resolved}, nil
 	}
 
 	if identityPath == "" {
@@ -100,22 +98,26 @@ func resolveAgentAuth(server, token, tokenFile, enrollToken, identityPath, name 
 		return agentAuth{AgentID: identity.AgentID, Secret: identity.Secret}, nil
 	}
 
-	if strings.TrimSpace(enrollToken) == "" {
-		return agentAuth{}, fmt.Errorf("未找到 Agent 令牌或身份，请使用 --enroll-token 注册，或用 --token 指定全局令牌")
+	if strings.TrimSpace(enrollToken) != "" {
+		if strings.TrimSpace(name) == "" {
+			name = report.Hostname
+		}
+		identity, err := enrollAgent(server, strings.TrimSpace(enrollToken), name, report, timeout)
+		if err != nil {
+			return agentAuth{}, err
+		}
+		identity.Server = trimServer(server)
+		if err := saveAgentIdentity(identityPath, identity); err != nil {
+			return agentAuth{}, fmt.Errorf("保存 Agent 身份失败：%w", err)
+		}
+		fmt.Fprintf(os.Stderr, "注册成功：agent=%s，身份已保存到 %s\n", identity.AgentID, identityPath)
+		return agentAuth{AgentID: identity.AgentID, Secret: identity.Secret}, nil
 	}
-	if strings.TrimSpace(name) == "" {
-		name = report.Hostname
+
+	if resolved, err := resolveAgentToken("", ""); err == nil && resolved != "" {
+		return agentAuth{Token: resolved}, nil
 	}
-	identity, err := enrollAgent(server, strings.TrimSpace(enrollToken), name, report, timeout)
-	if err != nil {
-		return agentAuth{}, err
-	}
-	identity.Server = trimServer(server)
-	if err := saveAgentIdentity(identityPath, identity); err != nil {
-		return agentAuth{}, fmt.Errorf("保存 Agent 身份失败：%w", err)
-	}
-	fmt.Fprintf(os.Stderr, "注册成功：agent=%s，身份已保存到 %s\n", identity.AgentID, identityPath)
-	return agentAuth{AgentID: identity.AgentID, Secret: identity.Secret}, nil
+	return agentAuth{}, fmt.Errorf("未找到 Agent 令牌或身份，请使用 --enroll-token 注册，或用 --token 指定全局令牌")
 }
 
 func enrollAgent(server, token, name string, report collect.Report, timeout time.Duration) (agentIdentityFile, error) {
