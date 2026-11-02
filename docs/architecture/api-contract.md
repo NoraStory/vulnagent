@@ -919,7 +919,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.5-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.6-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -1020,7 +1020,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.5-dev", "demo": true }
+{ "ok": true, "version": "0.7.6-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1188,7 +1188,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.5-dev",
+  "version": "0.7.6-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1427,15 +1427,15 @@ vulnagent_selfcheck_failed 0
 
 | type | data | 说明 |
 |---|---|---|
-| `status` | `{runId, mode, maxSteps, host}` | 运行开始 |
+| `status` | `{runId, mode, maxSteps, maxFailures, host}` | 运行开始；`maxSteps` 为 8，`maxFailures` 为 5 |
 | `step` | `{index, thought, command, risk, approval}` | 规划出的命令；`risk` 为 `normal/high/critical`，`approval` 为 `pending/not_required` |
 | `await_approval` | `{approvalId, index, command, risk, reason}` | 等待人工批准（5 分钟有效） |
 | `approval_result` | `{index, approved}` | 审批结果 |
 | `output` | `{index, output, exitCode}` | 命令输出（单步最多 16KB） |
-| `done` | `{runId, steps, summary, truncated}` | 结束；达到步数上限时 summary 为模型生成的收尾结论 |
+| `done` | `{runId, steps, summary, truncated}` | 结束；达到步数上限或连续失败熔断时 summary 为模型生成的收尾结论 |
 | `error` | `{message}` | 运行失败 |
 
-- 每次运行最多 8 步；单条命令 90 秒超时；运行与每一步写入 `ssh_agent_runs` / `ssh_agent_steps`。
+- 每次运行最多 8 步；连续 5 条命令执行失败（退出码非 0 或执行错误）时提前停止并生成收尾结论，成功命令会重置连续失败计数。单条命令 90 秒超时；运行与每一步写入 `ssh_agent_runs` / `ssh_agent_steps`。
 - 运行与当前浏览器 SSE 连接绑定，断开即终止；审计记录 `ssh.agent.run` / `ssh.agent.done`。
 
 ### POST /ssh/agent/approvals/{id}（operator+）
@@ -1731,13 +1731,13 @@ Agent 的 `status` 事件新增：
 - Agent 在每一步决策前都会携带参考块，并新增「不熟悉参数必须先 `command -v` / `--help` 验证」的约束。
 - `contextRuns` 表示注入了同一主机最近多少次已完成任务的结论（最多 3 次）。
 
-**模型输出容错**：决策 JSON 解析兼容 Markdown 围栏、前后解释、尾逗号、中文引号；解析失败时会把原始输出回填给模型要求重写，并对临时模型错误自动重试（单步最多 2 次）。连续失败时发送 `warning` 事件并以 `done` 优雅结束（`truncated=true`），已执行步骤与输出全部保留，不再直接中断任务。
+**模型输出容错**：决策 JSON 解析兼容 Markdown 围栏、前后解释、尾逗号、中文引号；解析失败时会把原始输出回填给模型要求重写，并对临时模型错误自动重试（单步最多 2 次）。连续失败时发送 `warning` 事件并以 `done` 优雅结束（`truncated=true`），已执行步骤与输出全部保留，不再直接中断任务。命令执行连续失败 5 次时同样发送 `warning` 并优雅结束。
 
 | type | data | 说明 |
 |---|---|---|
 | `warning` | `{message}` | 自动重试、格式修复或提前结束提示 |
 | `context` | `{usedTokens, budgetTokens, percent, compressedItems, savedTokens, historyItems, step}` | 每次模型调用前的上下文占用与压缩统计 |
-| `done` | `{runId, steps, summary, truncated}` | `truncated=true` 表示因模型格式异常提前结束 |
+| `done` | `{runId, steps, summary, truncated}` | `truncated=true` 表示因模型格式异常或连续命令失败提前结束 |
 
 ### 12.6 SSH 主机漏洞扫描
 

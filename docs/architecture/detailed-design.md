@@ -1165,11 +1165,11 @@ harness_handlers.go          SSE 会话接口与审批接口
 #### 7.6.4 Agent 自动执行
 
 - 数据表：`ssh_agent_runs`（目标、模式、状态、步数、总结）、`ssh_agent_steps`（思考、命令、输出、风险、审批结果、退出码），迁移见 `sqlite/migrations/0011_ssh_agent.sql`。
-- 控制循环：目标 + 最近 6 步观察 → 模型输出单条 JSON 决策 → 风险分级与审批 → 独立 SSH 会话执行 → 输出回填 → 继续；最多 8 步，达到上限时再调用一次模型生成收尾结论。
+- 控制循环：目标 + 最近 6 步观察 → 模型输出单条 JSON 决策 → 风险分级与审批 → 独立 SSH 会话执行 → 输出回填 → 继续；最多 8 步，达到上限时再调用一次模型生成收尾结论。连续 5 条命令执行失败（退出码非 0 或执行错误）时提前停止并生成收尾结论，成功命令会重置连续失败计数。
 - 风险分级：`critical`（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机重启、分区工具）始终需要人工确认；`high`（递归删除、停服、清空防火墙、删用户、批量容器操作等）在 `safe` 模式需要确认；`normal` 直接执行。
 - 审批：内存审批表 + 5 分钟 TTL，`POST /ssh/agent/approvals/{id}` 唤醒等待中的运行；审批人、命令与结果写入步骤与审计。
 - 约束：运行绑定当前 SSE 连接，客户端断开即终止；单命令 90 秒超时、单步输出 16KB 截断；服务启动时清理遗留的 `running` 记录。
-- 问答内自动执行：问答页勾选「自动执行」后，前端把问题与最近 6 条问答上下文组装为 Agent 目标，复用同一套 SSE 循环执行；命令失败时输出与退出码回填模型由其自行判断，最多 8 步；审批模式、停止按钮、审计与 Agent 页一致，执行结论回写问答消息便于继续追问。
+- 问答内自动执行：问答页勾选「自动执行」后，前端把问题与最近 6 条问答上下文组装为 Agent 目标，复用同一套 SSE 循环执行；命令失败时输出与退出码回填模型由其自行判断，最多 8 步且连续 5 条命令执行失败时自动停止；审批模式、停止按钮、审计与 Agent 页一致，执行结论回写问答消息便于继续追问。
 
 #### 7.6.5 SFTP 文件管理
 
@@ -1492,9 +1492,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.5 -t vulnagent:0.7.5 .
+docker build --build-arg VERSION=0.7.6 -t vulnagent:0.7.6 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.5
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.6
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```
