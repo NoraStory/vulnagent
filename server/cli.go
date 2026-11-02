@@ -63,7 +63,8 @@ func printUsage() {
   vulnagent server                     启动控制面（默认 :8787）
   vulnagent collect [--out sbom.json]  仅采集本机 SBOM，不联网
   vulnagent agent --server <url>       采集并上报到控制面
-  vulnagent agent --server <url> --watch  常驻拉取并执行主机作业
+  vulnagent agent --server <url> --enroll-token <token> --watch  注册为单机 Agent 并常驻
+  vulnagent agent --server <url> --watch  使用全局令牌常驻拉取主机作业
   vulnagent helper                     提权 helper（由 Agent 通过 sudo/服务调用）
   vulnagent sync --bundle <file>       导入离线情报包
   vulnagent sync --epss-file <csv>     导入 EPSS 评分并重算排序

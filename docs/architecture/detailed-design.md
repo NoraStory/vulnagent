@@ -1448,6 +1448,8 @@ go build -o bin/vulnagent.exe .
 
 # 采集并上报（令牌自动读取 ..\data\agent.token）
 .\bin\vulnagent.exe agent --server http://127.0.0.1:8787
+# 单机身份接入（推荐）：在「Agent 管理」生成一次性注册令牌后执行，首次运行保存 agent.identity.json
+.\bin\vulnagent.exe agent --server http://127.0.0.1:8787 --enroll-token <token> --watch
 # 常驻 + 每 5 分钟刷新遥测：--watch --interval 5s --report-interval 5m（0 关闭定时上报）
 # 其他主机：复制 data\agent.token 后 --token-file <path>，或设置 VA_AGENT_TOKEN
 

@@ -1912,7 +1912,7 @@ Agent 的 `status` 事件新增：
 | GET | `/clusters?projectId=1` | viewer+ | 集群列表，含节点健康、资产数、未关闭漏洞 P0/P1 |
 | POST | `/clusters` | admin | `{projectId, name, environment, provider, region, description}` |
 | GET | `/clusters/{id}` | viewer+ | 详情：cluster + nodes + assets + findings 统计 |
-| PATCH | `/clusters/{id}` | operator+ | 修改环境/厂商/地域/说明 |
+| PATCH | `/clusters/{id}` | admin | 修改环境/厂商/地域/说明 |
 | DELETE | `/clusters/{id}` | admin | 删除集群与节点，资产 `cluster_id` 置 0 |
 
 `environment` 取值：`prod` / `staging` / `dev` / `test` / `other`。
@@ -1936,14 +1936,32 @@ Agent 的 `status` 事件新增：
   "name": "backend-1", "role": "backend|database|cache|proxy|storage|scan_target",
   "host": "10.0.0.12", "port": 8787, "url": "http://10.0.0.12:8787/api/v1/healthz",
   "sshHostId": 3, "checkType": "auto|http|tcp|ssh|ssh_file",
-  "path": "/var/lib/app/app.db", "note": "主库"
+  "path": "/var/lib/app/app.db", "note": "主库",
+  "dbEngine": "mysql|postgresql|", "dbName": "app", "dbUser": "vuln_readonly",
+  "dbPassword": "仅写入，不回显", "dbSslMode": "disable|require"
 }
 ```
 
 - `checkType=auto` 时：backend→http，database→tcp（填了 `sshHostId` 与 `path` 则为 ssh_file），scan_target→ssh，其余→tcp。
-- SSH/ssh_file 检查复用已保存的 SSH 主机凭据；节点本身不保存凭据。
+- SSH/ssh_file 检查复用已保存的 SSH 主机凭据；数据库深检凭据单独使用 AES-256-GCM 加密存储，接口只返回 `hasDbSecret`，不返回明文。
+- 配置 `dbEngine` 后，database 节点的 TCP 检查升级为只读深检：版本、当前/最大连接数、数据容量与运行时长；失败会返回连接或查询原因。
 - 扫描结果进入现有资产/漏洞流水线，并自动把资产 `cluster_id` 设为该集群。
 - 检查/扫描结果包含 `status`（ok/failed/unknown）、`latencyMs`、`detail`；扫描汇总包含每个节点的成功/失败原因。
+
+#### 异步检查/扫描任务
+
+| 方法 | 路径 | 角色 | 说明 |
+|---|---|---|---|
+| POST | `/clusters/{id}/jobs` | operator+ | `{kind:"check"\|"scan"}`，创建后台任务，返回 `job` |
+| GET | `/clusters/{id}/jobs?limit=20` | viewer+ | 任务列表 |
+| GET | `/cluster-jobs/{id}` | viewer+ | 任务进度与逐节点结果 |
+| POST | `/cluster-jobs/{id}/cancel` | operator+ | 取消排队/执行中的任务 |
+
+任务状态：`queued` / `running` / `succeeded` / `partial` / `failed` / `canceled`；`items` 记录每个节点的 `status`、`message`、`latencyMs` 与扫描统计。节点最多 3 个并发执行，服务重启时未完成任务标记为 `canceled`。
+
+#### 集群筛选
+
+`GET /findings`、`GET /reports/findings.pdf|csv`、`GET /assets`、`GET /assets/export` 均支持 `clusterId` 参数，按 `assets.cluster_id` 过滤。
 
 #### 资产关联
 
@@ -1954,4 +1972,37 @@ Agent 的 `status` 事件新增：
 
 - 删除项目/集群/解除关联只清空 `cluster_id`，不删除资产、组件或漏洞。
 - 所有写操作、检查与扫描写审计（`project.*`、`cluster.*`、`cluster.node.*`、`cluster.assets.*`）。
+
+---
+
+## 14. Agent 管理（单机身份）
+
+除旧版全局 Bearer 令牌外，每台主机可注册独立身份，使用请求头 `X-Agent-Id` + `X-Agent-Secret` 访问 Agent 接口。
+
+### 页面接口（会话 Cookie）
+
+| 方法 | 路径 | 角色 | 说明 |
+|---|---|---|---|
+| GET | `/agents` | viewer+ | Agent 列表，含在线状态、归属项目/集群、命令计数 |
+| POST | `/agents/enroll-tokens` | operator+ | `{nameHint, projectId?, clusterId?, ttlMinutes?}` 生成一次性令牌，明文仅返回一次 |
+| GET | `/agents/enroll-tokens` | operator+ | 注册令牌列表（不含明文） |
+| DELETE | `/agents/enroll-tokens/{id}` | operator+ | 删除未使用令牌 |
+| POST | `/agents/{id}/revoke` | operator+ | 吊销 Agent，未执行命令标记失败 |
+| POST | `/agents/{id}/commands` | operator+ | `{action:"ping"\|"collect"}` 下发命令 |
+| GET | `/agents/{id}/commands?limit=50` | viewer+ | 命令历史与结果 |
+
+在线判定：最近心跳在 3 分钟以内为 `online`，否则 `offline`；`revokedAt` 非空为 `revoked`。
+
+### Agent 接口（无需会话）
+
+| 方法 | 路径 | 认证 | 说明 |
+|---|---|---|---|
+| POST | `/agents/enroll` | 注册令牌 | `{token, name?, hostname, os?, osVersion?, version?}` → `{agentId, secret}` |
+| POST | `/agents/heartbeat` | Agent 身份 | 更新主机信息与 `lastSeenAt`，返回待执行命令数 |
+| GET | `/agents/commands` | Agent 身份 | 拉取最多 5 条待执行命令，并标记为 `claimed` |
+| POST | `/agents/commands/{id}/result` | Agent 身份 | `{status:"succeeded"\|"failed", output, error}` |
+| POST | `/agent/report` | 全局令牌或 Agent 身份 | SBOM 上报；绑定集群时资产自动写入 `cluster_id` |
+| GET/POST | `/agent/jobs...` | 全局令牌或 Agent 身份 | 主机作业拉取/抢占/回传，签名密钥随身份类型派生 |
+
+注册令牌一次性使用，默认 60 分钟有效；Agent 首次注册后把 `agentId` 与 `secret` 保存至 `<数据目录>/agent.identity.json`（0600），后续自动复用。旧版全局令牌流程保持兼容。
 
