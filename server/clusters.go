@@ -684,6 +684,12 @@ func normalizeClusterNode(name, role, host string, port int, url string, sshHost
 	if node.SSHHostID < 0 {
 		return node, errors.New("SSH 主机 ID 无效")
 	}
+	if (node.CheckType == "ssh" || node.CheckType == "ssh_file") && node.SSHHostID == 0 {
+		return node, errors.New("SSH 检查需要关联 SSH 主机，或在节点中填写用户名和密码新建凭据")
+	}
+	if node.CheckType == "ssh_file" && node.Path == "" {
+		return node, errors.New("SSH 文件检查需要填写绝对路径")
+	}
 	if node.Host == "" && node.URL == "" && node.SSHHostID == 0 {
 		return node, errors.New("至少填写主机、URL 或关联 SSH 主机之一")
 	}
@@ -918,7 +924,7 @@ func (a *App) checkClusterNode(ctx context.Context, node clusterNodeRecord) (str
 		return "ok", time.Since(started).Milliseconds(), "TCP 连接成功"
 	case "ssh", "ssh_file":
 		if node.SSHHostID <= 0 {
-			return "failed", 0, "SSH 检查需要关联已保存的 SSH 主机"
+			return "failed", 0, "SSH 检查需要关联已保存的 SSH 主机；请在节点编辑中关联主机或填写用户名/密码新建凭据"
 		}
 		host, err := a.getSSHHost(checkCtx, node.SSHHostID)
 		if err != nil {

@@ -9,7 +9,7 @@ COPY web/ ./
 RUN npm run build
 
 FROM golang:1.26-alpine AS server
-ARG VERSION=0.7.3
+ARG VERSION=0.7.4
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 WORKDIR /src/server

@@ -1088,16 +1088,26 @@ function NodeDialog({
   const [sshUsername, setSshUsername] = useState("");
   const [sshPassword, setSshPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const requiresSSH = checkType === "ssh" || checkType === "ssh_file";
+  const needInlineSSH = sshCreateMode || (requiresSSH && Number(sshHostId) === 0);
 
   async function submit() {
     if (!name.trim()) {
       toast.push("请填写节点名称", "error");
       return;
     }
+    if (requiresSSH && Number(sshHostId) === 0 && !sshCreateMode) {
+      toast.push("SSH 检查需要关联主机，或填写用户名和密码新建", "error");
+      return;
+    }
+    if (requiresSSH && checkType === "ssh_file" && !path.trim()) {
+      toast.push("SSH 文件检查需要填写绝对路径", "error");
+      return;
+    }
     setSaving(true);
     try {
       let linkedSSHHostID = Number(sshHostId) || 0;
-      if (sshCreateMode) {
+      if (needInlineSSH) {
         if (!host.trim() || !sshUsername.trim() || !sshPassword) {
           throw new Error("新建 SSH 凭据需要填写主机、用户名与密码");
         }
@@ -1195,11 +1205,18 @@ function NodeDialog({
           </select>
         </label>
         <div className="col-span-2 space-y-2">
-          <label className="flex items-center gap-2 text-[11px] text-ink2">
-            <input type="checkbox" checked={sshCreateMode} onChange={(event) => setSshCreateMode(event.target.checked)} />
-            没有已保存的 SSH 主机？直接填写用户名和密码新建
+          <label className={`flex items-center gap-2 text-[11px] ${requiresSSH && Number(sshHostId) === 0 ? "text-warn" : "text-ink2"}`}>
+            <input
+              type="checkbox"
+              checked={needInlineSSH}
+              disabled={requiresSSH && Number(sshHostId) === 0}
+              onChange={(event) => setSshCreateMode(event.target.checked)}
+            />
+            {requiresSSH && Number(sshHostId) === 0
+              ? "当前 SSH 检查未关联主机，必须填写用户名和密码新建凭据"
+              : "没有已保存的 SSH 主机？直接填写用户名和密码新建"}
           </label>
-          {sshCreateMode && (
+          {needInlineSSH && (
             <div className="grid grid-cols-2 gap-3 rounded-[8px] border border-line bg-subtle/40 p-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] text-ink2">SSH 端口</span>
