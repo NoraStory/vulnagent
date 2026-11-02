@@ -47,23 +47,31 @@ type clusterRecord struct {
 
 // clusterNodeRecord 集群节点：后端、数据库、缓存、代理、存储或扫描目标
 type clusterNodeRecord struct {
-	ID        int64  `json:"id"`
-	ClusterID int64  `json:"clusterId"`
-	Name      string `json:"name"`
-	Role      string `json:"role"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	URL       string `json:"url"`
-	SSHHostID int64  `json:"sshHostId"`
-	CheckType string `json:"checkType"`
-	Path      string `json:"path"`
-	Note      string `json:"note"`
-	Status    string `json:"status"`
-	LatencyMs int64  `json:"latencyMs"`
-	Detail    string `json:"detail"`
-	CheckedAt string `json:"checkedAt"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID          int64  `json:"id"`
+	ClusterID   int64  `json:"clusterId"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	URL         string `json:"url"`
+	SSHHostID   int64  `json:"sshHostId"`
+	CheckType   string `json:"checkType"`
+	Path        string `json:"path"`
+	Note        string `json:"note"`
+	DBEngine    string `json:"dbEngine"`
+	DBName      string `json:"dbName"`
+	DBUser      string `json:"dbUser"`
+	DBSSLMode   string `json:"dbSslMode"`
+	DBDetail    string `json:"dbDetail"`
+	DBCheckedAt string `json:"dbCheckedAt"`
+	HasDBSecret bool   `json:"hasDbSecret"`
+	dbSecret    string
+	Status      string `json:"status"`
+	LatencyMs   int64  `json:"latencyMs"`
+	Detail      string `json:"detail"`
+	CheckedAt   string `json:"checkedAt"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
 }
 
 type clusterAsset struct {
@@ -83,13 +91,16 @@ type clusterDetail struct {
 }
 
 const clusterNodeColumns = `id, cluster_id, name, role, host, port, url, ssh_host_id, check_type, path, note,
-	status, latency_ms, detail, checked_at, created_at, updated_at`
+	status, latency_ms, detail, checked_at, created_at, updated_at,
+	db_engine, db_name, db_user, db_secret, db_ssl_mode, db_detail, db_checked_at`
 
 func scanClusterNode(row interface{ Scan(dest ...any) error }) (clusterNodeRecord, error) {
 	var node clusterNodeRecord
 	err := row.Scan(&node.ID, &node.ClusterID, &node.Name, &node.Role, &node.Host, &node.Port, &node.URL,
 		&node.SSHHostID, &node.CheckType, &node.Path, &node.Note, &node.Status, &node.LatencyMs,
-		&node.Detail, &node.CheckedAt, &node.CreatedAt, &node.UpdatedAt)
+		&node.Detail, &node.CheckedAt, &node.CreatedAt, &node.UpdatedAt,
+		&node.DBEngine, &node.DBName, &node.DBUser, &node.dbSecret, &node.DBSSLMode, &node.DBDetail, &node.DBCheckedAt)
+	node.HasDBSecret = node.dbSecret != ""
 	return node, err
 }
 
@@ -584,15 +595,20 @@ func (a *App) handleClusterNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name      string `json:"name"`
-		Role      string `json:"role"`
-		Host      string `json:"host"`
-		Port      int    `json:"port"`
-		URL       string `json:"url"`
-		SSHHostID int64  `json:"sshHostId"`
-		CheckType string `json:"checkType"`
-		Path      string `json:"path"`
-		Note      string `json:"note"`
+		Name       string `json:"name"`
+		Role       string `json:"role"`
+		Host       string `json:"host"`
+		Port       int    `json:"port"`
+		URL        string `json:"url"`
+		SSHHostID  int64  `json:"sshHostId"`
+		CheckType  string `json:"checkType"`
+		Path       string `json:"path"`
+		Note       string `json:"note"`
+		DBEngine   string `json:"dbEngine"`
+		DBName     string `json:"dbName"`
+		DBUser     string `json:"dbUser"`
+		DBPassword string `json:"dbPassword"`
+		DBSSLMode  string `json:"dbSslMode"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -603,6 +619,18 @@ func (a *App) handleClusterNodeCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	dbEngine, dbName, dbUser, dbSSL, err := normalizeDBConfig(in.DBEngine, in.DBName, in.DBUser, in.DBSSLMode)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	sealed := ""
+	if strings.TrimSpace(in.DBPassword) != "" {
+		if sealed, err = a.sealSSHSecret(in.DBPassword); err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal_error", "加密数据库凭据失败")
+			return
+		}
+	}
 	var clusterExists int
 	if err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM clusters WHERE id = ?`, clusterID).Scan(&clusterExists); err != nil || clusterExists == 0 {
 		writeErr(w, http.StatusNotFound, "not_found", "集群不存在")
@@ -611,10 +639,11 @@ func (a *App) handleClusterNodeCreate(w http.ResponseWriter, r *http.Request) {
 	now := fmtT(nowT())
 	res, err := a.db.ExecContext(r.Context(), `INSERT INTO cluster_nodes
 		(cluster_id, name, role, host, port, url, ssh_host_id, check_type, path, note,
-		 status, latency_ms, detail, checked_at, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,'unknown',0,'','',?,?)`,
+		 status, latency_ms, detail, checked_at, created_at, updated_at,
+		 db_engine, db_name, db_user, db_secret, db_ssl_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,'unknown',0,'','',?,?,?,?,?,?,?)`,
 		clusterID, node.Name, node.Role, node.Host, node.Port, node.URL, node.SSHHostID, node.CheckType,
-		node.Path, node.Note, now, now)
+		node.Path, node.Note, now, now, dbEngine, dbName, dbUser, sealed, dbSSL)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "创建节点失败")
 		return
@@ -660,6 +689,32 @@ func normalizeClusterNode(name, role, host string, port int, url string, sshHost
 	return node, nil
 }
 
+// normalizeDBConfig 校验数据库只读连接配置
+func normalizeDBConfig(engine, name, user, sslMode string) (string, string, string, string, error) {
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	switch engine {
+	case "", "mysql", "postgresql":
+	default:
+		return "", "", "", "", errors.New("数据库类型必须为 mysql 或 postgresql")
+	}
+	sslMode = strings.ToLower(strings.TrimSpace(sslMode))
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	if sslMode != "disable" && sslMode != "require" {
+		return "", "", "", "", errors.New("SSL 模式必须为 disable 或 require")
+	}
+	name = strings.TrimSpace(name)
+	user = strings.TrimSpace(user)
+	if len(name) > 128 || len(user) > 128 {
+		return "", "", "", "", errors.New("数据库名或用户名过长")
+	}
+	if engine != "" && user == "" {
+		return "", "", "", "", errors.New("配置数据库深检时必须填写只读用户名")
+	}
+	return engine, name, user, sslMode, nil
+}
+
 func (a *App) getClusterNode(ctx context.Context, id int64) (clusterNodeRecord, error) {
 	row := a.db.QueryRowContext(ctx, `SELECT `+clusterNodeColumns+` FROM cluster_nodes WHERE id = ?`, id)
 	return scanClusterNode(row)
@@ -684,15 +739,21 @@ func (a *App) handleClusterNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name      *string `json:"name"`
-		Role      *string `json:"role"`
-		Host      *string `json:"host"`
-		Port      *int    `json:"port"`
-		URL       *string `json:"url"`
-		SSHHostID *int64  `json:"sshHostId"`
-		CheckType *string `json:"checkType"`
-		Path      *string `json:"path"`
-		Note      *string `json:"note"`
+		Name          *string `json:"name"`
+		Role          *string `json:"role"`
+		Host          *string `json:"host"`
+		Port          *int    `json:"port"`
+		URL           *string `json:"url"`
+		SSHHostID     *int64  `json:"sshHostId"`
+		CheckType     *string `json:"checkType"`
+		Path          *string `json:"path"`
+		Note          *string `json:"note"`
+		DBEngine      *string `json:"dbEngine"`
+		DBName        *string `json:"dbName"`
+		DBUser        *string `json:"dbUser"`
+		DBPassword    *string `json:"dbPassword"`
+		DBSSLMode     *string `json:"dbSslMode"`
+		ClearDBSecret bool    `json:"clearDbSecret"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -725,16 +786,44 @@ func (a *App) handleClusterNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	if in.Note != nil {
 		current.Note = *in.Note
 	}
+	if in.DBEngine != nil {
+		current.DBEngine = *in.DBEngine
+	}
+	if in.DBName != nil {
+		current.DBName = *in.DBName
+	}
+	if in.DBUser != nil {
+		current.DBUser = *in.DBUser
+	}
+	if in.DBSSLMode != nil {
+		current.DBSSLMode = *in.DBSSLMode
+	}
 	next, err := normalizeClusterNode(current.Name, current.Role, current.Host, current.Port, current.URL,
 		current.SSHHostID, current.CheckType, current.Path, current.Note)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	dbEngine, dbName, dbUser, dbSSL, err := normalizeDBConfig(current.DBEngine, current.DBName, current.DBUser, current.DBSSLMode)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	sealed := current.dbSecret
+	if in.ClearDBSecret || dbEngine == "" {
+		sealed = ""
+	}
+	if in.DBPassword != nil && strings.TrimSpace(*in.DBPassword) != "" {
+		if sealed, err = a.sealSSHSecret(*in.DBPassword); err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal_error", "加密数据库凭据失败")
+			return
+		}
+	}
 	if _, err := a.db.ExecContext(r.Context(), `UPDATE cluster_nodes SET name=?, role=?, host=?, port=?, url=?,
-		ssh_host_id=?, check_type=?, path=?, note=?, updated_at=? WHERE id=?`,
+		ssh_host_id=?, check_type=?, path=?, note=?, updated_at=?,
+		db_engine=?, db_name=?, db_user=?, db_secret=?, db_ssl_mode=? WHERE id=?`,
 		next.Name, next.Role, next.Host, next.Port, next.URL, next.SSHHostID, next.CheckType,
-		next.Path, next.Note, fmtT(nowT()), id); err != nil {
+		next.Path, next.Note, fmtT(nowT()), dbEngine, dbName, dbUser, sealed, dbSSL, id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新节点失败")
 		return
 	}
@@ -785,6 +874,9 @@ func (a *App) checkClusterNode(ctx context.Context, node clusterNodeRecord) (str
 	defer cancel()
 	started := time.Now()
 	checkType := a.effectiveCheckType(node)
+	if checkType == "tcp" && node.DBEngine != "" {
+		return a.checkClusterDatabase(checkCtx, node)
+	}
 	switch checkType {
 	case "http":
 		target := node.URL
@@ -877,6 +969,14 @@ func (a *App) runClusterNodeCheck(ctx context.Context, node clusterNodeRecord) c
 	status, latency, detail := a.checkClusterNode(ctx, node)
 	node.Status, node.LatencyMs, node.Detail = status, latency, truncateRunes(detail, 300)
 	node.CheckedAt = fmtT(nowT())
+	if node.DBEngine != "" {
+		node.DBDetail = node.Detail
+		node.DBCheckedAt = node.CheckedAt
+		_, _ = a.db.ExecContext(ctx, `UPDATE cluster_nodes SET status=?, latency_ms=?, detail=?, checked_at=?,
+			db_detail=?, db_checked_at=? WHERE id=?`,
+			node.Status, node.LatencyMs, node.Detail, node.CheckedAt, node.DBDetail, node.DBCheckedAt, node.ID)
+		return node
+	}
 	_, _ = a.db.ExecContext(ctx, `UPDATE cluster_nodes SET status=?, latency_ms=?, detail=?, checked_at=? WHERE id=?`,
 		node.Status, node.LatencyMs, node.Detail, node.CheckedAt, node.ID)
 	return node

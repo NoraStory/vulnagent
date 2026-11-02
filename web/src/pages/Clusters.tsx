@@ -571,7 +571,16 @@ export function ClustersPage() {
                                 <span className="block text-[11.5px] text-ink">{node.name}</span>
                                 {node.note && <span className="block text-[9.5px] text-ink3">{node.note}</span>}
                               </td>
-                              <td className="px-3 py-1.5 text-ink2">{roleLabels[node.role] ?? node.role}</td>
+                              <td className="px-3 py-1.5 text-ink2">
+                                <span className="inline-flex items-center gap-1">
+                                  {roleLabels[node.role] ?? node.role}
+                                  {node.dbEngine && (
+                                    <span className="rounded-full bg-brand-soft px-1.5 py-0.5 text-[9px] text-brand">
+                                      {node.dbEngine === "mysql" ? "MySQL" : "PostgreSQL"}
+                                    </span>
+                                  )}
+                                </span>
+                              </td>
                               <td className="max-w-[220px] truncate px-3 py-1.5 font-mono text-[10.5px] text-ink2">{endpointOf(node)}</td>
                               <td className="px-3 py-1.5">
                                 <span className={`rounded-full px-1.5 py-0.5 text-[9.5px] ${meta.className}`}>{meta.label}</span>
@@ -1055,6 +1064,11 @@ function NodeDialog({
   const [checkType, setCheckType] = useState(node?.checkType ?? "auto");
   const [path, setPath] = useState(node?.path ?? "");
   const [note, setNote] = useState(node?.note ?? "");
+  const [dbEngine, setDbEngine] = useState<string>(node?.dbEngine ?? "");
+  const [dbName, setDbName] = useState(node?.dbName ?? "");
+  const [dbUser, setDbUser] = useState(node?.dbUser ?? "");
+  const [dbPassword, setDbPassword] = useState("");
+  const [dbSslMode, setDbSslMode] = useState(node?.dbSslMode || "disable");
   const [saving, setSaving] = useState(false);
 
   async function submit() {
@@ -1071,7 +1085,12 @@ function NodeDialog({
       sshHostId: Number(sshHostId) || 0,
       checkType,
       path: path.trim(),
-      note: note.trim()
+      note: note.trim(),
+      dbEngine,
+      dbName: dbName.trim(),
+      dbUser: dbUser.trim(),
+      dbPassword,
+      dbSslMode
     };
     setSaving(true);
     try {
@@ -1148,6 +1167,62 @@ function NodeDialog({
           <span className="mb-1 block text-[11px] text-ink2">备注</span>
           <input className="input h-9 text-[12.5px]" value={note} onChange={(event) => setNote(event.target.value)} placeholder="负责人、版本或端口说明" />
         </label>
+        {role === "database" && (
+          <div className="col-span-2 space-y-3 rounded-[8px] border border-line bg-subtle/40 p-3">
+            <div className="flex items-center gap-2">
+              <p className="text-[11.5px] font-medium text-ink">数据库深度检查</p>
+              <span className="rounded-full bg-surface px-1.5 py-0.5 text-[9.5px] text-ink3">可选 · 只读</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-ink2">数据库类型</span>
+                <select className="input h-9 text-[12.5px]" value={dbEngine} onChange={(event) => setDbEngine(event.target.value)}>
+                  <option value="">仅 TCP 检查</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="postgresql">PostgreSQL</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-ink2">SSL</span>
+                <select
+                  className="input h-9 text-[12.5px]"
+                  value={dbSslMode}
+                  onChange={(event) => setDbSslMode(event.target.value)}
+                  disabled={!dbEngine}
+                >
+                  <option value="disable">关闭</option>
+                  <option value="require">要求 TLS</option>
+                </select>
+              </label>
+              {dbEngine && (
+                <>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] text-ink2">数据库名</span>
+                    <input className="input h-9 font-mono text-[11.5px]" value={dbName} onChange={(event) => setDbName(event.target.value)} placeholder="app（留空看实例）" />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] text-ink2">只读用户名</span>
+                    <input className="input h-9 font-mono text-[11.5px]" value={dbUser} onChange={(event) => setDbUser(event.target.value)} placeholder="vuln_readonly" />
+                  </label>
+                  <label className="col-span-2 block">
+                    <span className="mb-1 block text-[11px] text-ink2">只读密码</span>
+                    <input
+                      type="password"
+                      className="input h-9 font-mono text-[11.5px]"
+                      value={dbPassword}
+                      onChange={(event) => setDbPassword(event.target.value)}
+                      placeholder={node?.hasDbSecret ? "已保存，留空表示不修改" : "仅用于只读指标查询"}
+                      autoComplete="new-password"
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+            <p className="text-[10px] leading-[15px] text-ink3">
+              仅执行版本、连接数、数据容量等只读查询；密码使用 AES-GCM 加密存储，接口不回显。建议单独创建只读账号并限制来源地址。
+            </p>
+          </div>
+        )}
         <p className="col-span-2 rounded-[8px] bg-subtle px-2.5 py-2 text-[10.5px] leading-[16px] text-ink3">
           后端填 URL 走 HTTP 健康检查；数据库填主机+端口走 TCP；SQLite 数据库填关联 SSH 主机与文件路径走远程文件检查。关联 SSH 主机后可一键做只读漏洞扫描。
         </p>

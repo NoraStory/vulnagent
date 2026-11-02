@@ -770,6 +770,13 @@ export interface ClusterNodeItem {
   checkType: ClusterCheckType;
   path: string;
   note: string;
+  dbEngine: "" | "mysql" | "postgresql";
+  dbName: string;
+  dbUser: string;
+  dbSslMode: string;
+  dbDetail: string;
+  dbCheckedAt: string;
+  hasDbSecret: boolean;
   status: "ok" | "failed" | "unknown" | string;
   latencyMs: number;
   detail: string;

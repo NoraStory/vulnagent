@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -143,6 +144,83 @@ func TestClusterJobRunsAsync(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("任务未在预期时间内完成")
+}
+
+func TestClusterNodeDBConfigEncrypted(t *testing.T) {
+	app := newRuntimeTestApp(t)
+	res, err := app.db.Exec(`INSERT INTO projects(name, description, owner, created_at, updated_at)
+		VALUES('项目 D','','tester','','')`)
+	if err != nil {
+		t.Fatalf("写入项目失败：%v", err)
+	}
+	projectID, _ := res.LastInsertId()
+	res, err = app.db.Exec(`INSERT INTO clusters(project_id, name, environment, provider, region, description, created_at, updated_at)
+		VALUES(?,'cluster-d','prod','','','','','')`, projectID)
+	if err != nil {
+		t.Fatalf("写入集群失败：%v", err)
+	}
+	clusterID, _ := res.LastInsertId()
+
+	rec := httptest.NewRecorder()
+	req := newCatalogRequest(t, "POST", "/api/v1/clusters/x/nodes", map[string]any{
+		"name": "mysql-1", "role": "database", "host": "127.0.0.1", "port": 3306,
+		"dbEngine": "mysql", "dbName": "app", "dbUser": "vuln_readonly", "dbPassword": "s3cret-pass",
+	}, "operator")
+	req.SetPathValue("id", strconv.FormatInt(clusterID, 10))
+	app.handleClusterNodeCreate(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("创建数据库节点失败：%d %s", rec.Code, rec.Body.String())
+	}
+
+	var nodeID int64
+	var sealed, engine, user string
+	if err := app.db.QueryRow(`SELECT id, db_secret, db_engine, db_user FROM cluster_nodes WHERE name = 'mysql-1'`).
+		Scan(&nodeID, &sealed, &engine, &user); err != nil {
+		t.Fatalf("读取数据库节点失败：%v", err)
+	}
+	if sealed == "" || sealed == "s3cret-pass" {
+		t.Fatalf("数据库密码未加密存储：%q", sealed)
+	}
+	if engine != "mysql" || user != "vuln_readonly" {
+		t.Fatalf("数据库配置未保存：%s %s", engine, user)
+	}
+	node, err := app.getClusterNode(context.Background(), nodeID)
+	if err != nil {
+		t.Fatalf("读取节点失败：%v", err)
+	}
+	if !node.HasDBSecret || node.dbSecret == "s3cret-pass" {
+		t.Fatalf("节点凭据标记异常：%+v", node)
+	}
+	plain, err := app.openSSHSecret(node.dbSecret)
+	if err != nil || plain != "s3cret-pass" {
+		t.Fatalf("凭据解密失败：%v %q", err, plain)
+	}
+
+	rec = httptest.NewRecorder()
+	req = newCatalogRequest(t, "PATCH", "/api/v1/cluster-nodes/x", map[string]any{"clearDbSecret": true}, "operator")
+	req.SetPathValue("id", strconv.FormatInt(nodeID, 10))
+	app.handleClusterNodeUpdate(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("清除凭据失败：%d %s", rec.Code, rec.Body.String())
+	}
+	var cleared string
+	_ = app.db.QueryRow(`SELECT db_secret FROM cluster_nodes WHERE id = ?`, nodeID).Scan(&cleared)
+	if cleared != "" {
+		t.Fatalf("凭据未清除：%q", cleared)
+	}
+}
+
+func TestBuildDatabaseDSN(t *testing.T) {
+	mysqlNode := clusterNodeRecord{DBEngine: "mysql", Host: "127.0.0.1", Port: 3306, DBUser: "ro", DBName: "app", DBSSLMode: "require"}
+	driver, dsn := buildDatabaseDSN(mysqlNode, "p@ss word")
+	if driver != "mysql" || !strings.Contains(dsn, "tls=skip-verify") || !strings.Contains(dsn, "app") {
+		t.Fatalf("MySQL DSN 异常：%s %s", driver, dsn)
+	}
+	pgNode := clusterNodeRecord{DBEngine: "postgresql", Host: "10.0.0.2", Port: 5432, DBUser: "ro", DBName: "", DBSSLMode: "disable"}
+	driver, dsn = buildDatabaseDSN(pgNode, "secret")
+	if driver != "postgres" || !strings.Contains(dsn, "/postgres") || !strings.Contains(dsn, "sslmode=disable") {
+		t.Fatalf("PostgreSQL DSN 异常：%s %s", driver, dsn)
+	}
 }
 
 func TestClusterScanLinksAsset(t *testing.T) {
