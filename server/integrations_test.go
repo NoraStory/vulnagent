@@ -242,3 +242,28 @@ func TestIntegrationSyncFailureRecorded(t *testing.T) {
 		t.Fatalf("失败状态未记录：%+v", src)
 	}
 }
+
+func TestValidateIntegrationCMDMPagination(t *testing.T) {
+	base := map[string]any{"url": "https://cmdb.example.com/api/assets", "authType": "none"}
+	if err := validateIntegration("cmdb_api", base, nil, false); err != nil {
+		t.Fatalf("默认配置应通过校验：%v", err)
+	}
+	for _, mode := range []string{"auto", "none", "page", "cursor"} {
+		config := map[string]any{"url": "https://cmdb.example.com/api/assets", "pagination": mode}
+		if err := validateIntegration("cmdb_api", config, nil, false); err != nil {
+			t.Fatalf("分页方式 %s 应通过校验：%v", mode, err)
+		}
+	}
+	invalid := map[string]any{"url": "https://cmdb.example.com/api/assets", "pagination": "offset"}
+	if err := validateIntegration("cmdb_api", invalid, nil, false); err == nil {
+		t.Fatal("未知分页方式应被拒绝")
+	}
+	tooLarge := map[string]any{"url": "https://cmdb.example.com/api/assets", "pagination": "page", "pageSize": float64(5000)}
+	if err := validateIntegration("cmdb_api", tooLarge, nil, false); err == nil {
+		t.Fatal("超大页大小应被拒绝")
+	}
+	tooMany := map[string]any{"url": "https://cmdb.example.com/api/assets", "maxPages": "9999"}
+	if err := validateIntegration("cmdb_api", tooMany, nil, false); err == nil {
+		t.Fatal("超大翻页数应被拒绝")
+	}
+}

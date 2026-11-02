@@ -59,6 +59,27 @@ func integrationConfigString(cfg map[string]any, key string) string {
 	return ""
 }
 
+// integrationConfigInt 兼容前端字符串与 JSON 数字两种写法
+func integrationConfigInt(cfg map[string]any, key string, fallback int) int {
+	value, ok := cfg[key]
+	if !ok || value == nil {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case string:
+		if number, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
+			return number
+		}
+	case json.Number:
+		if number, err := typed.Int64(); err == nil {
+			return int(number)
+		}
+	}
+	return fallback
+}
+
 func toIntegrationItem(src ports.IntegrationSource) map[string]any {
 	return map[string]any{
 		"id":              src.ID,
@@ -118,6 +139,17 @@ func validateIntegration(kind string, config map[string]any, credentials map[str
 	case string(cloud.KindCMDB):
 		if integrationConfigString(config, "url") == "" {
 			return fmt.Errorf("外部 CMDB 同步需要填写 URL")
+		}
+		switch mode := strings.ToLower(integrationConfigString(config, "pagination")); mode {
+		case "", "auto", "none", "page", "cursor":
+		default:
+			return fmt.Errorf("分页方式仅支持 auto / none / page / cursor")
+		}
+		if size := integrationConfigInt(config, "pageSize", 0); size != 0 && (size < 1 || size > 1000) {
+			return fmt.Errorf("每页条数需在 1-1000 之间")
+		}
+		if pages := integrationConfigInt(config, "maxPages", 0); pages != 0 && (pages < 1 || pages > 500) {
+			return fmt.Errorf("最大翻页数需在 1-500 之间")
 		}
 		switch strings.ToLower(integrationConfigString(config, "authType")) {
 		case "", "none":
@@ -412,6 +444,16 @@ func (a *App) integrationRuntime(src ports.IntegrationSource) (cloud.Provider, c
 	cfg.URL = integrationConfigString(raw, "url")
 	cfg.AuthType = integrationConfigString(raw, "authType")
 	cfg.SubscriptionID = integrationConfigString(raw, "subscriptionId")
+	cfg.Pagination = integrationConfigString(raw, "pagination")
+	cfg.PageParam = integrationConfigString(raw, "pageParam")
+	cfg.PageSizeParam = integrationConfigString(raw, "pageSizeParam")
+	cfg.PageSize = integrationConfigInt(raw, "pageSize", 0)
+	cfg.StartPage = integrationConfigInt(raw, "startPage", 0)
+	cfg.CursorParam = integrationConfigString(raw, "cursorParam")
+	cfg.CursorField = integrationConfigString(raw, "cursorField")
+	cfg.ItemsField = integrationConfigString(raw, "itemsField")
+	cfg.TotalField = integrationConfigString(raw, "totalField")
+	cfg.MaxPages = integrationConfigInt(raw, "maxPages", 0)
 	if src.Secret != "" {
 		plain, err := a.openSSHSecret(src.Secret)
 		if err != nil {

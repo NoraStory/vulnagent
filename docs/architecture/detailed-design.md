@@ -619,6 +619,8 @@ CREATE TABLE integration_sources (
   不静默合并。新资产 `source=cloud`，已存在资产仅更新非空字段。
 - 手动同步单次上限 90 秒；定时任务每 5 分钟检查一次到期源，同源并发由进程内标记互斥。
 - 失败写 `last_status=failed` 与审计，并触发 `integration.sync_failed` Webhook。
+- 外部 CMDB 支持分页：默认 `auto` 跟随响应 `next`，也可显式选择 `none / page / cursor`；
+  配置项、响应形态与同源限制见 [CMDB 分页契约](./cmdb-pagination-contract.md)。
 
 ### 5.2 目标模型（规划中，尚未实现）
 

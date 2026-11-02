@@ -385,6 +385,11 @@ function IntegrationDialog({
   const [subscriptionId, setSubscriptionId] = useState("");
   const [url, setUrl] = useState("");
   const [authType, setAuthType] = useState("none");
+  const [pagination, setPagination] = useState("auto");
+  const [pageParam, setPageParam] = useState("page");
+  const [pageSize, setPageSize] = useState("200");
+  const [cursorParam, setCursorParam] = useState("cursor");
+  const [maxPages, setMaxPages] = useState("50");
   const [intervalMinutes, setIntervalMinutes] = useState("360");
   const [enabled, setEnabled] = useState(true);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
@@ -402,6 +407,11 @@ function IntegrationDialog({
     setSubscriptionId(String(config.subscriptionId ?? ""));
     setUrl(String(config.url ?? ""));
     setAuthType(String(config.authType ?? "none"));
+    setPagination(String(config.pagination ?? "auto"));
+    setPageParam(String(config.pageParam ?? "page"));
+    setPageSize(String(config.pageSize ?? 200));
+    setCursorParam(String(config.cursorParam ?? "cursor"));
+    setMaxPages(String(config.maxPages ?? 50));
     setIntervalMinutes(String(editing?.intervalMinutes ?? 360));
     setEnabled(editing?.enabled ?? true);
     setCredentials({});
@@ -426,6 +436,16 @@ function IntegrationDialog({
       }
       config.url = url.trim();
       config.authType = authType;
+      if (pagination !== "auto") config.pagination = pagination;
+      if (pagination === "page") {
+        config.pageParam = pageParam.trim() || "page";
+        config.pageSize = Number(pageSize) || 200;
+      }
+      if (pagination === "auto" || pagination === "cursor") {
+        if (cursorParam.trim() && cursorParam.trim() !== "cursor") config.cursorParam = cursorParam.trim();
+      }
+      const pages = Number(maxPages);
+      if (Number.isFinite(pages) && pages > 0 && pages !== 50) config.maxPages = pages;
     } else {
       if (!region.trim()) {
         setError("请填写 region");
@@ -550,6 +570,42 @@ function IntegrationDialog({
                     <option value="basic">Basic Auth</option>
                   </select>
                 </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] text-ink3">分页方式</span>
+                  <select className="input h-9 text-[12.5px]" value={pagination} onChange={(event) => setPagination(event.target.value)}>
+                    <option value="auto">自动（跟随 next）</option>
+                    <option value="none">单页</option>
+                    <option value="page">页码</option>
+                    <option value="cursor">游标</option>
+                  </select>
+                </label>
+                {pagination === "page" && (
+                  <>
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] text-ink3">页码参数</span>
+                      <input className="input h-9 font-mono text-[12px]" value={pageParam} onChange={(event) => setPageParam(event.target.value)} placeholder="page" />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] text-ink3">每页条数</span>
+                      <input className="input h-9 font-mono text-[12px]" inputMode="numeric" value={pageSize}
+                        onChange={(event) => setPageSize(event.target.value.replace(/[^0-9]/g, ""))} placeholder="200" />
+                    </label>
+                  </>
+                )}
+                {(pagination === "auto" || pagination === "cursor") && (
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] text-ink3">游标参数</span>
+                    <input className="input h-9 font-mono text-[12px]" value={cursorParam} onChange={(event) => setCursorParam(event.target.value)} placeholder="cursor" />
+                  </label>
+                )}
+                <label className="block">
+                  <span className="mb-1 block text-[11px] text-ink3">最大翻页数</span>
+                  <input className="input h-9 font-mono text-[12px]" inputMode="numeric" value={maxPages}
+                    onChange={(event) => setMaxPages(event.target.value.replace(/[^0-9]/g, ""))} placeholder="50" />
+                </label>
+                <p className="text-[11px] leading-relaxed text-ink3 sm:col-span-2">
+                  自动模式会读取响应中的 next 字段继续拉取：同源完整地址、相对地址或游标值均可；跨域地址会被拒绝。
+                </p>
               </>
             )}
 

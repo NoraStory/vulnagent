@@ -44,6 +44,18 @@ type Config struct {
 	AuthType       string
 	SubscriptionID string
 	Credentials    map[string]string
+
+	// 外部 CMDB 分页契约（仅 KindCMDB 使用，留空走默认值）
+	Pagination    string // auto（默认，跟随 next）/ none / page / cursor
+	PageParam     string // 页码参数名，默认 page
+	PageSizeParam string // 页大小参数名，默认 pageSize
+	PageSize      int    // 每页条数，默认 200
+	StartPage     int    // 起始页码，默认 1
+	CursorParam   string // 游标参数名，默认 cursor
+	CursorField   string // 响应中下一页游标字段，默认 next
+	ItemsField    string // 响应中条目数组字段，默认自动识别
+	TotalField    string // 响应中总条数字段，默认 total
+	MaxPages      int    // 最大翻页数，默认 50
 }
 
 // Provider 只读实例列表适配器
