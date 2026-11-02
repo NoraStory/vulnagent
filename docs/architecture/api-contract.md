@@ -1253,7 +1253,8 @@ vulnagent_selfcheck_failed 0
       "createdAt": "2026-10-27T10:30:00+08:00",
       "updatedAt": "2026-10-27T10:30:00+08:00",
       "lastConnectedAt": "2026-10-27T10:36:00+08:00",
-      "hasSecret": true
+      "hasSecret": true,
+      "gpuAccel": false
     }
   ]
 }
@@ -1264,7 +1265,7 @@ vulnagent_selfcheck_failed 0
 ```json
 { "name": "web-01", "host": "10.0.0.12", "port": 22, "username": "root",
   "authType": "password", "password": "…", "privateKey": "", "passphrase": "",
-  "note": "生产 Web", "tags": "prod, web" }
+  "note": "生产 Web", "tags": "prod, web", "gpuAccel": false }
 ```
 
 - `authType=password` 需要 `password`；`authType=key` 需要 `privateKey`，可选 `passphrase`。
@@ -1272,7 +1273,7 @@ vulnagent_selfcheck_failed 0
 
 ### PATCH /ssh/hosts/{id}（operator+）
 
-字段均可选；`password` / `privateKey` 留空表示保持原值；切换认证方式必须同时提供新凭据；地址或端口变化会清空已信任指纹；`clearHostKey=true` 可主动清除指纹。
+字段均可选；`password` / `privateKey` 留空表示保持原值；切换认证方式必须同时提供新凭据；地址或端口变化会清空已信任指纹；`clearHostKey=true` 可主动清除指纹；`gpuAccel` 切换该主机是否走 GPU 推理端点。
 
 ### DELETE /ssh/hosts/{id}（operator+）
 
@@ -1321,12 +1322,13 @@ vulnagent_selfcheck_failed 0
 ```
 
 ```json
-{ "answer": "根分区使用率 88%，建议…", "commands": ["df -i", "journalctl --disk-usage"], "model": "deepseek-v4-1-flash-261017",
+{ "answer": "根分区使用率 88%，建议…", "commands": ["df -i", "journalctl --disk-usage"], "model": "deepseek-v4-1-flash-261017", "accelerated": false,
   "context": { "usedTokens": 4210, "budgetTokens": 16000, "percent": 26.3, "compressedItems": 2, "savedTokens": 860, "historyItems": 10 } }
 ```
 
 - `question` 上限 2000 字符，`context` 上限 8000 字符（前端只发送最近终端输出）。
 - 历史超过 8 条或 6000 字时，较早对话会压缩成一段摘要，`context.compressedItems` 表示被压缩条数。
+- 主机开启 GPU 加速且服务端已配置 GPU 端点时，请求走 GPU 端点，响应 `accelerated=true`，`model` 为 GPU 端点模型。
 - 模型未配置返回 `503 llm_unavailable`；调用失败返回 `502 llm_failed`。
 - 返回命令只是建议，前端默认仅插入终端，执行前需要人工二次确认。
 
@@ -1641,7 +1643,7 @@ vulnagent_selfcheck_failed 0
 Agent 的 `status` 事件新增：
 
 ```json
-{ "type": "status", "data": { "runId": "…", "host": "web-01", "search": true, "contextRuns": 2, "references": [ … ], "referenceError": "" } }
+{ "type": "status", "data": { "runId": "…", "host": "web-01", "search": true, "contextRuns": 2, "accelerated": false, "model": "deepseek-v4-1-flash-261017", "references": [ … ], "referenceError": "" } }
 ```
 
 `POST /ssh/agent/run` 请求新增可选字段 `search`（缺省 `true`）：
@@ -1711,3 +1713,43 @@ Agent 的 `status` 事件新增：
 
 - 主机不存在：`404 not_found`；SSH 连接失败：`502 ssh_failed`；采集/解析失败：`502 metrics_failed`。
 - CPU 与网络速率来自两次快照（间隔 0.6s）的差值；磁盘与进程为单次快照。
+
+### 12.8 SSH 主机 GPU 探测与加速对比
+
+#### GET /ssh/hosts/{id}/gpu（viewer+）
+
+只读执行 `nvidia-smi --query-gpu=name,memory.total,driver_version,utilization.gpu`，不写审计、不修改目标机。
+
+```json
+{
+  "hostId": 7, "hostName": "gpu-01", "available": true,
+  "name": "NVIDIA GeForce RTX 4090", "memoryMb": 24564, "driver": "550.54.14", "utilization": 37,
+  "devices": [{ "name": "NVIDIA GeForce RTX 4090", "memoryMb": 24564, "driver": "550.54.14", "utilization": 37 }],
+  "endpointReady": true, "accelEnabled": false,
+  "sampledAt": "2026-11-02T16:20:31+08:00"
+}
+```
+
+- 未安装驱动 / 非 NVIDIA 主机：`available=false`，`error` 说明原因（HTTP 仍为 200）。
+- `endpointReady` 表示服务端已配置 `VA_GPU_LLM_*`；`accelEnabled` 为该主机保存的加速开关。
+
+#### POST /ssh/hosts/{id}/gpu/benchmark（operator+）
+
+对比默认端点与 GPU 端点的推理耗时。前置条件：主机检测到 GPU、服务端已配置默认端点与 GPU 端点。
+
+可选查询参数 `rounds`（1–3，默认 2）：每侧预热 1 次后连续调用并统计成功样本。
+
+```json
+{
+  "hostId": 7, "hostName": "gpu-01",
+  "detected": { "available": true, "name": "NVIDIA GeForce RTX 4090", "…": "…" },
+  "default": { "model": "deepseek-v4-1-flash", "avgMs": 1820, "minMs": 1610, "maxMs": 2010, "samples": 2, "failed": 0 },
+  "gpu": { "model": "qwen2.5-32b-instruct", "avgMs": 240, "minMs": 210, "maxMs": 270, "samples": 2, "failed": 0 },
+  "speedupPercent": 86.8, "rounds": 2, "sampledAt": "2026-11-02T16:25:02+08:00"
+}
+```
+
+- 未配置 GPU 端点：`503 gpu_not_configured`；未配置默认端点：`503 llm_unavailable`。
+- 主机无可用 GPU：`400 gpu_unavailable`，响应附带 `detected` 明细。
+- 成功对比写审计 `ssh.gpu.benchmark`；`speedupPercent` 为负数表示 GPU 端点更慢。
+

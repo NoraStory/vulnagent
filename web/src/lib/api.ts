@@ -45,6 +45,8 @@ import type {
   SshHostMetrics,
   SshHostScanResult,
   SshHostTestResult,
+  SshGpuInfo,
+  SshGpuBenchmark,
   SshSessionItem,
   SshAssistantReply,
   SshAgentEvent,
@@ -915,6 +917,14 @@ export const api = {
 
   sshHostMetrics(id: number): Promise<SshHostMetrics> {
     return request(`/ssh/hosts/${id}/metrics`);
+  },
+
+  sshHostGPU(id: number): Promise<SshGpuInfo> {
+    return request(`/ssh/hosts/${id}/gpu`);
+  },
+
+  sshHostGPUBenchmark(id: number, rounds = 2): Promise<SshGpuBenchmark> {
+    return request(`/ssh/hosts/${id}/gpu/benchmark${query({ rounds })}`, { method: "POST", body: "{}" });
   },
 
   sshSessions(limit = 50): Promise<{ items: SshSessionItem[] }> {

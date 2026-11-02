@@ -185,6 +185,8 @@ func serveTestSSHConn(conn net.Conn, config *ssh.ServerConfig, root string) {
 							"LOAD|0.52|0.40|0.35\nUPTIME|123456\nCPUS|4\nPROCS|123\n" +
 							"DISK|/|100000000|42000000|58000000|42%\n" +
 							"TOP|1234|12.3|4.5|nginx\n"
+					case strings.Contains(payload.Command, "nvidia-smi"):
+						output = "NVIDIA GeForce RTX 4090, 24564, 550.54.14, 37\n"
 					case strings.Contains(payload.Command, "dpkg-query"):
 						output = "#os\tubuntu\t22.04\ndeb\topenssl\t3.0.2-0ubuntu1.10\tamd64\ndeb\tbash\t5.1-6ubuntu1\tamd64\n"
 					case strings.HasPrefix(payload.Command, "echo "):

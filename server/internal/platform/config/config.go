@@ -58,11 +58,21 @@ type Config struct {
 	LLMBaseURL string
 	LLMAPIKey  string
 	LLMModel   string
+
+	// GPU 推理加速：OpenAI 兼容的本地推理服务（如 vLLM / TensorRT-LLM）
+	GPUBaseURL string
+	GPUAPIKey  string
+	GPUModel   string
 }
 
 // HarnessEnabled 模型凭据是否齐备
 func (c Config) HarnessEnabled() bool {
 	return c.LLMBaseURL != "" && c.LLMAPIKey != "" && c.LLMModel != ""
+}
+
+// GPUEnabled GPU 推理端点是否可用（本地 vLLM 通常不需要 API Key）
+func (c Config) GPUEnabled() bool {
+	return c.GPUBaseURL != "" && c.GPUModel != ""
 }
 
 // Load 读取环境变量并填充默认值。缺失项一律回落到默认值，不返回错误，
@@ -93,6 +103,9 @@ func Load() Config {
 		LLMBaseURL:     strings.TrimSpace(os.Getenv("VA_LLM_BASE_URL")),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("VA_LLM_API_KEY")),
 		LLMModel:       strings.TrimSpace(os.Getenv("VA_LLM_MODEL")),
+		GPUBaseURL:     strings.TrimSpace(os.Getenv("VA_GPU_LLM_BASE_URL")),
+		GPUAPIKey:      strings.TrimSpace(os.Getenv("VA_GPU_LLM_API_KEY")),
+		GPUModel:       strings.TrimSpace(os.Getenv("VA_GPU_LLM_MODEL")),
 	}
 }
 

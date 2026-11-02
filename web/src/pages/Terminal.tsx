@@ -44,7 +44,8 @@ import {
   SquareTerminal,
   Trash2,
   Wand2,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import { api, ApiError, sshTerminalURL } from "../lib/api";
 import { timeAgo } from "../lib/format";
@@ -69,6 +70,8 @@ import type {
   SshHost,
   SshHostInput,
   SshHostScanResult,
+  SshGpuBenchmark,
+  SshGpuInfo,
   SshSessionItem
 } from "../lib/types";
 
@@ -996,6 +999,15 @@ export function TerminalPage() {
       <div className="flex items-center gap-2 border-b border-line px-4 py-3">
         <Sparkles size={14} className="text-brand" />
         <span className="text-[12.5px] font-semibold text-ink">AI 终端助手</span>
+        {activeTab?.host.gpuAccel && (
+          <span
+            className="inline-flex items-center gap-0.5 rounded-full bg-brand-soft px-1.5 py-0.5 text-[9.5px] font-medium text-brand-strong"
+            title="该主机启用 GPU 推理加速"
+          >
+            <Zap size={9} />
+            GPU 加速
+          </span>
+        )}
         {activeTab && (
           <span className="ml-auto truncate text-[10.5px] text-ink3">{activeTab.host.name}</span>
         )}
@@ -2090,8 +2102,15 @@ function HostDialog({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState("");
   const [error, setError] = useState("");
+  const [gpuAccel, setGpuAccel] = useState(host?.gpuAccel ?? false);
+  const [gpuInfo, setGpuInfo] = useState<SshGpuInfo | null>(null);
+  const [gpuDetecting, setGpuDetecting] = useState(false);
+  const [gpuBenchmark, setGpuBenchmark] = useState<SshGpuBenchmark | null>(null);
+  const [gpuBenchmarking, setGpuBenchmarking] = useState(false);
+  const [gpuError, setGpuError] = useState("");
 
   const isEdit = Boolean(host);
+  const gpuReady = Boolean(gpuInfo?.available && gpuInfo.endpointReady);
 
   async function save() {
     if (saving) return;
@@ -2130,7 +2149,8 @@ function HostDialog({
       username: form.username.trim(),
       authType: form.authType as "password" | "key",
       note: form.note.trim(),
-      tags: form.tags.trim()
+      tags: form.tags.trim(),
+      gpuAccel
     };
     if (form.password) payload.password = form.password;
     if (form.privateKey.trim()) payload.privateKey = form.privateKey.trim();
@@ -2162,6 +2182,33 @@ function HostDialog({
       setTestResult(err instanceof ApiError ? err.message : "连接测试失败");
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function detectGPU() {
+    if (!host || gpuDetecting) return;
+    setGpuDetecting(true);
+    setGpuError("");
+    setGpuBenchmark(null);
+    try {
+      setGpuInfo(await api.sshHostGPU(host.id));
+    } catch (err) {
+      setGpuError(err instanceof ApiError ? err.message : "GPU 检测失败");
+    } finally {
+      setGpuDetecting(false);
+    }
+  }
+
+  async function runGPUBenchmark() {
+    if (!host || gpuBenchmarking) return;
+    setGpuBenchmarking(true);
+    setGpuError("");
+    try {
+      setGpuBenchmark(await api.sshHostGPUBenchmark(host.id, 2));
+    } catch (err) {
+      setGpuError(err instanceof ApiError ? err.message : "加速效果对比失败");
+    } finally {
+      setGpuBenchmarking(false);
     }
   }
 
@@ -2306,6 +2353,105 @@ function HostDialog({
               {testResult}
             </p>
           )}
+
+          {isEdit && (
+            <div className="space-y-2 rounded-[10px] border border-line bg-subtle/40 px-3 py-2.5">
+              <div className="flex items-center gap-1.5">
+                <Zap size={12} className="text-brand" />
+                <span className="text-[11.5px] font-medium text-ink">GPU 推理加速（NVIDIA）</span>
+                <button
+                  type="button"
+                  className="ml-auto inline-flex items-center gap-1 rounded-[6px] border border-line bg-surface px-2 py-1 text-[10.5px] text-ink2 hover:text-ink disabled:opacity-60"
+                  onClick={() => void detectGPU()}
+                  disabled={gpuDetecting}
+                >
+                  {gpuDetecting ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                  检测 GPU
+                </button>
+              </div>
+              {gpuInfo && (
+                <div className="space-y-1.5 text-[10.5px] leading-[16px] text-ink2">
+                  {gpuInfo.available ? (
+                    <p>
+                      <span className="font-medium text-ink">{gpuInfo.name}</span>
+                      {" · "}
+                      {Math.round(gpuInfo.memoryMb / 1024)}GB
+                      {" · 驱动 "}
+                      {gpuInfo.driver}
+                      {" · 利用率 "}
+                      {gpuInfo.utilization}%
+                      {gpuInfo.devices.length > 1 ? ` · 共 ${gpuInfo.devices.length} 块` : ""}
+                    </p>
+                  ) : (
+                    <p className="text-danger">{gpuInfo.error || "未检测到可用的 NVIDIA GPU"}</p>
+                  )}
+                  <p className={gpuInfo.endpointReady ? "text-ok" : "text-warn"}>
+                    {gpuInfo.endpointReady
+                      ? "服务端已配置 GPU 推理端点"
+                      : "服务端未配置 GPU 推理端点（VA_GPU_LLM_BASE_URL / VA_GPU_LLM_MODEL）"}
+                  </p>
+                  <label className="flex items-center gap-1.5 text-[11px] text-ink2">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-[var(--brand)]"
+                      checked={gpuAccel}
+                      disabled={!gpuAccel && !gpuReady}
+                      onChange={(event) => setGpuAccel(event.target.checked)}
+                    />
+                    使用 GPU 加速推理（保存后生效）
+                  </label>
+                </div>
+              )}
+              {!gpuInfo && !gpuError && (
+                <p className="text-[10.5px] leading-[16px] text-ink3">
+                  检测主机是否具备 NVIDIA GPU，并确认服务端 GPU 端点已配置后即可开启加速。
+                </p>
+              )}
+              {gpuReady && (
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-[6px] border border-line bg-surface px-2 py-1 text-[10.5px] text-ink2 hover:text-ink disabled:opacity-60"
+                    onClick={() => void runGPUBenchmark()}
+                    disabled={gpuBenchmarking}
+                  >
+                    {gpuBenchmarking ? <Loader2 size={11} className="animate-spin" /> : <Activity size={11} />}
+                    {gpuBenchmarking ? "正在对比（约需 10-60 秒）" : "对比加速前后"}
+                  </button>
+                  {gpuBenchmark && (
+                    <div className="rounded-[8px] border border-line bg-surface px-2.5 py-2 text-[10.5px] leading-[17px] text-ink2">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span>
+                          默认 <span className="font-mono text-ink">{gpuBenchmark.default.avgMs}ms</span>
+                          <span className="text-ink3"> · {gpuBenchmark.default.model}</span>
+                        </span>
+                        <span>
+                          GPU <span className="font-mono text-ink">{gpuBenchmark.gpu.avgMs}ms</span>
+                          <span className="text-ink3"> · {gpuBenchmark.gpu.model}</span>
+                        </span>
+                        <span
+                          className={`ml-auto rounded-full px-1.5 py-0.5 font-medium ${
+                            gpuBenchmark.speedupPercent >= 0 ? "bg-okSoft text-ok" : "bg-warnSoft text-warn"
+                          }`}
+                        >
+                          {gpuBenchmark.speedupPercent >= 0 ? "提升 " : "慢了 "}
+                          {Math.abs(gpuBenchmark.speedupPercent)}%
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-ink3">
+                        每侧 {gpuBenchmark.rounds} 次采样（预热 1 次已忽略）
+                        {gpuBenchmark.default.failed + gpuBenchmark.gpu.failed > 0
+                          ? ` · 失败 ${gpuBenchmark.default.failed + gpuBenchmark.gpu.failed} 次`
+                          : ""}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {gpuError && <p className="rounded-[8px] bg-dangerSoft px-2.5 py-1.5 text-[10.5px] text-danger">{gpuError}</p>}
+            </div>
+          )}
+
           {error && <p className="rounded-[8px] bg-dangerSoft px-2.5 py-1.5 text-[11px] text-danger">{error}</p>}
         </div>
 

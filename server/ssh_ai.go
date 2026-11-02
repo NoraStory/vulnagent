@@ -29,6 +29,7 @@ type sshAIResponse struct {
 	Answer         string                `json:"answer"`
 	Commands       []string              `json:"commands"`
 	Model          string                `json:"model"`
+	Accelerated    bool                  `json:"accelerated"`
 	References     []sshCommandReference `json:"references"`
 	ReferenceError string                `json:"referenceError,omitempty"`
 	Context        contextUsage          `json:"context"`
@@ -52,7 +53,7 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "operator"); !ok {
 		return
 	}
-	if a.harness == nil || a.harness.LLM == nil {
+	if a.harness == nil && a.gpuLLM == nil {
 		writeErr(w, http.StatusServiceUnavailable, "llm_unavailable", "未配置模型凭据，SSH 智能助手不可用")
 		return
 	}
@@ -70,11 +71,18 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 
 	hostName := "未指定主机"
 	hostLine := ""
+	var host sshHost
 	if req.HostID > 0 {
-		if host, err := a.getSSHHost(r.Context(), req.HostID); err == nil {
+		if current, err := a.getSSHHost(r.Context(), req.HostID); err == nil {
+			host = current
 			hostName = host.Name
 			hostLine = "目标主机：" + host.Name + "（" + host.Username + "@" + host.addr() + "）"
 		}
+	}
+	llm := a.llmForHost(host)
+	if llm == nil {
+		writeErr(w, http.StatusServiceUnavailable, "llm_unavailable", "未配置模型凭据，SSH 智能助手不可用")
+		return
 	}
 	terminalContext := strings.TrimSpace(req.Context)
 	terminalContext = truncateRunes(terminalContext, 8000)
@@ -118,7 +126,7 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 		usedTokens += estimateTokens(message.Content)
 	}
 	usage := buildContextUsage(usedTokens, agentContextBudget(), compressed, savedTokens, historyItems)
-	resp, err := a.harness.LLM.Chat(r.Context(), ports.LLMRequest{Messages: messages})
+	resp, err := llm.Chat(r.Context(), ports.LLMRequest{Messages: messages})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "llm_failed", "模型调用失败："+err.Error())
 		return
@@ -131,7 +139,8 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sshAIResponse{
 		Answer:         answer,
 		Commands:       commands,
-		Model:          a.harness.LLM.Model(),
+		Model:          llm.Model(),
+		Accelerated:    a.hostAccelerated(host),
 		References:     references,
 		ReferenceError: refErr,
 		Context:        usage,

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"vulnagent/server/internal/application/harness"
+	"vulnagent/server/internal/application/ports"
 	"vulnagent/server/internal/platform/config"
 )
 
@@ -73,6 +74,8 @@ type App struct {
 	roDB    *sql.DB
 	roErr   error
 	harness *harnessapp.Service
+	// gpuLLM GPU 推理端点（OpenAI 兼容），未配置时为 nil
+	gpuLLM ports.LLM
 
 	// jobKey 用于主机作业签名（与 Agent 令牌一致）
 	jobKey []byte
@@ -155,6 +158,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/test", a.handleSSHHostTest)
 	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/scan", a.handleSSHHostScan)
 	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/metrics", a.handleSSHHostMetrics)
+	mux.HandleFunc("GET /api/v1/ssh/hosts/{id}/gpu", a.handleSSHHostGPU)
+	mux.HandleFunc("POST /api/v1/ssh/hosts/{id}/gpu/benchmark", a.handleSSHHostGPUBenchmark)
 	mux.HandleFunc("GET /api/v1/ssh/sessions", a.handleSSHSessions)
 	mux.HandleFunc("GET /api/v1/ssh/sessions/{id}/recording", a.handleSSHRecording)
 	mux.HandleFunc("POST /api/v1/ssh/sessions/{id}/share", a.handleSSHShareCreate)

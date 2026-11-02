@@ -40,18 +40,19 @@ type sshHost struct {
 	UpdatedAt       string `json:"updatedAt"`
 	LastConnectedAt string `json:"lastConnectedAt"`
 	HasSecret       bool   `json:"hasSecret"`
+	GPUAccel        bool   `json:"gpuAccel"`
 
 	Secret     string `json:"-"`
 	Passphrase string `json:"-"`
 }
 
 const sshHostColumns = `id, name, host, port, username, auth_type, secret, passphrase, host_key,
-	note, tags, created_by, created_at, updated_at, last_connected_at`
+	note, tags, created_by, created_at, updated_at, last_connected_at, gpu_accel`
 
 func scanSSHHost(row interface{ Scan(dest ...any) error }) (sshHost, error) {
 	var h sshHost
 	err := row.Scan(&h.ID, &h.Name, &h.Host, &h.Port, &h.Username, &h.AuthType, &h.Secret, &h.Passphrase,
-		&h.HostKey, &h.Note, &h.Tags, &h.CreatedBy, &h.CreatedAt, &h.UpdatedAt, &h.LastConnectedAt)
+		&h.HostKey, &h.Note, &h.Tags, &h.CreatedBy, &h.CreatedAt, &h.UpdatedAt, &h.LastConnectedAt, &h.GPUAccel)
 	h.HasSecret = h.Secret != ""
 	return h, err
 }
@@ -193,6 +194,7 @@ type sshHostInput struct {
 	Passphrase *string `json:"passphrase"`
 	Note       *string `json:"note"`
 	Tags       *string `json:"tags"`
+	GPUAccel   *bool   `json:"gpuAccel"`
 	ClearKey   bool    `json:"clearHostKey"`
 }
 
@@ -215,6 +217,9 @@ func normalizeSSHHostInput(in sshHostInput) (sshHost, error) {
 	}
 	if in.Tags != nil {
 		h.Tags = strings.TrimSpace(*in.Tags)
+	}
+	if in.GPUAccel != nil {
+		h.GPUAccel = *in.GPUAccel
 	}
 	h.Port = 22
 	if in.Port != nil {
@@ -324,9 +329,9 @@ func (a *App) handleSSHHostCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := fmtT(nowT())
 	res, err := a.db.ExecContext(r.Context(), `INSERT INTO ssh_hosts
-		(name, host, port, username, auth_type, secret, passphrase, host_key, note, tags, created_by, created_at, updated_at, last_connected_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		h.Name, h.Host, h.Port, h.Username, h.AuthType, sealed, passphrase, "", h.Note, h.Tags, u.Username, now, now, "")
+		(name, host, port, username, auth_type, secret, passphrase, host_key, note, tags, created_by, created_at, updated_at, last_connected_at, gpu_accel)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		h.Name, h.Host, h.Port, h.Username, h.AuthType, sealed, passphrase, "", h.Note, h.Tags, u.Username, now, now, "", h.GPUAccel)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "host_exists", "该主机与账号已存在")
@@ -389,6 +394,9 @@ func (a *App) handleSSHHostUpdate(w http.ResponseWriter, r *http.Request) {
 	if in.Tags != nil {
 		next.Tags = patch.Tags
 	}
+	if in.GPUAccel != nil {
+		next.GPUAccel = patch.GPUAccel
+	}
 	if next.Name == "" || next.Host == "" || next.Username == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", "名称、主机与用户名不能为空")
 		return
@@ -432,9 +440,9 @@ func (a *App) handleSSHHostUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := fmtT(nowT())
 	if _, err := a.db.ExecContext(r.Context(), `UPDATE ssh_hosts SET name=?, host=?, port=?, username=?, auth_type=?,
-		secret=?, passphrase=?, host_key=?, note=?, tags=?, updated_at=? WHERE id=?`,
+		secret=?, passphrase=?, host_key=?, note=?, tags=?, gpu_accel=?, updated_at=? WHERE id=?`,
 		next.Name, next.Host, next.Port, next.Username, next.AuthType, secret, passphrase, next.HostKey,
-		next.Note, next.Tags, now, id); err != nil {
+		next.Note, next.Tags, next.GPUAccel, now, id); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "host_exists", "该主机与账号已存在")
 			return

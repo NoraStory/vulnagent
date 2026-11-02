@@ -764,6 +764,50 @@ export interface SshHost {
   updatedAt: string;
   lastConnectedAt: string;
   hasSecret: boolean;
+  gpuAccel: boolean;
+}
+
+export interface SshGpuDevice {
+  name: string;
+  memoryMb: number;
+  driver: string;
+  utilization: number;
+}
+
+export interface SshGpuInfo {
+  hostId: number;
+  hostName: string;
+  available: boolean;
+  name: string;
+  memoryMb: number;
+  driver: string;
+  utilization: number;
+  devices: SshGpuDevice[];
+  endpointReady: boolean;
+  accelEnabled: boolean;
+  error?: string;
+  sampledAt: string;
+}
+
+export interface LlmBenchResult {
+  model: string;
+  avgMs: number;
+  minMs: number;
+  maxMs: number;
+  samples: number;
+  failed: number;
+  error?: string;
+}
+
+export interface SshGpuBenchmark {
+  hostId: number;
+  hostName: string;
+  detected: SshGpuInfo;
+  default: LlmBenchResult;
+  gpu: LlmBenchResult;
+  speedupPercent: number;
+  rounds: number;
+  sampledAt: string;
 }
 
 export interface SshDiskUsage {
@@ -818,6 +862,7 @@ export interface SshHostInput {
   passphrase?: string;
   note?: string;
   tags?: string;
+  gpuAccel?: boolean;
   clearHostKey?: boolean;
 }
 
@@ -929,6 +974,7 @@ export interface SshAssistantReply {
   answer: string;
   commands: string[];
   model: string;
+  accelerated?: boolean;
   references: SshCommandReference[];
   referenceError?: string;
   context?: ContextUsage;

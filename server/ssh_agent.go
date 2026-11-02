@@ -111,7 +111,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if a.harness == nil || a.harness.LLM == nil {
+	if a.harness == nil && a.gpuLLM == nil {
 		writeErr(w, http.StatusServiceUnavailable, "llm_unavailable", "未配置模型凭据，Agent 模式不可用")
 		return
 	}
@@ -135,6 +135,12 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "主机不存在")
 		return
 	}
+	llm := a.llmForHost(host)
+	if llm == nil {
+		writeErr(w, http.StatusServiceUnavailable, "llm_unavailable", "未配置模型凭据，Agent 模式不可用")
+		return
+	}
+	accelerated := a.hostAccelerated(host)
 
 	searchEnabled := req.Search == nil || *req.Search
 	var (
@@ -187,7 +193,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	stream.emit(harnessapp.Event{Type: "status", Data: map[string]any{
 		"runId": runID, "mode": mode, "maxSteps": sshAgentMaxSteps, "host": host.Name,
 		"references": referenceMeta(references), "referenceError": refErr, "search": searchEnabled,
-		"contextRuns": len(previousRuns),
+		"contextRuns": len(previousRuns), "accelerated": accelerated, "model": llm.Model(),
 	}})
 
 	ctx := r.Context()
@@ -207,7 +213,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 
 	history := make([]sshAgentStep, 0, sshAgentMaxSteps)
 	gracefulSummary := func(reason string) string {
-		if text := a.summarizeSSHAgent(ctx, host, goal, history); text != "" {
+		if text := a.summarizeSSHAgent(ctx, llm, host, goal, history); text != "" {
 			return text
 		}
 		if len(history) == 0 {
@@ -228,7 +234,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		)
 		// 单步内对模型格式错误与临时调用失败做有限重试，避免一次异常中断整个任务
 		for {
-			current, usage, err := a.askSSHAgent(ctx, host, goal, referenceBlock, previousBlock, history, remaining)
+			current, usage, err := a.askSSHAgent(ctx, llm, host, goal, referenceBlock, previousBlock, history, remaining)
 			if err == nil {
 				stream.emit(harnessapp.Event{Type: "context", Data: map[string]any{
 					"usedTokens": usage.UsedTokens, "budgetTokens": usage.BudgetTokens, "percent": usage.Percent,
@@ -352,7 +358,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status = "completed"
-	summary = a.summarizeSSHAgent(ctx, host, goal, history)
+	summary = a.summarizeSSHAgent(ctx, llm, host, goal, history)
 	if summary == "" {
 		summary = "已达到最大步数，请补充目标后继续"
 	}
@@ -440,7 +446,7 @@ func normalizeAgentSummary(raw string) string {
 
 // summarizeSSHAgent 在达到步数上限时，基于已有观察生成收尾结论
 
-func (a *App) summarizeSSHAgent(ctx context.Context, host sshHost, goal string, history []sshAgentStep) string {
+func (a *App) summarizeSSHAgent(ctx context.Context, llm ports.LLM, host sshHost, goal string, history []sshAgentStep) string {
 	if len(history) == 0 {
 		return ""
 	}
@@ -462,7 +468,7 @@ func (a *App) summarizeSSHAgent(ctx context.Context, host sshHost, goal string, 
 	user.WriteString("\n请基于以上观察给出最终结论。严格按以下中文 Markdown 结构输出，总长不超过 300 字，不要再要求执行命令，也不要粘贴命令原文、日志或退出码：\n")
 	user.WriteString("**结论**\n<一句话，不超过 50 字>\n\n**关键发现**\n- <最多 3 条，每条一行，不超过 40 字>\n\n**建议**\n- <最多 3 条，每条一行，可执行；没有则写“无”>")
 
-	resp, err := a.harness.LLM.Chat(ctx, ports.LLMRequest{Messages: []ports.LLMMessage{
+	resp, err := llm.Chat(ctx, ports.LLMRequest{Messages: []ports.LLMMessage{
 		{Role: "system", Content: "你是资深 SRE。只输出最终结论，使用中文 Markdown，严格按 结论 / 关键发现 / 建议 三段组织，全篇不超过 300 字。"},
 		{Role: "user", Content: user.String()},
 	}})
@@ -483,7 +489,7 @@ func sshRiskReason(risk string) string {
 	}
 }
 
-func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (sshAgentDecision, contextUsage, error) {
+func (a *App) askSSHAgent(ctx context.Context, llm ports.LLM, host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (sshAgentDecision, contextUsage, error) {
 	userText, usage := buildSSHAgentPrompt(host, goal, reference, previous, history, remaining)
 	callCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
@@ -491,7 +497,7 @@ func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, pr
 		{Role: "system", Content: sshAgentSystemPrompt},
 		{Role: "user", Content: userText},
 	}
-	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Messages: messages})
+	resp, err := llm.Chat(callCtx, ports.LLMRequest{Messages: messages})
 	if err != nil {
 		return sshAgentDecision{}, usage, err
 	}
@@ -509,7 +515,7 @@ func (a *App) askSSHAgent(ctx context.Context, host sshHost, goal, reference, pr
 	)
 	repairCtx, cancelRepair := context.WithTimeout(ctx, 120*time.Second)
 	defer cancelRepair()
-	repairResp, repairErr := a.harness.LLM.Chat(repairCtx, ports.LLMRequest{Messages: repairMessages})
+	repairResp, repairErr := llm.Chat(repairCtx, ports.LLMRequest{Messages: repairMessages})
 	if repairErr == nil {
 		if decision, parseErr := parseSSHAgentDecision(repairResp.Content); parseErr == nil {
 			return decision, usage, nil

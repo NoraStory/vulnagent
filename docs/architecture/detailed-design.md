@@ -1059,7 +1059,7 @@ harness_tools.go             29 个工具的绑定（读工具走 mode=ro 连接
 harness_handlers.go          SSE 会话接口与审批接口
 ```
 
-模型凭据只从环境变量读取：`VA_LLM_BASE_URL`、`VA_LLM_API_KEY`、`VA_LLM_MODEL`，三项齐备才启用；缺失时服务照常启动，助手页提示配置方法。
+模型凭据只从环境变量读取：`VA_LLM_BASE_URL`、`VA_LLM_API_KEY`、`VA_LLM_MODEL`，三项齐备才启用；缺失时服务照常启动，助手页提示配置方法。GPU 推理端点使用 `VA_GPU_LLM_BASE_URL`、`VA_GPU_LLM_API_KEY`、`VA_GPU_LLM_MODEL`（BASE_URL 与 MODEL 齐备即启用），由主机级开关决定是否生效。
 
 ### 7.5.2 九道执行闸门
 
@@ -1236,6 +1236,15 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 跨任务上下文：Agent 启动时读取同一主机最近 3 次已完成任务的「目标 + 结论」注入提示，状态事件返回 `contextRuns`，面板显示已载入的历史任务数。
 - 验收：单元测试覆盖尾逗号/中文引号/前后解释/围栏/纯命令降级、历史裁剪与历史任务上下文查询；接口实测多轮问答可正确引用上一轮信息。
 
+#### 7.6.13 GPU 推理加速（NVIDIA，可选）
+
+- 端点：服务端通过 `VA_GPU_LLM_BASE_URL` / `VA_GPU_LLM_API_KEY` / `VA_GPU_LLM_MODEL` 接入 OpenAI 兼容的本地推理服务（vLLM / TensorRT-LLM 等）；`BASE_URL + MODEL` 齐备即启用，未配置 Key 时使用占位值 `local`（多数本地服务不校验）。
+- 主机开关：`ssh_hosts.gpu_accel`（迁移 0019）按主机保存；`llmForHost` 在「主机开关开启且 GPU 端点已配置」时返回 GPU 客户端，否则回落默认端点，问答与 Agent（含收尾总结）统一走该选择。
+- 探测：`GET /api/v1/ssh/hosts/{id}/gpu` 只读执行 `nvidia-smi`，返回设备名、显存、驱动、利用率与多卡列表；未安装驱动时返回 `available=false` 而非报错。
+- 加速对比：`POST /api/v1/ssh/hosts/{id}/gpu/benchmark` 先探测主机 GPU，再对默认端点与 GPU 端点各预热 1 次后采样（默认 2 轮，可调 1–3 轮），返回平均/最小/最大耗时与 `speedupPercent`，并写审计 `ssh.gpu.benchmark`。
+- 前端：主机编辑弹窗新增「检测 GPU」、加速开关（需检测到 GPU 且端点就绪才可勾选）与「对比加速前后」结果卡片；开启加速的主机在 AI 面板标题显示「GPU 加速」徽标。
+- 优化建议：本地推理优先使用与工具调用兼容的模型；显存不足时降低上下文预算 `VA_AGENT_CONTEXT_BUDGET`；对比结果为正提升且失败次数为 0 再开启该主机加速。
+
 ---
 
 ## 8. 部署方案
@@ -1399,6 +1408,8 @@ go build -o bin/vulnagent.exe .
 # 可选：$env:VULNAGENT_CVE_BASE_URL='https://cve.imfht.com'; $env:VA_EPSS_URL='https://epss.cyentia.com/epss_scores-current.csv.gz'
 # Agent 助手（三项齐备才启用，建议用系统环境变量而非脚本）
 # $env:VA_LLM_BASE_URL='https://ark.cn-beijing.volces.com/api/v3'; $env:VA_LLM_API_KEY='...'; $env:VA_LLM_MODEL='deepseek-v4-1-flash-261017'
+# 可选 GPU 推理加速（OpenAI 兼容本地端点，如 vLLM）：BASE_URL 与 MODEL 齐备即启用，按主机开关生效
+# $env:VA_GPU_LLM_BASE_URL='http://127.0.0.1:8000/v1'; $env:VA_GPU_LLM_API_KEY='local'; $env:VA_GPU_LLM_MODEL='Qwen2.5-32B-Instruct'
 # 也可在运行目录或项目根目录放 .env（KEY=VALUE）；启动时自动加载，已存在的环境变量优先
 # 查找顺序：VA_ENV_FILE 指定路径 → ./.env → ../.env；.env 已在 .gitignore 中，不会入库
 # 生产模式：不灌演示数据，用 VA_ADMIN_PASSWORD 初始化唯一管理员（首次启动）
