@@ -83,6 +83,7 @@ export function AssetDetailPage() {
   const [activeFinding, setActiveFinding] = useState<number | null>(null);
   const [sshHost, setSshHost] = useState<SshHost | null>(null);
   const [sshLoading, setSshLoading] = useState(false);
+  const [sshCheckedFor, setSshCheckedFor] = useState("");
   const [sshOpen, setSshOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -189,6 +190,7 @@ export function AssetDetailPage() {
     if (!id) return;
     let cancelled = false;
     setSshHost(null);
+    setSshCheckedFor("");
     setSshLoading(true);
     api
       .assetSshHost(id)
@@ -201,7 +203,10 @@ export function AssetDetailPage() {
         }
       })
       .finally(() => {
-        if (!cancelled) setSshLoading(false);
+        if (!cancelled) {
+          setSshLoading(false);
+          setSshCheckedFor(String(id));
+        }
       });
     return () => {
       cancelled = true;
@@ -210,7 +215,7 @@ export function AssetDetailPage() {
 
   // 从资产列表点击「终端」时带 ?ssh=1 进入：已有凭据直接打开终端，否则弹出连接表单。
   useEffect(() => {
-    if (sshLoading || searchParams.get("ssh") !== "1") return;
+    if (sshCheckedFor !== String(id) || searchParams.get("ssh") !== "1") return;
     const next = new URLSearchParams(searchParams);
     next.delete("ssh");
     setSearchParams(next, { replace: true });
@@ -219,7 +224,7 @@ export function AssetDetailPage() {
       return;
     }
     if (canWrite) setSshOpen(true);
-  }, [sshLoading, sshHost, canWrite, navigate, searchParams, setSearchParams]);
+  }, [id, sshCheckedFor, sshHost, canWrite, navigate, searchParams, setSearchParams]);
 
   // 遥测与作业按标签页懒加载，避免每次查看资产都产生额外查询
   useEffect(() => {
