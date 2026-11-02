@@ -489,6 +489,13 @@ export function TerminalPage() {
   const [broadcastAll, setBroadcastAll] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [aiSearch, setAiSearch] = useState(true);
+  const [qaAutoRun, setQaAutoRun] = useState(() => {
+    try {
+      return localStorage.getItem("va.ssh.qaAutoRun") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [hostsCollapsed, setHostsCollapsed] = useState(() => {
     try {
       return localStorage.getItem("va.ssh.hostsCollapsed") === "1";
@@ -575,10 +582,11 @@ export function TerminalPage() {
     try {
       localStorage.setItem("va.ssh.hostWidth", String(Math.round(hostWidth)));
       localStorage.setItem("va.ssh.aiWidth", String(Math.round(aiWidth)));
+      localStorage.setItem("va.ssh.qaAutoRun", qaAutoRun ? "1" : "0");
     } catch {
       /* 隐私模式下忽略持久化失败 */
     }
-  }, [hostWidth, aiWidth]);
+  }, [hostWidth, aiWidth, qaAutoRun]);
 
   useEffect(() => {
     if (gridWidth <= 0) return;
@@ -592,7 +600,7 @@ export function TerminalPage() {
   useEffect(() => {
     const el = aiScrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [activeAi, aiBusy]);
+  }, [activeAi, aiBusy, agentState?.steps.length, agentState?.status]);
 
   useEffect(() => {
     const el = agentScrollRef.current;
@@ -675,6 +683,27 @@ export function TerminalPage() {
     const text = question.trim();
     if (!text) return;
     const key = activeTab.key;
+    if (qaAutoRun) {
+      if (agentState?.status === "running") {
+        toast.push("已有自动执行任务正在运行，请先停止或等待完成", "error");
+        return;
+      }
+      const recent = activeAi
+        .slice(-6)
+        .filter((message) => message.content.trim() !== "")
+        .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.content.slice(0, 300)}`);
+      const goal = [
+        `用户问题：${text}`,
+        recent.length > 0 ? `最近对话：\n${recent.join("\n")}` : "",
+        "要求：先做只读侦察，再按需执行命令；某条命令失败时自行分析原因并继续，最后用中文总结结论。"
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      pushAi(key, { id: `u-${Date.now()}`, role: "user", content: text });
+      setAiInput("");
+      await runAgent(goal, agentMode, "qa");
+      return;
+    }
     const pane = paneRefs.current.get(key);
     const history = activeAi
       .slice(-8)
@@ -752,8 +781,11 @@ export function TerminalPage() {
   }
 
   async function startAgent() {
+    await runAgent(agentGoal.trim(), agentMode);
+  }
+
+  async function runAgent(goal: string, mode: SshAgentMode, source: "agent" | "qa" = "agent") {
     if (!activeTab || agentState?.status === "running") return;
-    const goal = agentGoal.trim();
     if (!goal) return;
     const key = activeTab.key;
     const controller = new AbortController();
@@ -764,7 +796,7 @@ export function TerminalPage() {
         runId: "",
         status: "running",
         goal,
-        mode: agentMode,
+        mode,
         steps: [],
         summary: "",
         error: ""
@@ -772,6 +804,11 @@ export function TerminalPage() {
     }));
 
     const handle = (event: SshAgentEvent) => {
+      if (event.type === "done" && source === "qa") {
+        // 把执行结论写回问答上下文，便于下一轮继续追问
+        const summary = String(event.data?.summary ?? "");
+        pushAi(key, { id: `a-${Date.now()}`, role: "assistant", content: summary || "目标已完成" });
+      }
       updateAgentState(key, (current) => {
         const data = event.data ?? {};
         const next: AgentRunView = { ...current, steps: [...current.steps] };
@@ -846,7 +883,7 @@ export function TerminalPage() {
     };
 
     try {
-      await api.sshAgentRun(activeTab.host.id, goal, agentMode, aiSearch, handle, controller.signal);
+      await api.sshAgentRun(activeTab.host.id, goal, mode, aiSearch, handle, controller.signal);
       void loadSessions();
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -1000,7 +1037,7 @@ export function TerminalPage() {
         {activeTab && activeAi.length === 0 && (
           <div className="space-y-2">
             <p className="text-[11.5px] leading-[18px] text-ink3">
-              直接提问，或选择一个快捷动作。AI 生成的命令不会自动执行，需你确认。
+              直接提问，或选择一个快捷动作。默认只给建议；勾选「自动执行」后由 Agent 拆解并执行，失败自动继续。
             </p>
             {quickPrompts.map((item) => (
               <button
@@ -1107,6 +1144,25 @@ export function TerminalPage() {
             正在结合终端现场分析…
           </div>
         )}
+        {qaAutoRun && agentState && (
+          <div className="space-y-2 rounded-[10px] border border-line bg-subtle/40 px-2.5 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] text-ink3">
+              <Bot size={11} className="text-brand" />
+              {agentState.status === "running"
+                ? "Agent 自动执行中"
+                : agentState.status === "done"
+                  ? "自动执行完成"
+                  : "自动执行中断"}
+              <span className="ml-auto font-mono">{agentState.steps.length} 步</span>
+              {agentState.status === "running" && (
+                <button type="button" className="text-brand hover:underline" onClick={stopAgent}>
+                  停止
+                </button>
+              )}
+            </div>
+            {renderAgentRun()}
+          </div>
+        )}
       </div>
 
       <div className="border-t border-line px-3 py-2.5">
@@ -1122,7 +1178,7 @@ export function TerminalPage() {
               }
             }}
             rows={2}
-            disabled={!activeTab || aiBusy}
+            disabled={!activeTab || aiBusy || agentState?.status === "running"}
             placeholder={activeTab ? "描述问题，Enter 发送，Shift + Enter 换行" : "连接主机后可提问"}
             className="input min-h-[38px] flex-1 resize-none py-2 text-[12px] leading-[18px]"
           />
@@ -1130,7 +1186,7 @@ export function TerminalPage() {
             type="button"
             className="btn btn-primary h-[38px] w-[38px] shrink-0 px-0"
             onClick={() => void ask(aiInput)}
-            disabled={!activeTab || aiBusy || !aiInput.trim()}
+            disabled={!activeTab || aiBusy || agentState?.status === "running" || !aiInput.trim()}
             aria-label="发送"
           >
             {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
@@ -1146,7 +1202,29 @@ export function TerminalPage() {
             />
             联网检索命令参考
           </label>
-          <span>多轮上下文（最近 8 条）；执行前需二次确认，操作写入审计。</span>
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={qaAutoRun}
+              onChange={(event) => setQaAutoRun(event.target.checked)}
+              disabled={agentState?.status === "running"}
+              className="h-3 w-3"
+            />
+            自动执行（出错自动继续）
+          </label>
+          {qaAutoRun && (
+            <select
+              value={agentMode}
+              onChange={(event) => setAgentMode(event.target.value as SshAgentMode)}
+              disabled={agentState?.status === "running"}
+              className="h-6 rounded border border-line bg-surface px-1 text-[10px] text-ink2"
+            >
+              <option value="safe">仅危险确认</option>
+              <option value="confirm">逐条确认</option>
+              <option value="auto">全自动执行</option>
+            </select>
+          )}
+          <span>多轮上下文；自动执行最多 8 步，命令与输出写入审计。</span>
         </div>
       </div>
         </>
@@ -1260,130 +1338,7 @@ export function TerminalPage() {
           </div>
 
           <div ref={agentScrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
-            {!activeTab && (
-              <p className="rounded-[10px] border border-dashed border-line px-3 py-6 text-center text-[10.5px] text-ink3">
-                先连接一台主机，再启动 Agent。
-              </p>
-            )}
-            {activeTab && !agentState && (
-              <div className="space-y-2">
-                <p className="text-[10.5px] leading-[17px] text-ink3">
-                  Agent 会先做只读侦察，再根据输出决定下一步；每个命令、输出与审批都会留痕。
-                </p>
-                {[
-                  "检查磁盘使用率并找出占用最大的目录",
-                  "排查最近异常登录与失败的系统服务",
-                  "检查系统安全基线并给出修复建议"
-                ].map((goal) => (
-                  <button
-                    key={goal}
-                    type="button"
-                    onClick={() => setAgentGoal(goal)}
-                    className="flex w-full items-center gap-2 rounded-[8px] border border-line bg-surface px-2.5 py-2 text-left text-[10.5px] text-ink2 transition-colors hover:border-lineStrong hover:text-ink"
-                  >
-                    <Wand2 size={11} className="shrink-0 text-brand" />
-                    {goal}
-                    <ArrowRight size={11} className="ml-auto text-ink3" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {agentState?.steps.map((step) => (
-              <div key={step.index} className="rounded-[9px] border border-line bg-surface px-2.5 py-2">
-                <div className="flex items-center gap-1.5 text-[9.5px] text-ink3">
-                  <span className="font-mono">#{step.index + 1}</span>
-                  <span className={`pill h-[18px] px-1.5 text-[9px] ${agentRiskMeta[step.risk]?.className ?? ""}`}>
-                    {agentRiskMeta[step.risk]?.label ?? step.risk}
-                  </span>
-                  {step.approved === false && <span className="text-danger">已拒绝</span>}
-                  {step.approved === true && <span className="text-ok">已确认</span>}
-                  {step.exitCode !== undefined && (
-                    <span className="ml-auto font-mono">exit {step.exitCode}</span>
-                  )}
-                </div>
-                {step.thought && (
-                  <p className="mt-1 text-[10.5px] leading-[16px] text-ink2">{step.thought}</p>
-                )}
-                <pre className="mt-1.5 overflow-x-auto rounded-[6px] bg-[#0B1220] px-2 py-1.5 font-mono text-[10.5px] leading-[15px] text-[#D7DEEA]">
-                  {step.command}
-                </pre>
-                {step.output !== undefined && (
-                  <details className="mt-1.5">
-                    <summary className="cursor-pointer text-[10px] text-ink3">查看输出</summary>
-                    <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-[6px] bg-subtle px-2 py-1.5 font-mono text-[10px] leading-[15px] text-ink2">
-                      {step.output || "（无输出）"}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            ))}
-
-            {agentState?.status === "running" && !agentState.pending && (
-              <div className="flex items-center gap-2 text-[10.5px] text-ink3">
-                <Loader2 size={12} className="animate-spin" />
-                {agentState.steps.length === 0 ? "正在读取主机现场并规划下一步…" : "Agent 执行中，等待命令输出…"}
-              </div>
-            )}
-
-            {agentState?.warnings?.map((message, index) => (
-              <div
-                key={`${index}-${message.slice(0, 24)}`}
-                className="rounded-[8px] bg-warnSoft px-2.5 py-2 text-[10px] leading-[16px] text-warn"
-              >
-                {message}
-              </div>
-            ))}
-
-            {agentState?.pending && (
-              <div className="rounded-[9px] border border-[#F5D9B8] bg-warnSoft/70 px-2.5 py-2">
-                <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-ink">
-                  <ShieldAlert size={12} className="text-warn" />
-                  等待你确认执行
-                </div>
-                <p className="mt-1 text-[9.5px] leading-[14px] text-ink3">{agentState.pending.reason}</p>
-                <pre className="mt-1.5 whitespace-pre-wrap break-all rounded-[6px] bg-surface px-2 py-1.5 font-mono text-[10px] text-ink2">
-                  {agentState.pending.command}
-                </pre>
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    className="btn btn-primary h-7 px-2.5 text-[10.5px]"
-                    onClick={() => void decideAgent("approve")}
-                    disabled={agentDeciding}
-                  >
-                    <Check size={11} />
-                    批准执行
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary h-7 px-2.5 text-[10.5px]"
-                    onClick={() => void decideAgent("reject")}
-                    disabled={agentDeciding}
-                  >
-                    <X size={11} />
-                    拒绝
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {agentState?.status === "done" && (
-              <div className="rounded-[9px] border border-line bg-subtle/70 px-2.5 py-2">
-                <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-ink">
-                  <Check size={12} className="text-ok" />
-                  执行完成
-                </div>
-                <p className="mt-1 text-[10.5px] leading-[17px] text-ink2">
-                  {agentState.summary || "目标已完成"}
-                </p>
-              </div>
-            )}
-            {agentState?.status === "error" && (
-              <div className="rounded-[9px] bg-dangerSoft px-2.5 py-2 text-[10.5px] leading-[16px] text-danger">
-                {agentState.error}
-              </div>
-            )}
+            {renderAgentRun()}
           </div>
         </div>
       )}
@@ -1403,6 +1358,132 @@ export function TerminalPage() {
     : aiCollapsed
       ? "grid-cols-1 md:grid-cols-[var(--host-w)_minmax(0,1fr)]"
       : "grid-cols-1 md:grid-cols-[var(--host-w)_minmax(0,1fr)] xl:grid-cols-[var(--host-w)_minmax(0,1fr)_var(--ai-w)]";
+
+  // Agent 执行过程复用在「问答自动执行」与「Agent 自动执行」两个标签页
+  function renderAgentRun() {
+    return (
+      <>
+      {!activeTab && (
+        <p className="rounded-[10px] border border-dashed border-line px-3 py-6 text-center text-[10.5px] text-ink3">
+          先连接一台主机，再启动 Agent。
+        </p>
+      )}
+      {activeTab && !agentState && (
+        <div className="space-y-2">
+          <p className="text-[10.5px] leading-[17px] text-ink3">
+            Agent 会先做只读侦察，再根据输出决定下一步；每个命令、输出与审批都会留痕。
+          </p>
+          {[
+            "检查磁盘使用率并找出占用最大的目录",
+            "排查最近异常登录与失败的系统服务",
+            "检查系统安全基线并给出修复建议"
+          ].map((goal) => (
+            <button
+              key={goal}
+              type="button"
+              onClick={() => setAgentGoal(goal)}
+              className="flex w-full items-center gap-2 rounded-[8px] border border-line bg-surface px-2.5 py-2 text-left text-[10.5px] text-ink2 transition-colors hover:border-lineStrong hover:text-ink"
+            >
+              <Wand2 size={11} className="shrink-0 text-brand" />
+              {goal}
+              <ArrowRight size={11} className="ml-auto text-ink3" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {agentState?.steps.map((step) => (
+        <div key={step.index} className="rounded-[9px] border border-line bg-surface px-2.5 py-2">
+          <div className="flex items-center gap-1.5 text-[9.5px] text-ink3">
+            <span className="font-mono">#{step.index + 1}</span>
+            <span className={`pill h-[18px] px-1.5 text-[9px] ${agentRiskMeta[step.risk]?.className ?? ""}`}>
+              {agentRiskMeta[step.risk]?.label ?? step.risk}
+            </span>
+            {step.approved === false && <span className="text-danger">已拒绝</span>}
+            {step.approved === true && <span className="text-ok">已确认</span>}
+            {step.exitCode !== undefined && <span className="ml-auto font-mono">exit {step.exitCode}</span>}
+          </div>
+          {step.thought && <p className="mt-1 text-[10.5px] leading-[16px] text-ink2">{step.thought}</p>}
+          <pre className="mt-1.5 overflow-x-auto rounded-[6px] bg-[#0B1220] px-2 py-1.5 font-mono text-[10.5px] leading-[15px] text-[#D7DEEA]">
+            {step.command}
+          </pre>
+          {step.output !== undefined && (
+            <details className="mt-1.5">
+              <summary className="cursor-pointer text-[10px] text-ink3">查看输出</summary>
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-[6px] bg-subtle px-2 py-1.5 font-mono text-[10px] leading-[15px] text-ink2">
+                {step.output || "（无输出）"}
+              </pre>
+            </details>
+          )}
+        </div>
+      ))}
+
+      {agentState?.status === "running" && !agentState.pending && (
+        <div className="flex items-center gap-2 text-[10.5px] text-ink3">
+          <Loader2 size={12} className="animate-spin" />
+          {agentState.steps.length === 0 ? "正在读取主机现场并规划下一步…" : "Agent 执行中，等待命令输出…"}
+        </div>
+      )}
+
+      {agentState?.warnings?.map((message, index) => (
+        <div
+          key={`${index}-${message.slice(0, 24)}`}
+          className="rounded-[8px] bg-warnSoft px-2.5 py-2 text-[10px] leading-[16px] text-warn"
+        >
+          {message}
+        </div>
+      ))}
+
+      {agentState?.pending && (
+        <div className="rounded-[9px] border border-[#F5D9B8] bg-warnSoft/70 px-2.5 py-2">
+          <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-ink">
+            <ShieldAlert size={12} className="text-warn" />
+            等待你确认执行
+          </div>
+          <p className="mt-1 text-[9.5px] leading-[14px] text-ink3">{agentState.pending.reason}</p>
+          <pre className="mt-1.5 whitespace-pre-wrap break-all rounded-[6px] bg-surface px-2 py-1.5 font-mono text-[10px] text-ink2">
+            {agentState.pending.command}
+          </pre>
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <button
+              type="button"
+              className="btn btn-primary h-7 px-2.5 text-[10.5px]"
+              onClick={() => void decideAgent("approve")}
+              disabled={agentDeciding}
+            >
+              <Check size={11} />
+              批准执行
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary h-7 px-2.5 text-[10.5px]"
+              onClick={() => void decideAgent("reject")}
+              disabled={agentDeciding}
+            >
+              <X size={11} />
+              拒绝
+            </button>
+          </div>
+        </div>
+      )}
+
+      {agentState?.status === "done" && (
+        <div className="rounded-[9px] border border-line bg-subtle/70 px-2.5 py-2">
+          <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-ink">
+            <Check size={12} className="text-ok" />
+            执行完成
+          </div>
+          <p className="mt-1 text-[10.5px] leading-[17px] text-ink2">{agentState.summary || "目标已完成"}</p>
+        </div>
+      )}
+      {agentState?.status === "error" && (
+        <div className="rounded-[9px] bg-dangerSoft px-2.5 py-2 text-[10.5px] leading-[16px] text-danger">
+          {agentState.error}
+        </div>
+      )}
+      </>
+    );
+  }
 
   return (
     <div className="flex h-[calc(100dvh-170px)] min-h-[520px] flex-col gap-3">

@@ -1145,6 +1145,7 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 风险分级：`critical`（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机重启、分区工具）始终需要人工确认；`high`（递归删除、停服、清空防火墙、删用户、批量容器操作等）在 `safe` 模式需要确认；`normal` 直接执行。
 - 审批：内存审批表 + 5 分钟 TTL，`POST /ssh/agent/approvals/{id}` 唤醒等待中的运行；审批人、命令与结果写入步骤与审计。
 - 约束：运行绑定当前 SSE 连接，客户端断开即终止；单命令 90 秒超时、单步输出 16KB 截断；服务启动时清理遗留的 `running` 记录。
+- 问答内自动执行：问答页勾选「自动执行」后，前端把问题与最近 6 条问答上下文组装为 Agent 目标，复用同一套 SSE 循环执行；命令失败时输出与退出码回填模型由其自行判断，最多 8 步；审批模式、停止按钮、审计与 Agent 页一致，执行结论回写问答消息便于继续追问。
 
 #### 7.6.5 SFTP 文件管理
 
@@ -1211,6 +1212,7 @@ harness_handlers.go          SSE 会话接口与审批接口
 #### 7.6.10 终端布局与路径复制
 
 - 折叠：主机栏与 AI 面板各自维护折叠状态，写入 `localStorage`（`va.ssh.hostsCollapsed` / `va.ssh.aiCollapsed`）；栅格模板随状态切换，折叠后终端与输入区自动扩展。
+- 拖拽调宽：主机栏（180–420px）与 AI 面板（300–720px）各有一条竖向拖拽条，Pointer Events 拖动、方向键微调、Home/End 到极值、双击复位；宽度写入 `va.ssh.hostWidth` / `va.ssh.aiWidth`，列宽由 CSS 变量驱动（`--host-w` / `--ai-w`），窗口缩放时按容器宽度自动收紧并优先保证终端可用空间；xterm 通过 `ResizeObserver` 自动重排列数。
 - 响应式：AI 面板在 `xl` 以下本就是浮层，折叠按钮仅在桌面显示；移动端继续使用抽屉。
 - 路径复制：文件管理在路径输入框、条目行与预览标题栏提供复制按钮；优先 `navigator.clipboard`，失败时回退到隐藏 textarea + `execCommand`，并给出 toast 反馈。
 
