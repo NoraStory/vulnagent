@@ -727,6 +727,37 @@ export interface ClusterItem {
 export type ClusterNodeRole = "backend" | "database" | "cache" | "proxy" | "storage" | "scan_target";
 export type ClusterCheckType = "auto" | "http" | "tcp" | "ssh" | "ssh_file";
 
+export type ClusterJobKind = "check" | "scan";
+export type ClusterJobStatus = "queued" | "running" | "succeeded" | "partial" | "failed" | "canceled";
+
+export interface ClusterJobItem {
+  nodeId: number;
+  nodeName: string;
+  status: "queued" | "running" | "ok" | "failed" | "skipped" | "canceled" | string;
+  message: string;
+  latencyMs?: number;
+  assetId?: number;
+  components?: number;
+  created?: number;
+  updated?: number;
+}
+
+export interface ClusterJob {
+  id: string;
+  clusterId: number;
+  kind: ClusterJobKind;
+  status: ClusterJobStatus;
+  total: number;
+  done: number;
+  failed: number;
+  message: string;
+  items: ClusterJobItem[];
+  createdBy: string;
+  createdAt: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
 export interface ClusterNodeItem {
   id: number;
   clusterId: number;

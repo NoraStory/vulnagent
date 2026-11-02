@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestProjectsClustersAndHealthCheck(t *testing.T) {
@@ -94,6 +96,53 @@ func TestProjectsClustersAndHealthCheck(t *testing.T) {
 	if clusters != 0 {
 		t.Fatalf("删除项目后集群未清理：%d", clusters)
 	}
+}
+
+func TestClusterJobRunsAsync(t *testing.T) {
+	app := newRuntimeTestApp(t)
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer health.Close()
+
+	res, err := app.db.Exec(`INSERT INTO projects(name, description, owner, created_at, updated_at)
+		VALUES('项目 J','','tester','','')`)
+	if err != nil {
+		t.Fatalf("写入项目失败：%v", err)
+	}
+	projectID, _ := res.LastInsertId()
+	res, err = app.db.Exec(`INSERT INTO clusters(project_id, name, environment, provider, region, description, created_at, updated_at)
+		VALUES(?,'cluster-j','prod','','','','','')`, projectID)
+	if err != nil {
+		t.Fatalf("写入集群失败：%v", err)
+	}
+	clusterID, _ := res.LastInsertId()
+	if _, err := app.db.Exec(`INSERT INTO cluster_nodes(cluster_id, name, role, host, port, url, ssh_host_id,
+		check_type, path, note, status, latency_ms, detail, checked_at, created_at, updated_at)
+		VALUES(?,'backend-j','backend','',0,?,0,'http','','','unknown',0,'','','','')`, clusterID, health.URL); err != nil {
+		t.Fatalf("写入节点失败：%v", err)
+	}
+
+	job, err := app.startClusterJob(context.Background(), clusterID, "check", "tester")
+	if err != nil {
+		t.Fatalf("创建任务失败：%v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		current, err := app.clusterJobByID(context.Background(), job.ID)
+		if err != nil {
+			t.Fatalf("读取任务失败：%v", err)
+		}
+		if current.Status != "queued" && current.Status != "running" {
+			if current.Status != "succeeded" || current.Done != 1 || len(current.Items) != 1 || current.Items[0].Status != "ok" {
+				t.Fatalf("任务结果异常：%+v", current)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("任务未在预期时间内完成")
 }
 
 func TestClusterScanLinksAsset(t *testing.T) {

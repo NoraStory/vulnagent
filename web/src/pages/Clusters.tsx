@@ -19,9 +19,9 @@ import type {
   ClusterDetailData,
   ClusterEnvironment,
   ClusterItem,
+  ClusterJob,
   ClusterNodeItem,
   ClusterNodeRole,
-  ClusterScanResult,
   ProjectItem,
   SshHost
 } from "../lib/types";
@@ -48,6 +48,15 @@ const statusMeta: Record<string, { label: string; className: string }> = {
   ok: { label: "正常", className: "bg-okSoft text-ok" },
   failed: { label: "异常", className: "bg-dangerSoft text-danger" },
   unknown: { label: "未检查", className: "bg-subtle text-ink3" }
+};
+
+const jobStatusMeta: Record<string, { label: string; className: string }> = {
+  queued: { label: "排队中", className: "bg-subtle text-ink3" },
+  running: { label: "执行中", className: "bg-brand-soft text-brand" },
+  succeeded: { label: "已完成", className: "bg-okSoft text-ok" },
+  partial: { label: "部分完成", className: "bg-warnSoft text-warn" },
+  failed: { label: "失败", className: "bg-dangerSoft text-danger" },
+  canceled: { label: "已取消", className: "bg-subtle text-ink3" }
 };
 
 function endpointOf(node: ClusterNodeItem): string {
@@ -85,7 +94,10 @@ export function ClustersPage() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<ClusterNodeItem | null>(null);
   const [sshHosts, setSshHosts] = useState<SshHost[]>([]);
-  const [scanResult, setScanResult] = useState<ClusterScanResult | null>(null);
+  const [job, setJob] = useState<ClusterJob | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  const jobRunning = job?.status === "queued" || job?.status === "running";
 
   const loadProjects = useCallback(async () => {
     const result = await api.projects();
@@ -141,39 +153,60 @@ export function ClustersPage() {
     void loadDetail(selectedCluster);
   }, [selectedCluster, loadDetail]);
 
+  useEffect(() => {
+    setJob(null);
+  }, [selectedCluster]);
+
+  useEffect(() => {
+    if (!job || (job.status !== "queued" && job.status !== "running")) return;
+    const jobId = job.id;
+    const timer = window.setInterval(() => {
+      void api
+        .clusterJob(jobId)
+        .then(async (next) => {
+          setJob(next);
+          if (next.status !== "queued" && next.status !== "running") {
+            await loadDetail(next.clusterId);
+            await loadClusters(selectedProject);
+            toast.push(next.message || "任务完成", next.status === "failed" ? "error" : "success");
+          }
+        })
+        .catch(() => undefined);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [job?.id, job?.status, loadDetail, loadClusters, selectedProject, toast]);
+
   async function refreshAll() {
     await loadProjects();
     await loadClusters(selectedProject);
     await loadDetail(selectedCluster);
   }
 
-  async function checkAll() {
-    if (!selectedCluster || busy) return;
-    setBusy("check");
+  async function startJob(kind: "check" | "scan") {
+    if (!selectedCluster || busy || jobRunning) return;
+    setBusy(kind);
     try {
-      await api.checkCluster(selectedCluster);
-      toast.push("节点健康检查完成", "success");
-      await loadDetail(selectedCluster);
+      const result = await api.createClusterJob(selectedCluster, kind);
+      setJob(result.job);
+      toast.push(kind === "check" ? "检查任务已创建" : "扫描任务已创建", "info");
     } catch (err) {
-      toast.push(err instanceof Error ? err.message : "健康检查失败", "error");
+      toast.push(err instanceof Error ? err.message : "创建任务失败", "error");
     } finally {
       setBusy("");
     }
   }
 
-  async function scanAll() {
-    if (!selectedCluster || busy) return;
-    setBusy("scan");
-    setScanResult(null);
+  async function cancelJob() {
+    if (!job || cancelBusy) return;
+    setCancelBusy(true);
     try {
-      const result = await api.scanCluster(selectedCluster);
-      setScanResult(result);
-      toast.push(`扫描完成：${result.okCount}/${result.total} 个节点成功`, result.okCount === result.total ? "success" : "info");
-      await refreshAll();
+      await api.cancelClusterJob(job.id);
+      setJob(await api.clusterJob(job.id));
+      toast.push("已取消任务", "info");
     } catch (err) {
-      toast.push(err instanceof Error ? err.message : "集群扫描失败", "error");
+      toast.push(err instanceof Error ? err.message : "取消任务失败", "error");
     } finally {
-      setBusy("");
+      setCancelBusy(false);
     }
   }
 
@@ -299,11 +332,11 @@ export function ClustersPage() {
             <RefreshCw size={13} />
             刷新
           </button>
-          <button type="button" className="btn btn-secondary h-8 px-2.5 text-[12px]" onClick={() => void checkAll()} disabled={!currentCluster || busy !== ""}>
+          <button type="button" className="btn btn-secondary h-8 px-2.5 text-[12px]" onClick={() => void startJob("check")} disabled={!currentCluster || busy !== "" || jobRunning}>
             {busy === "check" ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
             检查全部
           </button>
-          <button type="button" className="btn btn-primary h-8 px-2.5 text-[12px]" onClick={() => void scanAll()} disabled={!currentCluster || busy !== "" || !canOperate}>
+          <button type="button" className="btn btn-primary h-8 px-2.5 text-[12px]" onClick={() => void startJob("scan")} disabled={!currentCluster || busy !== "" || jobRunning || !canOperate}>
             {busy === "scan" ? <Loader2 size={13} className="animate-spin" /> : <ScanLine size={13} />}
             扫描全部
           </button>
@@ -539,23 +572,54 @@ export function ClustersPage() {
                 )}
               </div>
 
-              {scanResult && (
+              {job && (
                 <div className="card px-3 py-2.5">
-                  <p className="text-[12px] font-medium text-ink">
-                    扫描结果 · 成功 {scanResult.okCount}/{scanResult.total}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[12px] font-medium text-ink">
+                      {job.kind === "scan" ? "扫描任务" : "检查任务"} · {job.done}/{job.total}
+                    </p>
+                    <span className={`rounded-full px-1.5 py-0.5 text-[9.5px] ${(jobStatusMeta[job.status] ?? jobStatusMeta.queued).className}`}>
+                      {(jobStatusMeta[job.status] ?? jobStatusMeta.queued).label}
+                    </span>
+                    <span className="text-[10px] text-ink3">
+                      {job.createdBy || "系统"} · {job.createdAt}
+                    </span>
+                    {jobRunning && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary ml-auto h-6 px-2 text-[10.5px]"
+                        onClick={() => void cancelJob()}
+                        disabled={cancelBusy}
+                      >
+                        {cancelBusy ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+                        取消任务
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-subtle">
+                    <div
+                      className={`h-full rounded-full transition-all ${job.status === "failed" ? "bg-danger" : job.status === "partial" ? "bg-warn" : "bg-brand"}`}
+                      style={{ width: `${job.total > 0 ? Math.round((job.done / job.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                  {job.message && <p className="mt-1.5 text-[10.5px] text-ink2">{job.message}</p>}
                   <div className="mt-1.5 space-y-1">
-                    {scanResult.items.map((item) => (
-                      <p key={item.nodeId} className="flex items-center gap-2 text-[10.5px] text-ink2">
+                    {job.items.map((item) => (
+                      <p key={`${item.nodeId}-${item.status}`} className="flex items-center gap-2 text-[10.5px] text-ink2">
                         {item.status === "ok" ? (
-                          <CheckCircle2 size={11} className="text-ok" />
-                        ) : item.status === "skipped" ? (
-                          <TriangleAlert size={11} className="text-ink3" />
+                          <CheckCircle2 size={11} className="shrink-0 text-ok" />
+                        ) : item.status === "failed" ? (
+                          <TriangleAlert size={11} className="shrink-0 text-danger" />
+                        ) : item.status === "running" ? (
+                          <Loader2 size={11} className="shrink-0 animate-spin text-brand" />
                         ) : (
-                          <TriangleAlert size={11} className="text-danger" />
+                          <TriangleAlert size={11} className="shrink-0 text-ink3" />
                         )}
-                        <span className="font-medium text-ink">{item.nodeName}</span>
-                        <span className="truncate text-ink3">{item.message}</span>
+                        <span className="shrink-0 font-medium text-ink">{item.nodeName}</span>
+                        <span className="truncate text-ink3">
+                          {item.message || (item.status === "queued" ? "等待执行" : item.status === "running" ? "执行中" : "—")}
+                        </span>
+                        {item.latencyMs ? <span className="ml-auto shrink-0 font-mono text-[10px] text-ink3">{item.latencyMs} ms</span> : null}
                       </p>
                     ))}
                   </div>

@@ -112,6 +112,10 @@ type App struct {
 	integrationMu      sync.Mutex
 	integrationSyncing map[int64]bool
 
+	// 集群异步检查/扫描：运行中任务的取消句柄
+	clusterJobMu      sync.Mutex
+	clusterJobCancels map[string]context.CancelFunc
+
 	// demo 模式由启动时的数据初始化决定，进程内缓存避免每次响应都查库
 	demoOnce sync.Once
 	demoFlag bool
@@ -164,6 +168,10 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/clusters/{id}/nodes", a.handleClusterNodeCreate)
 	mux.HandleFunc("POST /api/v1/clusters/{id}/check", a.handleClusterCheck)
 	mux.HandleFunc("POST /api/v1/clusters/{id}/scan", a.handleClusterScan)
+	mux.HandleFunc("POST /api/v1/clusters/{id}/jobs", a.handleClusterJobCreate)
+	mux.HandleFunc("GET /api/v1/clusters/{id}/jobs", a.handleClusterJobs)
+	mux.HandleFunc("GET /api/v1/cluster-jobs/{id}", a.handleClusterJobDetail)
+	mux.HandleFunc("POST /api/v1/cluster-jobs/{id}/cancel", a.handleClusterJobCancel)
 	mux.HandleFunc("POST /api/v1/clusters/{id}/assets", a.handleClusterAssetsLink)
 	mux.HandleFunc("DELETE /api/v1/clusters/{id}/assets/{assetId}", a.handleClusterAssetUnlink)
 	mux.HandleFunc("PATCH /api/v1/cluster-nodes/{id}", a.handleClusterNodeUpdate)
@@ -376,6 +384,7 @@ func runServer() {
 	} else if n > 0 {
 		slog.Info("已标记中断的发现任务", "count", n)
 	}
+	app.interruptClusterJobs()
 	app.skills = loadSkills()
 	slog.Info("运维技能已加载", "count", len(app.skills.List()), "dir", app.skills.root)
 	app.initHarness(cfg)

@@ -43,6 +43,7 @@ import type {
   ClusterNodeItem,
   ClusterDetailData,
   ClusterScanResult,
+  ClusterJob,
   SyncSource,
   Ticket,
   TrajectoryItem,
@@ -822,6 +823,18 @@ export const api = {
 
   scanCluster(id: number): Promise<ClusterScanResult> {
     return request(`/clusters/${id}/scan`, { method: "POST", body: "{}" });
+  },
+  createClusterJob(id: number, kind: "check" | "scan"): Promise<{ job: ClusterJob }> {
+    return request(`/clusters/${id}/jobs`, { method: "POST", body: JSON.stringify({ kind }) });
+  },
+  clusterJobs(id: number): Promise<{ items: ClusterJob[] }> {
+    return request(`/clusters/${id}/jobs`);
+  },
+  clusterJob(id: string): Promise<ClusterJob> {
+    return request(`/cluster-jobs/${id}`);
+  },
+  cancelClusterJob(id: string): Promise<{ ok: boolean; status: string }> {
+    return request(`/cluster-jobs/${id}/cancel`, { method: "POST", body: "{}" });
   },
 
   linkClusterAssets(id: number, assetIds: number[]): Promise<{ ok: boolean; count: number }> {
