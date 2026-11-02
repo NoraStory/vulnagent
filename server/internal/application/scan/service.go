@@ -265,6 +265,13 @@ func (s *Service) Reconcile(assetID int64, actor string) (ReconcileResult, error
 				out.Kept++
 				continue
 			}
+			// 已升级到修复版本时直接保持 verified：区间缺失或产品名不一致
+			// 不应该让已验证的结论反复翻转
+			if item.row.FixedVersion != "" &&
+				version.Compare(item.current.Eco, item.current.Version, item.row.FixedVersion) >= 0 {
+				out.Kept++
+				continue
+			}
 			affected, err := stillAffected(item)
 			if err != nil {
 				return out, err

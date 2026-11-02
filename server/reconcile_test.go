@@ -66,6 +66,24 @@ func TestReconcileFindingStates(t *testing.T) {
 		t.Fatalf("状态应为 verified，实际 %s", status)
 	}
 
+	// 2.1 情报区间缺失时，已升级到修复版本的结论不应反复打开
+	mustExec(`DELETE FROM cve_affected WHERE cve_id = 'CVE-TEST-0001'`)
+	res, err = app.reconcileFindingStates(assetID, "测试")
+	if err != nil {
+		t.Fatalf("区间缺失后复扫失败：%v", err)
+	}
+	if res.Kept != 1 || res.Reopened != 0 {
+		t.Fatalf("区间缺失时应保持 verified，实际 %+v", res)
+	}
+	if err := db.QueryRow(`SELECT status FROM findings WHERE asset_id = ?`, assetID).Scan(&status); err != nil {
+		t.Fatalf("读取状态失败：%v", err)
+	}
+	if status != "verified" {
+		t.Fatalf("区间缺失后状态应保持 verified，实际 %s", status)
+	}
+	mustExec(`INSERT INTO cve_affected(cve_id, product, version_start_incl, version_end_excl, fixed_version)
+		VALUES('CVE-TEST-0001','log4j-core','2.0.0','2.15.0','2.17.1')`)
+
 	// 3. 版本回退：重新打开
 	mustExec(`UPDATE components SET version = '2.14.1' WHERE asset_id = ? AND name = 'log4j-core'`, assetID)
 	res, err = app.reconcileFindingStates(assetID, "测试")

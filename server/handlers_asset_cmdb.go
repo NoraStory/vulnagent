@@ -234,7 +234,6 @@ func (a *App) handleAssetMerge(w http.ResponseWriter, r *http.Request) {
 const (
 	assetImportRowLimit = 5000
 	assetImportMaxBytes = 5 << 20
-	assetExportRowLimit = 5000
 )
 
 type assetCSVColumn struct {
@@ -291,12 +290,16 @@ func normalizeAssetHeader(value string) string {
 	return replacer.Replace(value)
 }
 
-// handleAssetExport 导出资产档案 CSV（UTF-8 BOM，便于 Excel 打开）
+// handleAssetExport 导出资产档案 CSV（UTF-8 BOM，便于 Excel 打开）。
+// 分页拉取直到取完，避免超过单页上限后静默丢行。
 func (a *App) handleAssetExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "operator"); !ok {
 		return
 	}
-	list, _, err := a.assetRepo().List(r.Context(), assetFilterFromQuery(r), assetExportRowLimit, 0)
+	const pageSize = 1000
+	ctx := r.Context()
+	filter := assetFilterFromQuery(r)
+	list, total, err := a.assetRepo().List(ctx, filter, pageSize, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "导出失败")
 		return
@@ -314,15 +317,28 @@ func (a *App) handleAssetExport(w http.ResponseWriter, r *http.Request) {
 		header = append(header, col.header)
 	}
 	_ = cw.Write(header)
-	for _, it := range list {
-		row := make([]string, 0, len(assetCSVColumns))
-		for _, col := range assetCSVColumns {
-			row = append(row, assetCSVValue(it, col.key))
+	writeRows := func(items []ports.AssetListItem) {
+		for _, it := range items {
+			row := make([]string, 0, len(assetCSVColumns))
+			for _, col := range assetCSVColumns {
+				row = append(row, assetCSVValue(it, col.key))
+			}
+			_ = cw.Write(row)
 		}
-		_ = cw.Write(row)
+	}
+	writeRows(list)
+	exported := len(list)
+	for exported < total {
+		page, _, err := a.assetRepo().List(ctx, filter, pageSize, exported)
+		if err != nil || len(page) == 0 {
+			// 响应头已发送，无法再返回 JSON 错误；保留已写入内容
+			break
+		}
+		writeRows(page)
+		exported += len(page)
 	}
 	cw.Flush()
-	a.audit(r, "asset.export_csv", "assets.csv", fmt.Sprintf("导出 %d 台资产", len(list)))
+	a.audit(r, "asset.export_csv", "assets.csv", fmt.Sprintf("导出 %d 台资产", exported))
 }
 
 func assetCSVValue(it ports.AssetListItem, key string) string {

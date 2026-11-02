@@ -78,9 +78,34 @@ func (r *AssetRepo) Components(ctx context.Context, assetID int64) ([]asset.Comp
 	return out, rows.Err()
 }
 
-// UpsertReported 按主机名写入或刷新资产，返回资产 ID
+// UpsertReported 按主机名写入或刷新资产，返回资产 ID。
+// 主机名已被合并时把上报刷新到合并目标，避免重新激活不可见的旧记录。
 func (r *AssetRepo) UpsertReported(ctx context.Context, hostname, ip, osFamily, osVersion, source, agentStatus, seenAt string) (int64, error) {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO assets(hostname, ip, os_family, os_version, env, exposure, tier, owner,
+	var existingID, mergedInto int64
+	err := r.db.QueryRowContext(ctx, `SELECT id, merged_into FROM assets WHERE hostname = ?`, hostname).
+		Scan(&existingID, &mergedInto)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if err == nil && mergedInto != 0 {
+		target, err := r.resolveMergedTarget(ctx, mergedInto)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := r.db.ExecContext(ctx, `UPDATE assets SET ip = ?, os_family = ?, os_version = ?,
+			source = CASE WHEN assets.source = 'agent' THEN 'agent' ELSE ? END,
+			agent_status = CASE WHEN ? = 'online' THEN 'online' ELSE assets.agent_status END,
+			last_seen_at = ?, updated_at = ? WHERE id = ?`,
+			ip, osFamily, osVersion, source, agentStatus, seenAt, seenAt, target); err != nil {
+			return 0, err
+		}
+		if err := r.attachReportedIdentifiers(ctx, target, hostname, ip, source, seenAt); err != nil {
+			return 0, err
+		}
+		return target, nil
+	}
+
+	_, err = r.db.ExecContext(ctx, `INSERT INTO assets(hostname, ip, os_family, os_version, env, exposure, tier, owner,
 		source, agent_status, last_seen_at, created_at, updated_at)
 		VALUES(?,?,?,?, 'prod', 'internal', 'normal', '', ?, ?, ?, ?, ?)
 		ON CONFLICT(hostname) DO UPDATE SET ip = excluded.ip, os_family = excluded.os_family,
@@ -97,18 +122,40 @@ func (r *AssetRepo) UpsertReported(ctx context.Context, hostname, ip, osFamily, 
 	if err := r.db.QueryRowContext(ctx, `SELECT id FROM assets WHERE hostname = ?`, hostname).Scan(&id); err != nil {
 		return 0, err
 	}
-	if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
-		VALUES(?, 'hostname', ?, ?, ?)`, id, hostname, source, seenAt); err != nil {
+	if err := r.attachReportedIdentifiers(ctx, id, hostname, ip, source, seenAt); err != nil {
 		return 0, err
 	}
-	if ip != "" {
-		if _, err := r.db.ExecContext(ctx, `DELETE FROM asset_identifiers WHERE asset_id = ? AND kind = 'ip' AND value <> ?`, id, ip); err != nil {
+	return id, nil
+}
+
+// attachReportedIdentifiers 维护上报资产的 hostname / ip 标识
+func (r *AssetRepo) attachReportedIdentifiers(ctx context.Context, id int64, hostname, ip, source, seenAt string) error {
+	if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
+		VALUES(?, 'hostname', ?, ?, ?)`, id, hostname, source, seenAt); err != nil {
+		return err
+	}
+	if ip == "" {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM asset_identifiers WHERE asset_id = ? AND kind = 'ip' AND value <> ?`, id, ip); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
+		VALUES(?, 'ip', ?, ?, ?)`, id, ip, source, seenAt)
+	return err
+}
+
+// resolveMergedTarget 沿 merged_into 找到最终存活资产，限制跳数防止脏数据成环
+func (r *AssetRepo) resolveMergedTarget(ctx context.Context, id int64) (int64, error) {
+	for i := 0; i < 8; i++ {
+		var next int64
+		if err := r.db.QueryRowContext(ctx, `SELECT merged_into FROM assets WHERE id = ?`, id).Scan(&next); err != nil {
 			return 0, err
 		}
-		if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO asset_identifiers(asset_id, kind, value, source, created_at)
-			VALUES(?, 'ip', ?, ?, ?)`, id, ip, source, seenAt); err != nil {
-			return 0, err
+		if next == 0 {
+			return id, nil
 		}
+		id = next
 	}
 	return id, nil
 }

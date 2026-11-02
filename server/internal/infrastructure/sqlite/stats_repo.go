@@ -98,7 +98,7 @@ func (r *StatsRepo) AgentSummary(ctx context.Context) (ports.AgentSummary, error
 		COALESCE(SUM(CASE WHEN agent_status = 'online' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN agent_status = 'offline' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN agent_status = 'stale' THEN 1 ELSE 0 END), 0)
-		FROM assets WHERE source = 'agent'`).Scan(&s.Total, &s.Online, &s.Offline, &s.Stale)
+		FROM assets WHERE source = 'agent' AND merged_into = 0`).Scan(&s.Total, &s.Online, &s.Offline, &s.Stale)
 	return s, err
 }
 
@@ -129,10 +129,10 @@ func (r *StatsRepo) RecentFindingEvents(ctx context.Context, limit int) ([]ports
 func (r *StatsRepo) Gauges(ctx context.Context) (ports.Gauges, error) {
 	var g ports.Gauges
 	err := r.db.QueryRowContext(ctx, `SELECT
-		(SELECT COUNT(*) FROM assets),
+		(SELECT COUNT(*) FROM assets WHERE merged_into = 0),
 		(SELECT COUNT(*) FROM components),
 		(SELECT COUNT(*) FROM cves),
-		(SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'online'),
+		(SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'online' AND merged_into = 0),
 		COALESCE((SELECT failed FROM selfcheck_runs ORDER BY finished_at DESC LIMIT 1), 0)`).
 		Scan(&g.Assets, &g.Components, &g.CVEs, &g.AgentsOnline, &g.SelfcheckFailed)
 	return g, err

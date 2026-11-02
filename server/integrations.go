@@ -82,7 +82,8 @@ func validateIntegration(kind string, config map[string]any, credentials map[str
 		return err
 	}
 	requireKey := func(key string, label string) error {
-		if strings.TrimSpace(credentials[key]) != "" || (len(credentials) == 0 && hasStoredSecret) {
+		// 已保存的凭据可以补齐未提交的字段，支持单键轮换；清空凭据后则必须重新提供全部字段
+		if strings.TrimSpace(credentials[key]) != "" || hasStoredSecret {
 			return nil
 		}
 		return fmt.Errorf("缺少凭据：%s", label)
@@ -247,17 +248,28 @@ func (a *App) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.Config != nil {
 		config = req.Config
 	}
-	if err := validateIntegration(src.Kind, config, req.Credentials, src.Secret != ""); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	configJSON, _ := json.Marshal(config)
-	src.Config = string(configJSON)
+	// 先应用凭据变更再校验，避免「清空凭据 + 启用」通过校验后留下不可用的集成源
 	switch {
 	case req.ClearSecret:
 		src.Secret = ""
 	case len(req.Credentials) > 0:
-		raw, _ := json.Marshal(req.Credentials)
+		merged := req.Credentials
+		// 只提交部分字段时与已保存凭据合并，支持单键轮换而不丢其它字段
+		if src.Secret != "" {
+			if plain, err := a.openSSHSecret(src.Secret); err == nil {
+				var previous map[string]string
+				if json.Unmarshal([]byte(plain), &previous) == nil {
+					merged = make(map[string]string, len(previous)+len(req.Credentials))
+					for key, value := range previous {
+						merged[key] = value
+					}
+					for key, value := range req.Credentials {
+						merged[key] = value
+					}
+				}
+			}
+		}
+		raw, _ := json.Marshal(merged)
 		sealed, err := a.sealSSHSecret(string(raw))
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal_error", "加密凭据失败")
@@ -265,6 +277,12 @@ func (a *App) handleIntegrationUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		src.Secret = sealed
 	}
+	if err := validateIntegration(src.Kind, config, req.Credentials, src.Secret != ""); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	configJSON, _ := json.Marshal(config)
+	src.Config = string(configJSON)
 	if req.Enabled != nil {
 		src.Enabled = *req.Enabled
 	}

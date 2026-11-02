@@ -54,7 +54,8 @@ export function AssetsPage() {
   const statusFilter = params.get("status") ?? "";
   const typeFilter = params.get("assetType") ?? "";
   const bizFilter = params.get("businessSystem") ?? "";
-  const page = Math.max(1, Number(params.get("page") ?? 1));
+  const pageParam = Number(params.get("page") ?? 1);
+  const page = Number.isFinite(pageParam) && pageParam >= 1 ? Math.floor(pageParam) : 1;
 
   const [search, setSearch] = useState(queryParam);
   const [biz, setBiz] = useState(bizFilter);

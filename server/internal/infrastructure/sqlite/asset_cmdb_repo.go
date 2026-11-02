@@ -279,13 +279,17 @@ func (r *AssetRepo) FindByIdentity(ctx context.Context, kind, value string) (int
 	return id, true, nil
 }
 
-// FindByHostname 按主机名查找资产
+// FindByHostname 按主机名查找资产；主机名已被合并时返回最终存活资产
 func (r *AssetRepo) FindByHostname(ctx context.Context, hostname string) (int64, bool, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx, `SELECT id FROM assets WHERE hostname = ?`, hostname).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
+	if err != nil {
+		return 0, false, err
+	}
+	id, err = r.resolveMergedTarget(ctx, id)
 	if err != nil {
 		return 0, false, err
 	}
@@ -380,17 +384,26 @@ func (r *AssetRepo) Merge(ctx context.Context, sourceID, targetID int64, actor s
 		return stats, fmt.Errorf("不能把资产合并到自身")
 	}
 	var sourceHost, targetHost string
-	if err := r.db.QueryRowContext(ctx, `SELECT hostname FROM assets WHERE id = ?`, sourceID).Scan(&sourceHost); err != nil {
+	var sourceMerged, targetMerged int64
+	if err := r.db.QueryRowContext(ctx, `SELECT hostname, merged_into FROM assets WHERE id = ?`, sourceID).
+		Scan(&sourceHost, &sourceMerged); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return stats, ports.ErrNotFound
 		}
 		return stats, err
 	}
-	if err := r.db.QueryRowContext(ctx, `SELECT hostname FROM assets WHERE id = ?`, targetID).Scan(&targetHost); err != nil {
+	if sourceMerged != 0 {
+		return stats, fmt.Errorf("源资产已合并到其他资产，不能再次合并")
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT hostname, merged_into FROM assets WHERE id = ?`, targetID).
+		Scan(&targetHost, &targetMerged); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return stats, ports.ErrNotFound
 		}
 		return stats, err
+	}
+	if targetMerged != 0 {
+		return stats, fmt.Errorf("目标资产已被合并，不能作为合并目标")
 	}
 
 	now := nowString()
@@ -470,6 +483,9 @@ func (r *AssetRepo) Merge(ctx context.Context, sourceID, targetID int64, actor s
 		return stats, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE discovery_results SET asset_id = ? WHERE asset_id = ?`, targetID, sourceID); err != nil {
+		return stats, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE discovery_candidates SET asset_id = ? WHERE asset_id = ?`, targetID, sourceID); err != nil {
 		return stats, err
 	}
 

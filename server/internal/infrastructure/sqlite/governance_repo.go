@@ -117,12 +117,13 @@ func (r *GovernanceRepo) listStale(ctx context.Context, cutoff string, limit, of
 func (r *GovernanceRepo) listExposureChanged(ctx context.Context, cutoff string, limit, offset int) ([]ports.GovernanceItem, int, error) {
 	where := `c.field = 'exposure' AND c.created_at <> '' AND c.created_at >= ?`
 	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM asset_changes c WHERE `+where, cutoff).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM asset_changes c
+		JOIN assets a ON a.id = c.asset_id AND a.merged_into = 0 WHERE `+where, cutoff).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT c.asset_id, a.hostname, a.ip, a.business_system, a.owner, a.status,
 		a.source, a.last_seen_at, c.old_value, c.new_value, c.created_at
-		FROM asset_changes c LEFT JOIN assets a ON a.id = c.asset_id
+		FROM asset_changes c JOIN assets a ON a.id = c.asset_id AND a.merged_into = 0
 		WHERE `+where+` ORDER BY c.id DESC LIMIT ? OFFSET ?`, cutoff, limit, offset)
 	if err != nil {
 		return nil, 0, err

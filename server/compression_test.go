@@ -39,6 +39,32 @@ func TestCompressionJSON(t *testing.T) {
 	}
 }
 
+func TestCompressionRespectsGzipQuality(t *testing.T) {
+	handler := withCompression(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"hello": "world"})
+	}))
+	cases := []struct {
+		header     string
+		compressed bool
+	}{
+		{"gzip;q=0", false},
+		{"br, gzip;q=0", false},
+		{"br, gzip;q=0.5", true},
+		{"identity", false},
+		{"*", true},
+	}
+	for _, item := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+		req.Header.Set("Accept-Encoding", item.header)
+		handler.ServeHTTP(rec, req)
+		got := rec.Header().Get("Content-Encoding") == "gzip"
+		if got != item.compressed {
+			t.Fatalf("Accept-Encoding=%q 期望压缩=%v，实际 %v", item.header, item.compressed, got)
+		}
+	}
+}
+
 func TestCompressionSkipsSSEAndBinary(t *testing.T) {
 	cases := []struct {
 		name        string

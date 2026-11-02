@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Check,
@@ -103,7 +103,9 @@ export function DiscoveryPage() {
     }
   }, [jobPage]);
 
+  const candidateSeq = useRef(0);
   const loadCandidates = useCallback(async () => {
+    const seq = ++candidateSeq.current;
     setCandidatesLoading(true);
     try {
       const result = await api.discoveryCandidates({
@@ -113,12 +115,18 @@ export function DiscoveryPage() {
         decision: decision === "all" ? undefined : decision,
         q: query.trim() || undefined
       });
+      // 防抖与轮询会并发触发，只接受最后一次请求的结果
+      if (seq !== candidateSeq.current) return;
       setCandidates(result.items ?? []);
       setCandidateTotal(result.total);
+      setError("");
     } catch (err) {
+      if (seq !== candidateSeq.current) return;
       setError(err instanceof Error ? err.message : "加载候选资产失败");
     } finally {
-      setCandidatesLoading(false);
+      if (seq === candidateSeq.current) {
+        setCandidatesLoading(false);
+      }
     }
   }, [candidatePage, jobFilter, decision, query]);
 
@@ -156,7 +164,7 @@ export function DiscoveryPage() {
 
   useEffect(() => {
     setSelected([]);
-  }, [candidatePage, decision, jobFilter]);
+  }, [candidatePage, decision, jobFilter, query]);
 
   const openPolicy = () => {
     if (!policy) return;

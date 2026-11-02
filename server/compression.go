@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -107,13 +108,37 @@ func (w *gzipResponseWriter) close() {
 	w.writer = nil
 }
 
+// acceptsGzip 解析 Accept-Encoding；gzip;q=0 表示客户端明确拒绝压缩
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(strings.TrimSpace(part), ";")
+		coding := strings.ToLower(strings.TrimSpace(fields[0]))
+		if coding != "gzip" && coding != "*" {
+			continue
+		}
+		quality := 1.0
+		for _, param := range fields[1:] {
+			kv := strings.SplitN(strings.TrimSpace(param), "=", 2)
+			if len(kv) == 2 && strings.EqualFold(strings.TrimSpace(kv[0]), "q") {
+				if v, err := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64); err == nil {
+					quality = v
+				}
+			}
+		}
+		if quality > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // withCompression 压缩 API 与静态资源中的文本响应；SSE、WebSocket、Range 与二进制下载自动跳过。
 func withCompression(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead ||
 			r.Header.Get("Upgrade") != "" ||
 			r.Header.Get("Range") != "" ||
-			!strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			!acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			next.ServeHTTP(w, r)
 			return
 		}

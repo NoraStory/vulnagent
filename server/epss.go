@@ -105,6 +105,8 @@ func (a *App) importEPSS(reader io.Reader) (epssResult, error) {
 	if err := tx.Commit(); err != nil {
 		return res, err
 	}
+	// EPSS 分值已变化，让下一次匹配重新加载情报快照，避免新结论沿用旧分值
+	a.invalidateIntelCache()
 
 	// 把最新 EPSS 同步到漏洞快照，再按当前策略重算风险分
 	if err := a.findingRepo().SyncEPSSSnapshot(context.Background()); err != nil {

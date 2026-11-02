@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GitMerge, Loader2, Pencil, Plus, Save, Tag, X } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import type { AssetChange, AssetIdentifier, AssetItem } from "../lib/types";
@@ -160,10 +160,18 @@ export function AssetCmdbPanel({
     return next;
   }, [asset]);
 
+  // 仅在切换到另一台资产时重置表单；同资产刷新（如标签变更）不能覆盖未保存的编辑
+  const assetIdRef = useRef<number | null>(null);
   useEffect(() => {
+    if (assetIdRef.current === asset.id) return;
+    assetIdRef.current = asset.id;
     setForm(initial);
+    setEditing(false);
+  }, [asset.id, initial]);
+
+  useEffect(() => {
     setTags(asset.tags ?? []);
-  }, [initial, asset.tags]);
+  }, [asset.tags]);
 
   const setField = (key: string, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 

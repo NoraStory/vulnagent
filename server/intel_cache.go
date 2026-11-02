@@ -29,49 +29,47 @@ func newIntelSnapshotCache(inner ports.IntelRepository) *intelSnapshotCache {
 	return &intelSnapshotCache{IntelRepository: inner}
 }
 
-func (c *intelSnapshotCache) ensure(ctx context.Context) error {
+// load 在锁内返回当前快照，必要时重新加载；返回值只读，调用方不得修改。
+func (c *intelSnapshotCache) load(ctx context.Context) (map[string]ports.CVEMeta, map[string][]vuln.AffectedRange, map[string]ports.ProductMapping, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.loadedAt.IsZero() && time.Since(c.loadedAt) < intelCacheTTL {
-		return nil
+		return c.meta, c.ranges, c.mappings, nil
 	}
 	meta, err := c.IntelRepository.CVEMeta(ctx)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	ranges, err := c.IntelRepository.AffectedByProduct(ctx)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	mappings, err := c.IntelRepository.ProductMappings(ctx)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	c.meta, c.ranges, c.mappings = meta, ranges, mappings
 	c.loadedAt = time.Now()
-	return nil
+	return meta, ranges, mappings, nil
 }
 
 func (c *intelSnapshotCache) CVEMeta(ctx context.Context) (map[string]ports.CVEMeta, error) {
-	if err := c.ensure(ctx); err != nil {
-		return nil, err
-	}
-	return c.meta, nil
+	meta, _, _, err := c.load(ctx)
+	return meta, err
 }
 
 func (c *intelSnapshotCache) AffectedByProduct(ctx context.Context) (map[string][]vuln.AffectedRange, error) {
-	if err := c.ensure(ctx); err != nil {
-		return nil, err
-	}
-	return c.ranges, nil
+	_, ranges, _, err := c.load(ctx)
+	return ranges, err
 }
 
 // AffectedFor 从快照中按 CVE + 产品过滤区间，避免复扫时逐条查库。
 func (c *intelSnapshotCache) AffectedFor(ctx context.Context, cveID, product string) ([]vuln.AffectedRange, bool, error) {
-	if err := c.ensure(ctx); err != nil {
+	_, ranges, _, err := c.load(ctx)
+	if err != nil {
 		return nil, false, err
 	}
-	all := c.ranges[strings.ToLower(product)]
+	all := ranges[strings.ToLower(product)]
 	if len(all) == 0 {
 		return nil, false, nil
 	}
@@ -85,10 +83,8 @@ func (c *intelSnapshotCache) AffectedFor(ctx context.Context, cveID, product str
 }
 
 func (c *intelSnapshotCache) ProductMappings(ctx context.Context) (map[string]ports.ProductMapping, error) {
-	if err := c.ensure(ctx); err != nil {
-		return nil, err
-	}
-	return c.mappings, nil
+	_, _, mappings, err := c.load(ctx)
+	return mappings, err
 }
 
 // Invalidate 让下一次匹配重新加载情报快照。
