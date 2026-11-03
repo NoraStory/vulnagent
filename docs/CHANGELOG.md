@@ -28,7 +28,7 @@
 | `v0.7.11` | 2026-11-03 | 上下文预算上限提升至 1M，按预算自适应保留上下文 | `9f260aa` | [9f260aa](https://github.com/NoraStory/vulnagent/commit/9f260aa) |
 | `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
 | `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | `5bdaf20` | [5bdaf20](https://github.com/NoraStory/vulnagent/commit/5bdaf20) |
-| `v0.7.14` | 2026-11-03 | 修复中危：运行记录越权、WebSocket Origin、CSRF null、Agent 主机绑定等 | 本次提交 | 本次提交 |
+| `v0.7.14` | 2026-11-03 | 修复中危：运行记录越权、WebSocket Origin、CSRF null、Agent 主机绑定等 | `0032459` | [0032459](https://github.com/NoraStory/vulnagent/commit/0032459) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -52,7 +52,7 @@
 - 新增 `TestRedactedRequestURI`、`TestClientIPTrustProxy`、`TestCheckWebSocketOrigin`、`TestAgentPrincipalHostnameBinding`；录制接口测试同步为“发起人访问”；`go vet ./...`、`go test ./...` 通过。
 
 ### 主要提交
-`本次提交 fix(security): 收敛运行记录越权与浏览器请求来源校验`
+`0032459 fix(security): 收敛运行记录越权与浏览器请求来源校验`
 
 ---
 
