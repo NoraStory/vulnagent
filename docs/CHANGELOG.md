@@ -24,7 +24,7 @@
 | `v0.7.7` | 2026-11-02 | 终端技能调用与自动执行去步数上限 | `4c944c4` | [4c944c4](https://github.com/NoraStory/vulnagent/commit/4c944c4) |
 | `v0.7.8` | 2026-11-03 | 集群 SLO、依赖拓扑与根因分析 | `69b6fa2..382aff7` | [382aff7](https://github.com/NoraStory/vulnagent/commit/382aff7) |
 | `v0.7.9` | 2026-11-03 | 首个 Git Tag：SSH Agent 后台运行与页面恢复 | `409b9f4..f41ee9e` | [f41ee9e](https://github.com/NoraStory/vulnagent/commit/f41ee9e) |
-| `v0.7.10` | 2026-11-03 | 自检在线率按上报时间判定、情报与上报链路修复 | `待定` | `待定` |
+| `v0.7.10` | 2026-11-03 | 自检在线率按上报时间判定、情报与上报链路修复 | `50d892e` | [50d892e](https://github.com/NoraStory/vulnagent/commit/50d892e) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -44,7 +44,7 @@
 - `go vet ./...`、`go test ./...` 通过；同步游标状态均为 `ok`；自检「情报同步」「采集链路」两组恢复通过。
 
 ### 主要提交
-`待补`
+`50d892e fix(selfcheck): 在线率按最近上报判定，修复情报与采集链路失败项`
 
 ---
 
