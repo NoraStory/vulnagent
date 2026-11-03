@@ -26,7 +26,7 @@
 | `v0.7.9` | 2026-11-03 | 首个 Git Tag：SSH Agent 后台运行与页面恢复 | `409b9f4..f41ee9e` | [f41ee9e](https://github.com/NoraStory/vulnagent/commit/f41ee9e) |
 | `v0.7.10` | 2026-11-03 | 自检在线率按上报时间判定、情报与上报链路修复 | `50d892e..c877618` | [c877618](https://github.com/NoraStory/vulnagent/commit/c877618) |
 | `v0.7.11` | 2026-11-03 | 上下文预算上限提升至 1M，按预算自适应保留上下文 | `9f260aa` | [9f260aa](https://github.com/NoraStory/vulnagent/commit/9f260aa) |
-| `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `待定` | `待定` |
+| `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -48,7 +48,7 @@
 - 新增 `TestTokenUsageAggregatesByModel`（聚合、排序、占比、趋势补齐与角色校验）；`go vet ./...`、`go test ./...`、`npm run build` 通过。
 
 ### 主要提交
-`待补`
+`a91450e feat(audit): 审计页新增 Token 消耗统计与模型消耗图表`
 
 ---
 
