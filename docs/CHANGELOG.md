@@ -22,7 +22,7 @@
 | `v0.7.5` | 2026-11-02 | 资产与 SSH 终端凭据复用 | `c35233d..2574d46` | [2574d46](https://github.com/NoraStory/vulnagent/commit/2574d46) |
 | `v0.7.6` | 2026-11-02 | SSH 自动执行连续失败熔断 | `3ca16b4` | [3ca16b4](https://github.com/NoraStory/vulnagent/commit/3ca16b4) |
 | `v0.7.7` | 2026-11-02 | 终端技能调用与自动执行去步数上限 | `4c944c4` | [4c944c4](https://github.com/NoraStory/vulnagent/commit/4c944c4) |
-| `v0.7.8` | 2026-11-03 | 集群 SLO、依赖拓扑与根因分析 | `69b6fa2..cad1a74` | [cad1a74](https://github.com/NoraStory/vulnagent/commit/cad1a74) |
+| `v0.7.8` | 2026-11-03 | 集群 SLO、依赖拓扑与根因分析 | `69b6fa2..382aff7` | [382aff7](https://github.com/NoraStory/vulnagent/commit/382aff7) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > `v0.7.8` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -56,6 +56,7 @@
 - `69b6fa2 feat(cluster): 增加 SLO、依赖拓扑与根因分析`
 - `f04cfc0 fix(cluster): 集群定时检查不再阻塞服务启动`
 - `cad1a74 fix(cluster): SLO 窗口限制为 30 天检查历史范围`
+- `382aff7 fix(cluster): 删除项目时清理检查历史与依赖`
 
 ---
 
