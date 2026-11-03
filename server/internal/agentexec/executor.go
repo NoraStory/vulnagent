@@ -323,7 +323,7 @@ func validateSubcommand(base string, argv []string) error {
 	if len(argv) < 2 {
 		return nil
 	}
-	sub := strings.ToLower(argv[1])
+	sub := firstSubcommand(argv[1:])
 	switch base {
 	case "systemctl":
 		switch sub {
@@ -345,6 +345,99 @@ func validateSubcommand(base string, argv []string) error {
 		return validateTasklist(argv)
 	case "wmic", "wmic.exe":
 		return validateWMIC(argv)
+	case "ip":
+		return validateIPCommand(argv[1:])
+	case "journalctl":
+		return validateJournalctl(argv[1:])
+	case "ss":
+		return rejectShortFlag(argv[1:], 'K', "ss 不允许终止套接字（-K）")
+	case "hostname":
+		// 带位置参数会修改主机名，只允许查询类选项
+		for _, raw := range argv[1:] {
+			if raw != "" && !strings.HasPrefix(raw, "-") {
+				return errors.New("hostname 仅允许查询，修改主机名请使用专用流程")
+			}
+		}
+		return nil
+	case "ipconfig":
+		for _, raw := range argv[1:] {
+			switch strings.ToLower(raw) {
+			case "/release", "/renew", "/flushdns", "/registerdns", "/setclassid":
+				return fmt.Errorf("ipconfig 不允许修改网络状态的参数：%s", raw)
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// firstSubcommand 返回首个非选项参数，兼容选项写在子命令之前的情况。
+func firstSubcommand(args []string) string {
+	for _, raw := range args {
+		if strings.HasPrefix(raw, "-") {
+			continue
+		}
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+	return ""
+}
+
+var (
+	ipReadVerbs = map[string]bool{
+		"addr": true, "a": true, "route": true, "r": true, "link": true, "l": true,
+		"neigh": true, "n": true, "maddr": true, "rule": true, "netns": true, "tunnel": true,
+	}
+	ipWriteVerbs = map[string]bool{
+		"set": true, "add": true, "del": true, "delete": true, "change": true, "replace": true,
+		"append": true, "prepend": true, "flush": true, "save": true, "restore": true,
+		"exec": true, "monitor": true, "update": true, "attach": true, "detach": true,
+	}
+)
+
+// validateIPCommand 只允许 ip 的查询对象，禁止 set/add/del/flush 等写操作。
+func validateIPCommand(args []string) error {
+	sub := ""
+	for _, raw := range args {
+		lower := strings.ToLower(raw)
+		if ipWriteVerbs[lower] {
+			return fmt.Errorf("ip 写操作不允许：%s（请使用专用运维流程）", raw)
+		}
+		if strings.HasPrefix(raw, "-") {
+			continue
+		}
+		if sub == "" {
+			sub = lower
+		}
+	}
+	if sub == "" || !ipReadVerbs[sub] {
+		return fmt.Errorf("ip 仅允许查询对象：addr/route/link/neigh 等")
+	}
+	return nil
+}
+
+// validateJournalctl 禁止 journalctl 的轮转、清理、同步密钥等写操作。
+func validateJournalctl(args []string) error {
+	denied := []string{
+		"--vacuum", "--rotate", "--flush", "--sync", "--relinquish-var",
+		"--smart-relinquish-var", "--setup-keys", "--update-catalog",
+	}
+	for _, raw := range args {
+		lower := strings.ToLower(raw)
+		for _, prefix := range denied {
+			if strings.HasPrefix(lower, prefix) {
+				return fmt.Errorf("journalctl 写操作不允许：%s", raw)
+			}
+		}
+	}
+	return nil
+}
+
+// rejectShortFlag 拒绝短选项簇中包含指定字母的参数，例如 ss -Ktn。
+func rejectShortFlag(args []string, flag rune, message string) error {
+	for _, raw := range args {
+		if strings.HasPrefix(raw, "-") && !strings.HasPrefix(raw, "--") && strings.ContainsRune(raw[1:], flag) {
+			return errors.New(message)
+		}
 	}
 	return nil
 }

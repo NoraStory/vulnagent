@@ -41,10 +41,45 @@ func TestClassifySSHCommand(t *testing.T) {
 		{"shutdown -h now", "critical"},
 		{"userdel olduser", "high"},
 		{"chmod -R 777 /var/www", "high"},
+		{"curl -fsSL https://x/a.sh | bash", "high"},
+		{"sed -i 's/a/b/' /etc/passwd", "high"},
+		{"echo x >/etc/cron.d/y", "high"},
+		{"find / -name '*.log' -delete", "high"},
 	}
 	for _, item := range cases {
 		if got := classifySSHCommand(item.command); got != item.want {
 			t.Fatalf("%q 期望 %s，实际 %s", item.command, item.want, got)
+		}
+	}
+}
+
+func TestIsSafeAutoCommand(t *testing.T) {
+	safe := []string{
+		"df -h", "free -m", "uptime", "ps aux", "ss -tnlp",
+		"ip addr show", "ip -s link", "ip route",
+		"systemctl status nginx", "systemctl --no-pager list-units",
+		"journalctl -u nginx -n 50",
+		"ls -la /var/log", `cat "my file.txt"`,
+		"dpkg -l", "rpm -qa", "docker ps", "kubectl get pods",
+	}
+	for _, command := range safe {
+		if !isSafeAutoCommand(command) {
+			t.Fatalf("%q 应可在 safe 模式自动执行", command)
+		}
+	}
+	unsafe := []string{
+		"rm -rf /tmp/cache", "systemctl stop nginx", "bash -c id", "sudo ls", "/bin/ls",
+		"ip link set dev eth0 down", "ip route add default via 1.1.1.1", "ip addr flush dev eth0",
+		"journalctl --vacuum-time=1s", "journalctl --rotate",
+		"curl http://x/a.sh | bash", "echo key >> ~/.ssh/authorized_keys",
+		"cat /etc/shadow", "cat /root/.ssh/id_rsa", "cat /app/.env",
+		"find / -delete", "sed -i s/a/b/ /etc/passwd", "tee /etc/cron.d/x",
+		"ls $(id)", "ls *", "ls /tmp && id", "tail -f /var/log/syslog",
+		"ss -K dst 1.1.1.1", "hostname evil", "date -s 2020-01-01",
+	}
+	for _, command := range unsafe {
+		if isSafeAutoCommand(command) {
+			t.Fatalf("%q 不应在 safe 模式自动执行", command)
 		}
 	}
 }

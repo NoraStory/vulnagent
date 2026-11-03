@@ -18,6 +18,40 @@ func testOptions(root string) Options {
 	}
 }
 
+func TestValidateSubcommandBlocksWriteOperations(t *testing.T) {
+	denied := [][]string{
+		{"ip", "link", "set", "dev", "eth0", "down"},
+		{"ip", "route", "add", "default", "via", "1.1.1.1"},
+		{"ip", "addr", "flush", "dev", "eth0"},
+		{"journalctl", "--vacuum-time=1s"},
+		{"journalctl", "--rotate"},
+		{"ss", "-Ktn"},
+		{"hostname", "newname"},
+		{"ipconfig", "/release"},
+		{"systemctl", "stop", "nginx"},
+	}
+	for _, argv := range denied {
+		if err := validateSubcommand(argv[0], argv); err == nil {
+			t.Fatalf("%v 应被拒绝", argv)
+		}
+	}
+	allowed := [][]string{
+		{"ip", "addr", "show"},
+		{"ip", "-s", "link"},
+		{"journalctl", "-u", "nginx", "-n", "50"},
+		{"ss", "-tnl"},
+		{"hostname"},
+		{"hostname", "-f"},
+		{"ipconfig", "/all"},
+		{"systemctl", "--no-pager", "status", "nginx"},
+	}
+	for _, argv := range allowed {
+		if err := validateSubcommand(argv[0], argv); err != nil {
+			t.Fatalf("%v 应被允许，实际 %v", argv, err)
+		}
+	}
+}
+
 func TestWriteFileDryRunAndAtomicWrite(t *testing.T) {
 	root := t.TempDir()
 	opts := testOptions(root)

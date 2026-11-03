@@ -1501,7 +1501,7 @@ export function TerminalPage() {
               disabled={agentState?.status === "running"}
               className="h-6 rounded border border-line bg-surface px-1 text-[10px] text-ink2"
             >
-              <option value="safe">仅危险确认</option>
+              <option value="safe">只读自动，其余确认</option>
               <option value="confirm">逐条确认</option>
               <option value="auto">全自动执行</option>
             </select>
@@ -1535,7 +1535,7 @@ export function TerminalPage() {
                 disabled={agentState?.status === "running"}
                 className="input h-7 w-[128px] text-[10.5px]"
               >
-                <option value="safe">仅危险确认</option>
+                <option value="safe">只读自动，其余确认</option>
                 <option value="confirm">逐条确认</option>
                 <option value="auto">全自动执行</option>
               </select>

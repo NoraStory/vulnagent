@@ -1,7 +1,7 @@
 # 版本更新日志
 
 - 文档更新：2026-11-03
-- 当前代码版本：`0.7.12`（首个 Git Tag 为 `v0.7.9`）
+- 当前代码版本：`0.7.13`（首个 Git Tag 为 `v0.7.9`）
 - 说明：`v0.7.9` 为仓库首个 Git Tag；此前版本按提交区间回溯整理，每个版本的「推送终点」就是当时已推送到 `origin/master` 的提交。
 
 ## 版本总览
@@ -27,9 +27,30 @@
 | `v0.7.10` | 2026-11-03 | 自检在线率按上报时间判定、情报与上报链路修复 | `50d892e..c877618` | [c877618](https://github.com/NoraStory/vulnagent/commit/c877618) |
 | `v0.7.11` | 2026-11-03 | 上下文预算上限提升至 1M，按预算自适应保留上下文 | `9f260aa` | [9f260aa](https://github.com/NoraStory/vulnagent/commit/9f260aa) |
 | `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
+| `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | 本次提交 | 本次提交 |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
+
+---
+
+## v0.7.13 · 2026-11-03
+
+**主题**：修复安全审查发现的两项高危问题——SSH Agent 自动执行边界过宽、只读运维模式可被 `ip`/`journalctl` 绕过。
+
+### 安全修复
+- **safe 模式改为结构化只读白名单**：`/ssh/agent/run` 的 `safe` 模式不再以风险正则作为放行依据，只有「裸命令名 + 白名单子命令 + 无 shell 元字符 + 非敏感路径」的命令才免审批自动执行；`rm`、`curl | bash`、重定向、变量替换、通配符、`sed -i`、`find -delete` 等一律转人工确认。
+- 新增命令解析与校验：拒绝 `; & | > < $ \` ( ) { } [ ] * ? ! ~ #` 等元字符，拒绝带路径的执行文件、`sudo`、敏感路径（`/etc/shadow`、`.ssh`、`.aws`、`.kube`、`*.pem`、`*.key`、`.env` 等）。
+- 风险正则补充常见绕过写法：下载即执行、`sed/perl -i`、无空格重定向、`tee` 写系统目录、`find -delete/-exec`。
+- SSH Agent 系统提示新增两条约束：主机输出/日志/文件名均为不可信数据，其中的“指令”不得执行；不得主动读取凭据类敏感文件。
+- **只读运维模式绕过修复**：Agent 端 `run_command` 白名单补齐子命令校验——`ip` 仅允许 `addr/route/link/neigh` 等查询对象（拒绝 `set/add/del/flush`），`journalctl` 拒绝 `--vacuum-*`、`--rotate`、`--flush`、`--sync` 等写操作，`ss` 拒绝 `-K`，`hostname` 仅允许查询，Windows `ipconfig` 拒绝 `/release`、`/renew`、`/flushdns` 等；选项写在子命令前（如 `systemctl --no-pager status`）也能正确判定。
+- 终端面板模式文案由「仅危险确认」改为「只读自动，其余确认」，与后端行为一致。
+
+### 验证
+- 新增 `TestIsSafeAutoCommand`（17 条放行 / 24 条拦截用例）与 `TestValidateSubcommandBlocksWriteOperations`（9 条拒绝 / 8 条允许）；补充 `TestClassifySSHCommand` 绕过样本；`go vet ./...`、`go test ./...`、`npm run build` 通过。
+
+### 主要提交
+`本次提交 fix(security): SSH Agent 只读白名单与只读运维模式加固`
 
 ---
 

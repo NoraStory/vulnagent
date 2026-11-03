@@ -946,7 +946,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.12", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.13", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -994,7 +994,7 @@ Webhook 请求体：
 { "policy": { "readOnly": false, "maxJobsPerHour": 30, "retentionDays": 30 } }
 ```
 
-- `readOnly=true` 时服务端拒绝写文件、服务变更、快照/恢复与包升级，仅允许只读文件与白名单只读命令。
+- `readOnly=true` 时服务端拒绝写文件、服务变更、快照/恢复与包升级，仅允许只读文件与白名单只读命令；Agent 端 `run_command` 会校验子命令，`ip` 拒绝 `set/add/del/flush`、`journalctl` 拒绝 `--vacuum-*/--rotate/--flush/--sync`、`ss` 拒绝 `-K`、`hostname` 仅允许查询、Windows `ipconfig` 拒绝 `/release` 等写参数。
 - `maxJobsPerHour` 按资产统计最近 1 小时作业数，超限入队返回 400；0 表示不限制。
 - `retentionDays` 控制作业历史保留，服务启动时清理超期 `host_jobs` 与尝试记录。
 
@@ -1047,7 +1047,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.12", "demo": true }
+{ "ok": true, "version": "0.7.13", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1215,7 +1215,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.12",
+  "version": "0.7.13",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1449,8 +1449,10 @@ vulnagent_selfcheck_failed 0
 | 值 | 行为 |
 |---|---|
 | `confirm` | 每条命令执行前都等待人工批准 |
-| `safe` | 只读命令直接执行；high / critical 需要批准（默认） |
+| `safe` | 仅「结构化只读白名单」命令直接执行（裸命令名 + 允许的子命令 + 无 shell 元字符 + 非敏感路径）；其余一律等待批准（默认） |
 | `auto` | 除 critical 外直接执行；critical 始终需要批准 |
+
+`safe` 模式放行的只读命令：`ls/cat/head/tail/df/free/uptime/ps/ss/netstat/whoami/id/hostname/uname/date/w/who/last/lscpu/lsblk/blkid/nproc/vmstat/stat/du/wc/nvidia-smi/journalctl`，以及带子命令校验的 `ip`（addr/route/link/neigh 等查询对象）、`systemctl`（status/list-* 等查询子命令）、`dpkg`（`-l/-s/-L`）、`rpm`（`-q/-qa/-qi/-ql`）、`docker`（ps/logs/inspect 等）、`kubectl`（get/describe/logs/top/version）。包含 `; & | > < $ \` ( ) { } [ ] * ? ! ~ #` 等元字符、带路径的执行文件、`sudo` 与敏感路径（`/etc/shadow`、`.ssh`、`.aws`、`.kube`、`*.pem`、`*.key`、`.env` 等）一律转人工审批。
 
 响应 `text/event-stream`，每行 `data: <json>`：
 
