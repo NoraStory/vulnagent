@@ -42,6 +42,8 @@ import type {
   ClusterItem,
   ClusterNodeItem,
   ClusterDetailData,
+  ClusterReliability,
+  ClusterCheckSample,
   ClusterScanResult,
   ClusterJob,
   AgentItem,
@@ -789,6 +791,8 @@ export const api = {
     provider?: string;
     region?: string;
     description?: string;
+    sloTarget?: number;
+    sloWindowHours?: number;
   }): Promise<{ ok: boolean; id: number }> {
     return request("/clusters", { method: "POST", body: JSON.stringify(input) });
   },
@@ -797,8 +801,16 @@ export const api = {
     return request(`/clusters/${id}`);
   },
 
-  updateCluster(id: number, input: Partial<Pick<ClusterItem, "name" | "environment" | "provider" | "region" | "description">>): Promise<{ ok: boolean }> {
+  updateCluster(id: number, input: Partial<Pick<ClusterItem, "name" | "environment" | "provider" | "region" | "description" | "sloTarget" | "sloWindowHours">>): Promise<{ ok: boolean }> {
     return request(`/clusters/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  clusterReliability(id: number, windowHours?: number): Promise<ClusterReliability> {
+    return request(`/clusters/${id}/reliability${query({ windowHours })}`);
+  },
+
+  clusterNodeChecks(id: number, params: { nodeId?: number; limit?: number } = {}): Promise<{ items: ClusterCheckSample[]; total: number }> {
+    return request(`/clusters/${id}/checks${query(params)}`);
   },
 
   deleteCluster(id: number): Promise<{ ok: boolean }> {
@@ -815,6 +827,12 @@ export const api = {
     checkType?: string;
     path?: string;
     note?: string;
+    dependsOn?: number[];
+    dbEngine?: string;
+    dbName?: string;
+    dbUser?: string;
+    dbPassword?: string;
+    dbSslMode?: string;
   }): Promise<{ ok: boolean; id: number }> {
     return request(`/clusters/${clusterId}/nodes`, { method: "POST", body: JSON.stringify(input) });
   },

@@ -28,22 +28,24 @@ type projectRecord struct {
 
 // clusterRecord 一个可运维的集群
 type clusterRecord struct {
-	ID           int64  `json:"id"`
-	ProjectID    int64  `json:"projectId"`
-	ProjectName  string `json:"projectName"`
-	Name         string `json:"name"`
-	Environment  string `json:"environment"`
-	Provider     string `json:"provider"`
-	Region       string `json:"region"`
-	Description  string `json:"description"`
-	CreatedAt    string `json:"createdAt"`
-	UpdatedAt    string `json:"updatedAt"`
-	NodeCount    int    `json:"nodeCount"`
-	HealthyNodes int    `json:"healthyNodes"`
-	AssetCount   int    `json:"assetCount"`
-	OpenFindings int    `json:"openFindings"`
-	P0           int    `json:"p0"`
-	P1           int    `json:"p1"`
+	ID             int64   `json:"id"`
+	ProjectID      int64   `json:"projectId"`
+	ProjectName    string  `json:"projectName"`
+	Name           string  `json:"name"`
+	Environment    string  `json:"environment"`
+	Provider       string  `json:"provider"`
+	Region         string  `json:"region"`
+	Description    string  `json:"description"`
+	SLOTarget      float64 `json:"sloTarget"`
+	SLOWindowHours int     `json:"sloWindowHours"`
+	CreatedAt      string  `json:"createdAt"`
+	UpdatedAt      string  `json:"updatedAt"`
+	NodeCount      int     `json:"nodeCount"`
+	HealthyNodes   int     `json:"healthyNodes"`
+	AssetCount     int     `json:"assetCount"`
+	OpenFindings   int     `json:"openFindings"`
+	P0             int     `json:"p0"`
+	P1             int     `json:"p1"`
 }
 
 // clusterNodeRecord 集群节点：后端、数据库、缓存、代理、存储或扫描目标
@@ -85,10 +87,11 @@ type clusterAsset struct {
 }
 
 type clusterDetail struct {
-	Cluster  clusterRecord       `json:"cluster"`
-	Nodes    []clusterNodeRecord `json:"nodes"`
-	Assets   []clusterAsset      `json:"assets"`
-	Findings map[string]int      `json:"findings"`
+	Cluster   clusterRecord         `json:"cluster"`
+	Nodes     []clusterNodeRecord   `json:"nodes"`
+	Assets    []clusterAsset        `json:"assets"`
+	Findings  map[string]int        `json:"findings"`
+	Relations []clusterNodeRelation `json:"relations"`
 }
 
 const clusterNodeColumns = `id, cluster_id, name, role, host, port, url, ssh_host_id, check_type, path, note,
@@ -272,7 +275,7 @@ func (a *App) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) listClusters(ctx context.Context, projectID int64) ([]clusterRecord, error) {
 	query := `SELECT c.id, c.project_id, p.name, c.name, c.environment, c.provider, c.region, c.description,
-		c.created_at, c.updated_at,
+		c.slo_target, c.slo_window_hours, c.created_at, c.updated_at,
 		(SELECT COUNT(*) FROM cluster_nodes n WHERE n.cluster_id = c.id),
 		(SELECT COUNT(*) FROM cluster_nodes n WHERE n.cluster_id = c.id AND n.status = 'ok'),
 		(SELECT COUNT(*) FROM assets a WHERE a.cluster_id = c.id),
@@ -298,7 +301,8 @@ func (a *App) listClusters(ctx context.Context, projectID int64) ([]clusterRecor
 	for rows.Next() {
 		var item clusterRecord
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.ProjectName, &item.Name, &item.Environment,
-			&item.Provider, &item.Region, &item.Description, &item.CreatedAt, &item.UpdatedAt,
+			&item.Provider, &item.Region, &item.Description, &item.SLOTarget, &item.SLOWindowHours,
+			&item.CreatedAt, &item.UpdatedAt,
 			&item.NodeCount, &item.HealthyNodes, &item.AssetCount, &item.OpenFindings, &item.P0, &item.P1); err != nil {
 			return nil, err
 		}
@@ -328,17 +332,38 @@ func validEnvironment(value string) bool {
 	return false
 }
 
+// normalizeClusterSLO 校验可用性目标与统计窗口，缺省为 99.9% / 30 天。
+func normalizeClusterSLO(target *float64, windowHours *int) (float64, int, error) {
+	sloTarget := 99.9
+	if target != nil {
+		sloTarget = *target
+	}
+	if sloTarget < 90 || sloTarget >= 100 {
+		return 0, 0, errors.New("SLO 可用性目标必须在 90 到 100 之间（不含 100）")
+	}
+	sloWindow := 720
+	if windowHours != nil {
+		sloWindow = *windowHours
+	}
+	if sloWindow < 24 || sloWindow > 8760 {
+		return 0, 0, errors.New("SLO 统计窗口必须在 24 到 8760 小时之间")
+	}
+	return sloTarget, sloWindow, nil
+}
+
 func (a *App) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "admin"); !ok {
 		return
 	}
 	var in struct {
-		ProjectID   int64  `json:"projectId"`
-		Name        string `json:"name"`
-		Environment string `json:"environment"`
-		Provider    string `json:"provider"`
-		Region      string `json:"region"`
-		Description string `json:"description"`
+		ProjectID      int64    `json:"projectId"`
+		Name           string   `json:"name"`
+		Environment    string   `json:"environment"`
+		Provider       string   `json:"provider"`
+		Region         string   `json:"region"`
+		Description    string   `json:"description"`
+		SLOTarget      *float64 `json:"sloTarget"`
+		SLOWindowHours *int     `json:"sloWindowHours"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -357,6 +382,11 @@ func (a *App) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "环境必须为 prod/staging/dev/test/other")
 		return
 	}
+	sloTarget, sloWindow, err := normalizeClusterSLO(in.SLOTarget, in.SLOWindowHours)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
 	var projectExists int
 	if err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM projects WHERE id = ?`, in.ProjectID).Scan(&projectExists); err != nil || projectExists == 0 {
 		writeErr(w, http.StatusBadRequest, "bad_request", "项目不存在")
@@ -364,10 +394,10 @@ func (a *App) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := fmtT(nowT())
 	res, err := a.db.ExecContext(r.Context(), `INSERT INTO clusters
-		(project_id, name, environment, provider, region, description, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?)`,
+		(project_id, name, environment, provider, region, description, slo_target, slo_window_hours, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		in.ProjectID, name, environment, strings.TrimSpace(in.Provider), strings.TrimSpace(in.Region),
-		strings.TrimSpace(in.Description), now, now)
+		strings.TrimSpace(in.Description), sloTarget, sloWindow, now, now)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "cluster_exists", "同一项目下集群名称已存在")
@@ -425,6 +455,7 @@ func (a *App) handleClusterDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	detail.Assets = a.clusterAssets(ctx, id, 100)
 	detail.Findings = a.clusterFindingSummary(ctx, id)
+	detail.Relations = a.clusterNodeRelations(ctx, id)
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -480,8 +511,10 @@ func (a *App) handleClusterUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var current clusterRecord
-	err = a.db.QueryRowContext(r.Context(), `SELECT id, name, environment, provider, region, description FROM clusters WHERE id = ?`, id).
-		Scan(&current.ID, &current.Name, &current.Environment, &current.Provider, &current.Region, &current.Description)
+	err = a.db.QueryRowContext(r.Context(), `SELECT id, name, environment, provider, region, description,
+		slo_target, slo_window_hours FROM clusters WHERE id = ?`, id).
+		Scan(&current.ID, &current.Name, &current.Environment, &current.Provider, &current.Region, &current.Description,
+			&current.SLOTarget, &current.SLOWindowHours)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "not_found", "集群不存在")
 		return
@@ -491,11 +524,13 @@ func (a *App) handleClusterUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name        *string `json:"name"`
-		Environment *string `json:"environment"`
-		Provider    *string `json:"provider"`
-		Region      *string `json:"region"`
-		Description *string `json:"description"`
+		Name           *string  `json:"name"`
+		Environment    *string  `json:"environment"`
+		Provider       *string  `json:"provider"`
+		Region         *string  `json:"region"`
+		Description    *string  `json:"description"`
+		SLOTarget      *float64 `json:"sloTarget"`
+		SLOWindowHours *int     `json:"sloWindowHours"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -521,13 +556,24 @@ func (a *App) handleClusterUpdate(w http.ResponseWriter, r *http.Request) {
 	if in.Description != nil {
 		current.Description = strings.TrimSpace(*in.Description)
 	}
+	sloTarget, sloWindow, err := normalizeClusterSLO(in.SLOTarget, in.SLOWindowHours)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if in.SLOTarget == nil {
+		sloTarget = current.SLOTarget
+	}
+	if in.SLOWindowHours == nil {
+		sloWindow = current.SLOWindowHours
+	}
 	if current.Name == "" || len(current.Name) > 80 {
 		writeErr(w, http.StatusBadRequest, "bad_request", "集群名称不能为空且不超过 80 字")
 		return
 	}
 	if _, err := a.db.ExecContext(r.Context(), `UPDATE clusters SET name=?, environment=?, provider=?, region=?,
-		description=?, updated_at=? WHERE id=?`, current.Name, current.Environment, current.Provider,
-		current.Region, current.Description, fmtT(nowT()), id); err != nil {
+		description=?, slo_target=?, slo_window_hours=?, updated_at=? WHERE id=?`, current.Name, current.Environment,
+		current.Provider, current.Region, current.Description, sloTarget, sloWindow, fmtT(nowT()), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新集群失败")
 		return
 	}
@@ -553,6 +599,14 @@ func (a *App) handleClusterDelete(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	_, _ = tx.ExecContext(ctx, `UPDATE assets SET cluster_id = 0 WHERE cluster_id = ?`, id)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_nodes WHERE cluster_id = ?`, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "删除集群失败")
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_node_relations WHERE cluster_id = ?`, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "删除集群失败")
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_node_checks WHERE cluster_id = ?`, id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "删除集群失败")
 		return
 	}
@@ -596,20 +650,21 @@ func (a *App) handleClusterNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name       string `json:"name"`
-		Role       string `json:"role"`
-		Host       string `json:"host"`
-		Port       int    `json:"port"`
-		URL        string `json:"url"`
-		SSHHostID  int64  `json:"sshHostId"`
-		CheckType  string `json:"checkType"`
-		Path       string `json:"path"`
-		Note       string `json:"note"`
-		DBEngine   string `json:"dbEngine"`
-		DBName     string `json:"dbName"`
-		DBUser     string `json:"dbUser"`
-		DBPassword string `json:"dbPassword"`
-		DBSSLMode  string `json:"dbSslMode"`
+		Name       string  `json:"name"`
+		Role       string  `json:"role"`
+		Host       string  `json:"host"`
+		Port       int     `json:"port"`
+		URL        string  `json:"url"`
+		SSHHostID  int64   `json:"sshHostId"`
+		CheckType  string  `json:"checkType"`
+		Path       string  `json:"path"`
+		Note       string  `json:"note"`
+		DBEngine   string  `json:"dbEngine"`
+		DBName     string  `json:"dbName"`
+		DBUser     string  `json:"dbUser"`
+		DBPassword string  `json:"dbPassword"`
+		DBSSLMode  string  `json:"dbSslMode"`
+		DependsOn  []int64 `json:"dependsOn"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -650,6 +705,10 @@ func (a *App) handleClusterNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	if err := a.replaceNodeDependencies(r.Context(), clusterID, id, in.DependsOn); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
 	a.audit(r, "cluster.node.create", node.Name, fmt.Sprintf("集群 #%d 新增节点 %s（%s）", clusterID, node.Name, node.Role))
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "id": id})
 }
@@ -746,21 +805,22 @@ func (a *App) handleClusterNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name          *string `json:"name"`
-		Role          *string `json:"role"`
-		Host          *string `json:"host"`
-		Port          *int    `json:"port"`
-		URL           *string `json:"url"`
-		SSHHostID     *int64  `json:"sshHostId"`
-		CheckType     *string `json:"checkType"`
-		Path          *string `json:"path"`
-		Note          *string `json:"note"`
-		DBEngine      *string `json:"dbEngine"`
-		DBName        *string `json:"dbName"`
-		DBUser        *string `json:"dbUser"`
-		DBPassword    *string `json:"dbPassword"`
-		DBSSLMode     *string `json:"dbSslMode"`
-		ClearDBSecret bool    `json:"clearDbSecret"`
+		Name          *string  `json:"name"`
+		Role          *string  `json:"role"`
+		Host          *string  `json:"host"`
+		Port          *int     `json:"port"`
+		URL           *string  `json:"url"`
+		SSHHostID     *int64   `json:"sshHostId"`
+		CheckType     *string  `json:"checkType"`
+		Path          *string  `json:"path"`
+		Note          *string  `json:"note"`
+		DBEngine      *string  `json:"dbEngine"`
+		DBName        *string  `json:"dbName"`
+		DBUser        *string  `json:"dbUser"`
+		DBPassword    *string  `json:"dbPassword"`
+		DBSSLMode     *string  `json:"dbSslMode"`
+		ClearDBSecret bool     `json:"clearDbSecret"`
+		DependsOn     *[]int64 `json:"dependsOn"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
@@ -834,6 +894,12 @@ func (a *App) handleClusterNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新节点失败")
 		return
 	}
+	if in.DependsOn != nil {
+		if err := a.replaceNodeDependencies(r.Context(), current.ClusterID, id, *in.DependsOn); err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+	}
 	a.audit(r, "cluster.node.update", next.Name, "更新集群节点")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -851,6 +917,8 @@ func (a *App) handleClusterNodeDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "删除节点失败")
 		return
 	}
+	_, _ = a.db.ExecContext(r.Context(), `DELETE FROM cluster_node_relations WHERE from_node_id = ? OR to_node_id = ?`, id, id)
+	_, _ = a.db.ExecContext(r.Context(), `DELETE FROM cluster_node_checks WHERE node_id = ?`, id)
 	a.audit(r, "cluster.node.delete", fmt.Sprintf("node/%d", id), "删除集群节点")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -1005,10 +1073,12 @@ func (a *App) runClusterNodeCheck(ctx context.Context, node clusterNodeRecord) c
 		_, _ = a.db.ExecContext(ctx, `UPDATE cluster_nodes SET status=?, latency_ms=?, detail=?, checked_at=?,
 			db_detail=?, db_checked_at=? WHERE id=?`,
 			node.Status, node.LatencyMs, node.Detail, node.CheckedAt, node.DBDetail, node.DBCheckedAt, node.ID)
+		a.recordClusterNodeCheck(ctx, node)
 		return node
 	}
 	_, _ = a.db.ExecContext(ctx, `UPDATE cluster_nodes SET status=?, latency_ms=?, detail=?, checked_at=? WHERE id=?`,
 		node.Status, node.LatencyMs, node.Detail, node.CheckedAt, node.ID)
+	a.recordClusterNodeCheck(ctx, node)
 	return node
 }
 

@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.7-dev"
+	appVersion  = "0.7.8-dev"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -191,6 +191,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/cluster-jobs/{id}/cancel", a.handleClusterJobCancel)
 	mux.HandleFunc("POST /api/v1/clusters/{id}/assets", a.handleClusterAssetsLink)
 	mux.HandleFunc("DELETE /api/v1/clusters/{id}/assets/{assetId}", a.handleClusterAssetUnlink)
+	mux.HandleFunc("GET /api/v1/clusters/{id}/reliability", a.handleClusterReliability)
+	mux.HandleFunc("GET /api/v1/clusters/{id}/checks", a.handleClusterNodeChecks)
 	mux.HandleFunc("PATCH /api/v1/cluster-nodes/{id}", a.handleClusterNodeUpdate)
 	mux.HandleFunc("DELETE /api/v1/cluster-nodes/{id}", a.handleClusterNodeDelete)
 	mux.HandleFunc("POST /api/v1/cluster-nodes/{id}/check", a.handleClusterNodeCheck)
@@ -431,6 +433,7 @@ func runServer() {
 	defer stopScans()
 	app.startScanScheduler(scanCtx)
 	app.startIntelSyncScheduler(scanCtx)
+	app.startClusterCheckScheduler(scanCtx)
 
 	mux := http.NewServeMux()
 	app.routes(mux)

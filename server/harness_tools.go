@@ -21,6 +21,7 @@ func (a *App) harnessTools() []harness.Tool {
 		a.toolOverviewSummary(),
 		a.toolListClusters(),
 		a.toolCheckCluster(),
+		a.toolClusterReliability(),
 		a.toolListAssets(),
 		a.toolGetAsset(),
 		a.toolHostMetrics(),

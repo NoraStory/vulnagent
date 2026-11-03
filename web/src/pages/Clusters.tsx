@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Activity,
   Boxes,
   CheckCircle2,
+  GitBranch,
   Loader2,
   Pencil,
   Plus,
   RefreshCw,
   ScanLine,
   SquareTerminal,
+  Target,
   Trash2,
   TriangleAlert,
   X
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { timeAgo } from "../lib/format";
 import { useToast } from "../lib/toast";
 import type {
   AssetItem,
@@ -23,7 +27,9 @@ import type {
   ClusterItem,
   ClusterJob,
   ClusterNodeItem,
+  ClusterNodeRelation,
   ClusterNodeRole,
+  ClusterReliability,
   ProjectItem,
   SshHost
 } from "../lib/types";
@@ -112,6 +118,7 @@ export function ClustersPage() {
   const [selectedProject, setSelectedProject] = useState<number>(0);
   const [selectedCluster, setSelectedCluster] = useState<number>(0);
   const [detail, setDetail] = useState<ClusterDetailData | null>(null);
+  const [reliability, setReliability] = useState<ClusterReliability | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -156,11 +163,17 @@ export function ClustersPage() {
   const loadDetail = useCallback(async (clusterId: number) => {
     if (!clusterId) {
       setDetail(null);
+      setReliability(null);
       return;
     }
     setLoading(true);
     try {
-      setDetail(await api.clusterDetail(clusterId));
+      const [detailResult, reliabilityResult] = await Promise.all([
+        api.clusterDetail(clusterId),
+        api.clusterReliability(clusterId).catch(() => null)
+      ]);
+      setDetail(detailResult);
+      setReliability(reliabilityResult);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "读取集群详情失败");
@@ -319,6 +332,11 @@ export function ClustersPage() {
   const clusterQuery = currentCluster
     ? `clusterId=${currentCluster.id}&clusterName=${encodeURIComponent(currentCluster.name)}`
     : "";
+
+  const reliabilityNodes = useMemo(
+    () => new Map((reliability?.nodes ?? []).map((node) => [node.id, node])),
+    [reliability]
+  );
 
   const nodeSummary = useMemo(() => {
     const nodes = detail?.nodes ?? [];
@@ -527,6 +545,8 @@ export function ClustersPage() {
                 <StatCard label="环境" value={envLabels[currentCluster.environment] ?? currentCluster.environment} sub={currentCluster.provider || "未填写云厂商"} />
               </div>
 
+              <ReliabilityPanel reliability={reliability} loading={loading} />
+
               <div className="card overflow-hidden">
                 <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
                   <p className="text-[12px] font-medium text-ink">集群节点</p>
@@ -551,7 +571,7 @@ export function ClustersPage() {
                   <Empty title="暂无节点" description="添加后端、数据库或扫描目标" />
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[860px] border-collapse text-[11.5px]">
+                    <table className="w-full min-w-[1080px] border-collapse text-[11.5px]">
                       <thead>
                         <tr className="border-b border-line bg-subtle/60 text-left text-[10px] text-ink3">
                           <th className="px-3 py-1.5 font-medium">节点</th>
@@ -559,6 +579,9 @@ export function ClustersPage() {
                           <th className="px-3 py-1.5 font-medium">地址</th>
                           <th className="px-3 py-1.5 font-medium">状态</th>
                           <th className="px-3 py-1.5 text-right font-medium">延迟</th>
+                          <th className="px-3 py-1.5 text-right font-medium">可用率</th>
+                          <th className="px-3 py-1.5 font-medium">趋势</th>
+                          <th className="px-3 py-1.5 font-medium">影响</th>
                           <th className="px-3 py-1.5 font-medium">详情</th>
                           <th className="px-3 py-1.5 text-right font-medium">操作</th>
                         </tr>
@@ -566,11 +589,20 @@ export function ClustersPage() {
                       <tbody>
                         {detail.nodes.map((node) => {
                           const meta = statusMeta[node.status] ?? statusMeta.unknown;
+                          const rel = reliabilityNodes.get(node.id);
+                          const deps = (detail.relations ?? [])
+                            .filter((relation) => relation.fromNodeId === node.id)
+                            .map((relation) => relation.toNodeName || `#${relation.toNodeId}`);
                           return (
                             <tr key={node.id} className="border-b border-line/60 last:border-0">
                               <td className="px-3 py-1.5">
                                 <span className="block text-[11.5px] text-ink">{node.name}</span>
                                 {node.note && <span className="block text-[9.5px] text-ink3">{node.note}</span>}
+                                {deps.length > 0 && (
+                                  <span className="mt-0.5 block text-[9px] text-brand" title={`依赖：${deps.join("、")}`}>
+                                    依赖：{deps.join("、")}
+                                  </span>
+                                )}
                               </td>
                               <td className="px-3 py-1.5 text-ink2">
                                 <span className="inline-flex items-center gap-1">
@@ -588,6 +620,49 @@ export function ClustersPage() {
                               </td>
                               <td className="px-3 py-1.5 text-right font-mono text-[10.5px] text-ink2">
                                 {node.latencyMs > 0 ? `${node.latencyMs} ms` : "—"}
+                              </td>
+                              <td className="px-3 py-1.5 text-right">
+                                {rel?.hasData ? (
+                                  <span className={rel.availability < 99.9 ? "text-warn" : "text-ink2"}>
+                                    {rel.availability.toFixed(1)}%
+                                    {rel.failureStreak > 0 && (
+                                      <span className="ml-1 text-[9px] text-danger">连失 {rel.failureStreak}</span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span className="text-ink3">—</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {rel && rel.spark.length > 0 ? (
+                                  <span className="inline-flex h-4 items-end gap-[1px]" title="最近检查结果">
+                                    {rel.spark.slice(-20).map((value, index) => (
+                                      <span
+                                        key={index}
+                                        className={`w-[3px] rounded-sm ${value ? "bg-ok/70" : "bg-danger/80"}`}
+                                        style={{ height: value ? 12 : 16 }}
+                                      />
+                                    ))}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-ink3">—</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {rel?.impactCount ? (
+                                  <span
+                                    className="rounded-full bg-warnSoft px-1.5 py-0.5 text-[9.5px] text-warn"
+                                    title={`影响：${rel.impactNodes.join("、")}`}
+                                  >
+                                    影响 {rel.impactCount}
+                                  </span>
+                                ) : rel?.anomaly ? (
+                                  <span className="rounded-full bg-brand-soft px-1.5 py-0.5 text-[9.5px] text-brand" title={rel.anomalyReason}>
+                                    延迟异常
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-ink3">—</span>
+                                )}
                               </td>
                               <td className="max-w-[240px] truncate px-3 py-1.5 text-[10.5px] text-ink3" title={node.detail}>
                                 {node.detail || "—"}
@@ -850,6 +925,8 @@ export function ClustersPage() {
         <NodeDialog
           clusterId={currentCluster.id}
           node={editingNode}
+          nodes={detail?.nodes ?? []}
+          relations={detail?.relations ?? []}
           hosts={sshHosts}
           onClose={() => {
             setNodeOpen(false);
@@ -963,6 +1040,153 @@ function ProjectDialog({
   );
 }
 
+function ReliabilityPanel({ reliability, loading }: { reliability: ClusterReliability | null; loading: boolean }) {
+  if (!reliability) {
+    return (
+      <div className="card px-4 py-3.5">
+        <div className="flex items-center gap-2 text-[12px] font-medium text-ink">
+          <Activity size={13} className="text-brand" />
+          集群可靠性
+          {loading && <Loader2 size={12} className="animate-spin text-ink3" />}
+        </div>
+        <p className="mt-1 text-[10.5px] text-ink3">运行一次集群检查后，这里会展示 SLO、错误预算与检查趋势。</p>
+      </div>
+    );
+  }
+  const days = Math.max(1, Math.round(reliability.windowHours / 24));
+  const budgetTone =
+    reliability.errorBudgetRemaining <= 0
+      ? "text-danger"
+      : reliability.errorBudgetRemaining < 30
+        ? "text-warn"
+        : "text-ok";
+  const exhaustion =
+    reliability.projectedExhaustionHours > 0
+      ? reliability.projectedExhaustionHours >= 48
+        ? `${(reliability.projectedExhaustionHours / 24).toFixed(1)} 天`
+        : `${Math.round(reliability.projectedExhaustionHours)} 小时`
+      : "—";
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+        <Activity size={12} className="text-brand" />
+        <p className="text-[12px] font-medium text-ink">集群可靠性</p>
+        <span className="text-[10px] text-ink3">
+          最近 {days} 天 · 目标 {reliability.sloTarget}% · {reliability.checks} 次检查
+        </span>
+        {reliability.relations.length > 0 && (
+          <span className="inline-flex items-center gap-1 text-[9.5px] text-ink3">
+            <GitBranch size={10} />
+            {reliability.relations.length} 条依赖
+          </span>
+        )}
+        <span className="ml-auto text-[9px] text-ink3">{reliability.generatedAt ? `更新于 ${timeAgo(reliability.generatedAt)}` : ""}</span>
+      </div>
+      <div className="grid gap-3 p-3 lg:grid-cols-[230px_1fr_1fr]">
+        <div className="rounded-[10px] bg-subtle/60 px-3 py-2.5">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[10px] text-ink3">窗口可用率</span>
+            <span className="font-mono text-[19px] font-semibold text-ink">
+              {reliability.hasData ? `${reliability.availability.toFixed(2)}%` : "—"}
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-line">
+            <div
+              className={`h-full rounded-full ${budgetTone.replace("text-", "bg-")}`}
+              style={{ width: `${reliability.hasData ? Math.min(100, Math.max(0, reliability.errorBudgetRemaining)) : 0}%` }}
+            />
+          </div>
+          <div className="mt-1.5 flex items-center justify-between text-[9.5px] text-ink3">
+            <span>错误预算剩余</span>
+            <span className={budgetTone}>
+              {reliability.hasData ? `${reliability.errorBudgetRemaining.toFixed(0)}%` : "—"}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[9.5px] text-ink3">
+            <span>整体燃烧率</span>
+            <span className={reliability.burnRate > 1 ? "text-danger" : "text-ink2"}>
+              {reliability.hasData ? `${reliability.burnRate.toFixed(1)}x` : "—"}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[9.5px] text-ink3">
+            <span>预计耗尽</span>
+            <span>{exhaustion}</span>
+          </div>
+          <p className="mt-2 text-[9.5px] leading-[14px] text-ink3">
+            节点 {reliability.healthyNodes} 正常 · {reliability.failedNodes} 异常 · {reliability.anomalyNodes} 延迟异常
+          </p>
+        </div>
+
+        <div>
+          <p className="text-[10px] font-medium text-ink2">多窗口燃烧率</p>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            {reliability.burnRates.map((item) => {
+              const tone =
+                item.severity === "critical"
+                  ? "bg-dangerSoft text-danger"
+                  : item.severity === "warn"
+                    ? "bg-warnSoft text-warn"
+                    : item.severity === "ok"
+                      ? "bg-okSoft text-ok"
+                      : "bg-subtle text-ink3";
+              return (
+                <div key={item.window} className={`rounded-[8px] px-2 py-1.5 ${tone}`}>
+                  <div className="flex items-center justify-between text-[9.5px]">
+                    <span>{item.window}</span>
+                    <span className="font-mono">{item.hasData ? `${item.burnRate.toFixed(1)}x` : "—"}</span>
+                  </div>
+                  <div className="mt-0.5 text-[9px] opacity-80">
+                    {item.hasData ? `${item.availability.toFixed(1)}% 可用` : "暂无样本"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <p className="flex items-center gap-1 text-[10px] font-medium text-ink2">
+            <Target size={10} className="text-brand" />
+            根因候选
+          </p>
+          {reliability.rootCauses.length === 0 ? (
+            <p className="mt-1.5 flex items-center gap-1.5 rounded-[8px] bg-okSoft px-2 py-2 text-[9.5px] text-ok">
+              <CheckCircle2 size={11} />
+              当前没有失败或延迟异常节点
+            </p>
+          ) : (
+            <div className="mt-1.5 space-y-1.5">
+              {reliability.rootCauses.map((cause) => (
+                <div key={cause.nodeId} className="rounded-[8px] border border-line px-2 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <TriangleAlert size={10} className="shrink-0 text-warn" />
+                    <span className="truncate text-[10.5px] font-medium text-ink">{cause.nodeName}</span>
+                    <span className="rounded-full bg-subtle px-1.5 py-0.5 text-[8.5px] text-ink3">
+                      {roleLabels[cause.role] ?? cause.role}
+                    </span>
+                    <span className="ml-auto font-mono text-[9px] text-ink3">得分 {cause.score}</span>
+                  </div>
+                  <p className="mt-0.5 line-clamp-2 text-[9px] leading-[13px] text-ink3">{cause.reason}</p>
+                  {cause.impactCount > 0 && (
+                    <p className="mt-0.5 truncate text-[8.5px] text-warn" title={cause.impactNodes.join("、")}>
+                      影响：{cause.impactNodes.join("、")}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      {!reliability.hasData && (
+        <p className="border-t border-line px-3 py-2 text-[9.5px] text-ink3">
+          尚无检查历史。执行一次「检查集群」后开始积累趋势；历史保留 30 天。
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ClusterDialog({
   project,
   cluster,
@@ -981,6 +1205,8 @@ function ClusterDialog({
   const [provider, setProvider] = useState(cluster?.provider ?? "");
   const [region, setRegion] = useState(cluster?.region ?? "");
   const [description, setDescription] = useState(cluster?.description ?? "");
+  const [sloTarget, setSloTarget] = useState(String(cluster?.sloTarget ?? 99.9));
+  const [sloWindowHours, setSloWindowHours] = useState(String(cluster?.sloWindowHours ?? 720));
   const [saving, setSaving] = useState(false);
 
   async function submit() {
@@ -995,7 +1221,9 @@ function ClusterDialog({
         environment,
         provider: provider.trim(),
         region: region.trim(),
-        description: description.trim()
+        description: description.trim(),
+        sloTarget: Number(sloTarget) || 99.9,
+        sloWindowHours: Number(sloWindowHours) || 720
       };
       if (cluster) {
         await api.updateCluster(cluster.id, payload);
@@ -1041,6 +1269,29 @@ function ClusterDialog({
           <span className="mb-1 block text-[11px] text-ink2">说明</span>
           <input className="input h-9 text-[12.5px]" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="可选" />
         </label>
+        <label className="block">
+          <span className="mb-1 block text-[11px] text-ink2">SLO 可用性目标（%）</span>
+          <input
+            className="input h-9 font-mono text-[12.5px]"
+            value={sloTarget}
+            onChange={(event) => setSloTarget(event.target.value)}
+            inputMode="decimal"
+            placeholder="99.9"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-[11px] text-ink2">统计窗口（小时）</span>
+          <input
+            className="input h-9 font-mono text-[12.5px]"
+            value={sloWindowHours}
+            onChange={(event) => setSloWindowHours(event.target.value)}
+            inputMode="numeric"
+            placeholder="720"
+          />
+        </label>
+        <p className="col-span-2 -mt-1 text-[10px] leading-[15px] text-ink3">
+          SLO 用于计算窗口可用率、错误预算与多窗口燃烧率；默认 99.9% / 720 小时（30 天）。
+        </p>
       </div>
       <footer className="flex items-center justify-end gap-2 border-t border-line px-5 py-3">
         <button type="button" className="btn btn-secondary h-8 px-3 text-[12px]" onClick={onClose}>
@@ -1058,12 +1309,16 @@ function ClusterDialog({
 function NodeDialog({
   clusterId,
   node,
+  nodes,
+  relations,
   hosts,
   onClose,
   onDone
 }: {
   clusterId: number;
   node: ClusterNodeItem | null;
+  nodes: ClusterNodeItem[];
+  relations: ClusterNodeRelation[];
   hosts: SshHost[];
   onClose: () => void;
   onDone: () => Promise<void>;
@@ -1083,6 +1338,9 @@ function NodeDialog({
   const [dbUser, setDbUser] = useState(node?.dbUser ?? "");
   const [dbPassword, setDbPassword] = useState("");
   const [dbSslMode, setDbSslMode] = useState(node?.dbSslMode || "disable");
+  const [dependsOn, setDependsOn] = useState<number[]>(() =>
+    node ? relations.filter((relation) => relation.fromNodeId === node.id).map((relation) => relation.toNodeId) : []
+  );
   const [sshCreateMode, setSshCreateMode] = useState(false);
   const [sshPort, setSshPort] = useState("22");
   const [sshUsername, setSshUsername] = useState("");
@@ -1137,7 +1395,8 @@ function NodeDialog({
         dbName: dbName.trim(),
         dbUser: dbUser.trim(),
         dbPassword,
-        dbSslMode
+        dbSslMode,
+        dependsOn
       };
       if (node) {
         await api.updateClusterNode(node.id, payload);
@@ -1251,6 +1510,47 @@ function NodeDialog({
           <span className="mb-1 block text-[11px] text-ink2">备注</span>
           <input className="input h-9 text-[12.5px]" value={note} onChange={(event) => setNote(event.target.value)} placeholder="负责人、版本或端口说明" />
         </label>
+        <div className="col-span-2">
+          <span className="mb-1 block text-[11px] text-ink2">依赖节点（当前节点依赖的上游服务）</span>
+          <div className="max-h-[132px] overflow-y-auto rounded-[8px] border border-line bg-subtle/40 p-2">
+            {nodes.filter((item) => item.id !== node?.id).length === 0 ? (
+              <p className="px-1 py-1 text-[10px] text-ink3">暂无其他节点；可先保存节点，再回来建立依赖关系。</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-1">
+                {nodes
+                  .filter((item) => item.id !== node?.id)
+                  .map((item) => {
+                    const checked = dependsOn.includes(item.id);
+                    return (
+                      <label
+                        key={item.id}
+                        className={`flex items-center gap-1.5 rounded-[6px] px-1.5 py-1 text-[10.5px] ${
+                          checked ? "bg-brand-soft text-brand-strong" : "text-ink2 hover:bg-surface"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setDependsOn((current) =>
+                              event.target.checked
+                                ? [...current, item.id]
+                                : current.filter((id) => id !== item.id)
+                            )
+                          }
+                        />
+                        <span className="truncate">{item.name}</span>
+                        <span className="ml-auto shrink-0 text-[9px] text-ink3">{roleLabels[item.role] ?? item.role}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+          <p className="mt-1 text-[9.5px] leading-[14px] text-ink3">
+            依赖用于计算影响范围与根因排序：被依赖节点异常时，其下游节点会标记为受影响。
+          </p>
+        </div>
         {role === "database" && (
           <div className="col-span-2 space-y-3 rounded-[8px] border border-line bg-subtle/40 p-3">
             <div className="flex items-center gap-2">

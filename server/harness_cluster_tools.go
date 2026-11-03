@@ -155,11 +155,45 @@ func (a *App) toolCheckCluster() harness.Tool {
 					DBEngine: checked.DBEngine,
 				})
 			}
-			return map[string]any{
+			reliability, relErr := a.clusterReliability(ctx, args.ClusterID, 0)
+			out := map[string]any{
 				"clusterId": args.ClusterID, "clusterName": clusterName, "checkedAt": fmtT(nowT()),
 				"results": results,
 				"summary": map[string]int{"total": len(results), "healthy": healthy, "failed": failed},
-			}, nil
+			}
+			if relErr == nil {
+				out["reliability"] = reliability
+			}
+			return out, nil
+		},
+	}
+}
+
+func (a *App) toolClusterReliability() harness.Tool {
+	return harness.Tool{
+		Spec: toolSpec("cluster_reliability", "读取集群可靠性快照：SLO 可用率、错误预算、多窗口燃烧率、节点延迟基线/异常、依赖影响范围与根因候选。诊断集群异常或评估影响面时使用。", harness.RiskLow, "viewer", `{
+			"type":"object","properties":{
+				"clusterId":{"type":"integer","minimum":1,"description":"集群 ID，可先从 list_clusters 获取"},
+				"windowHours":{"type":"integer","minimum":1,"maximum":8760,"description":"统计窗口小时数，缺省使用集群 SLO 配置"}
+			},"required":["clusterId"],"additionalProperties":false}`),
+		Run: func(raw json.RawMessage) (any, error) {
+			var args struct {
+				ClusterID   int64 `json:"clusterId"`
+				WindowHours int   `json:"windowHours"`
+			}
+			if err := decodeArgs(raw, &args); err != nil {
+				return nil, err
+			}
+			if args.ClusterID <= 0 {
+				return nil, fmt.Errorf("clusterId 必须大于 0")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			result, err := a.clusterReliability(ctx, args.ClusterID, args.WindowHours)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
 		},
 	}
 }

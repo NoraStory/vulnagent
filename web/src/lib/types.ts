@@ -714,6 +714,8 @@ export interface ClusterItem {
   provider: string;
   region: string;
   description: string;
+  sloTarget: number;
+  sloWindowHours: number;
   createdAt: string;
   updatedAt: string;
   nodeCount: number;
@@ -845,11 +847,96 @@ export interface ClusterAssetItem {
   lastSeenAt: string;
 }
 
+export interface ClusterNodeRelation {
+  id: number;
+  clusterId: number;
+  fromNodeId: number;
+  toNodeId: number;
+  kind: string;
+  fromNodeName?: string;
+  toNodeName?: string;
+  createdAt: string;
+}
+
+export interface ClusterReliabilityNode {
+  id: number;
+  name: string;
+  role: ClusterNodeRole;
+  status: string;
+  latencyMs: number;
+  checkedAt: string;
+  hasData: boolean;
+  availability: number;
+  checks: number;
+  failures: number;
+  failureStreak: number;
+  baselineMs: number;
+  latencyZ: number;
+  anomaly: boolean;
+  anomalyReason?: string;
+  healthScore: number;
+  spark: number[];
+  dependsOn: number[];
+  impactCount: number;
+  impactNodes: string[];
+}
+
+export interface ClusterBurnRate {
+  window: string;
+  hours: number;
+  availability: number;
+  burnRate: number;
+  severity: "ok" | "warn" | "critical" | "none" | string;
+  hasData: boolean;
+}
+
+export interface ClusterRootCause {
+  nodeId: number;
+  nodeName: string;
+  role: ClusterNodeRole;
+  reason: string;
+  score: number;
+  impactCount: number;
+  impactNodes: string[];
+}
+
+export interface ClusterReliability {
+  clusterId: number;
+  clusterName: string;
+  sloTarget: number;
+  sloWindowHours: number;
+  windowHours: number;
+  availability: number;
+  hasData: boolean;
+  checks: number;
+  errorBudgetRemaining: number;
+  burnRate: number;
+  projectedExhaustionHours: number;
+  healthyNodes: number;
+  failedNodes: number;
+  anomalyNodes: number;
+  nodes: ClusterReliabilityNode[];
+  burnRates: ClusterBurnRate[];
+  rootCauses: ClusterRootCause[];
+  relations: ClusterNodeRelation[];
+  generatedAt: string;
+}
+
+export interface ClusterCheckSample {
+  id: number;
+  nodeId: number;
+  status: string;
+  latencyMs: number;
+  detail: string;
+  checkedAt: string;
+}
+
 export interface ClusterDetailData {
   cluster: ClusterItem;
   nodes: ClusterNodeItem[];
   assets: ClusterAssetItem[];
   findings: Record<string, number>;
+  relations: ClusterNodeRelation[];
 }
 
 export interface ClusterScanItem {
