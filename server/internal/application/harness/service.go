@@ -367,7 +367,7 @@ func (s *Service) runLoop(ctx context.Context, p Principal, sess harness.Session
 	defs := s.Registry.DefsFor(p.Role)
 
 	for step := 0; step < s.Opts.MaxSteps; step++ {
-		resp, err := s.LLM.Chat(ctx, ports.LLMRequest{Messages: llmMessages, Tools: defs})
+		resp, err := s.LLM.Chat(ctx, ports.LLMRequest{Purpose: "assistant", Messages: llmMessages, Tools: defs})
 		if err != nil {
 			emit(Event{Type: "error", Data: map[string]any{"message": err.Error()}})
 			return err
@@ -647,7 +647,7 @@ func (s *Service) aiJudge(ctx context.Context, tool harness.Tool, args json.RawM
 	if s.LLM == nil {
 		return false, "AI 判断不可用，转人工审批"
 	}
-	resp, err := s.LLM.Chat(ctx, ports.LLMRequest{Messages: []ports.LLMMessage{
+	resp, err := s.LLM.Chat(ctx, ports.LLMRequest{Purpose: "approval", Messages: []ports.LLMMessage{
 		{Role: "system", Content: smartJudgePrompt},
 		{Role: "user", Content: fmt.Sprintf("工具：%s\n风险：%s\n说明：%s\n参数：%s",
 			tool.Spec.Name, tool.Spec.Risk, tool.Spec.Description, string(args))},
