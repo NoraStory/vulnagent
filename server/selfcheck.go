@@ -167,8 +167,10 @@ func (a *App) runSelfcheck(triggeredBy string) (selfcheckRun, error) {
 	// ---- 采集链路 ----
 	t0 = time.Now()
 	var agentTotal, agentOnline int
+	// 在线率按最近上报时间判定：agent_status 只在首次上报时置为 online，进程退出后不会自动失效
+	onlineCutoff := fmtT(nowT().Add(-15 * time.Minute))
 	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent'`).Scan(&agentTotal)
-	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent' AND agent_status = 'online'`).Scan(&agentOnline)
+	a.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE source = 'agent' AND last_seen_at >= ?`, onlineCutoff).Scan(&agentOnline)
 	onlineRatio := 1.0
 	if agentTotal > 0 {
 		onlineRatio = float64(agentOnline) / float64(agentTotal)
