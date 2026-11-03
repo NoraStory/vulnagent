@@ -25,29 +25,31 @@ func (a *App) startClusterCheckScheduler(ctx context.Context) {
 		interval = 10 * time.Minute
 	}
 	var running atomic.Bool
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	slog.Info("集群定时检查已启动", "interval", interval.String())
-	// 启动后先等待一个短窗口，避免和初始化任务争抢资源。
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(30 * time.Second):
-	}
-	for {
-		if !running.Load() {
-			running.Store(true)
-			go func() {
-				defer running.Store(false)
-				a.runScheduledClusterChecks(ctx)
-			}()
-		}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		// 启动后先等待一个短窗口，避免和初始化任务争抢资源。
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(30 * time.Second):
 		}
-	}
+		for {
+			if !running.Load() {
+				running.Store(true)
+				go func() {
+					defer running.Store(false)
+					a.runScheduledClusterChecks(ctx)
+				}()
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 func (a *App) runScheduledClusterChecks(ctx context.Context) {
