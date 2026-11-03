@@ -29,7 +29,7 @@
 | `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
 | `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | `5bdaf20` | [5bdaf20](https://github.com/NoraStory/vulnagent/commit/5bdaf20) |
 | `v0.7.14` | 2026-11-03 | 修复中危：运行记录越权、WebSocket Origin、CSRF null、Agent 主机绑定等 | `0032459` | [0032459](https://github.com/NoraStory/vulnagent/commit/0032459) |
-| `v0.7.15` | 2026-11-03 | 修复低危：CSP/HSTS、CSV 注入、SSRF 限制、指标令牌等 | 本次提交 | 本次提交 |
+| `v0.7.15` | 2026-11-03 | 修复低危：CSP/HSTS、CSV 注入、SSRF 限制、指标令牌等 | `739fefb` | [739fefb](https://github.com/NoraStory/vulnagent/commit/739fefb) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -54,7 +54,7 @@
 - 新增 `TestCSVSafeCell`、`TestSecurityHeaders`、`TestMetricsAuthorizedUsesDedicatedToken`、`TestValidateIntegrationEndpointBlocksMetadata`、`TestRequireSecureSource`；`go vet ./...`、`go test ./...`、`npm run build` 通过。
 
 ### 主要提交
-`本次提交 fix(security): 补齐安全响应头、导出注入与外部地址限制`
+`739fefb fix(security): 补齐安全响应头、导出注入与外部地址限制`
 
 ---
 
