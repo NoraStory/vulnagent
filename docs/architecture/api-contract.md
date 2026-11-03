@@ -912,6 +912,33 @@ Webhook 请求体：
 }
 ```
 
+### GET /audit/token-usage?days=30（admin）
+
+按模型与用途汇总模型调用的 token 消耗，区间默认 30 天（1–365）。
+
+```json
+{
+  "demo": false,
+  "days": 30,
+  "from": "2026-10-05T00:00:00+08:00",
+  "to": "2026-11-03T15:20:00+08:00",
+  "totals": { "requests": 128, "promptTokens": 412000, "completionTokens": 58000, "totalTokens": 470000, "estimatedRequests": 3, "avgTokensPerCall": 3671.9 },
+  "models": [
+    { "model": "deepseek-v4-1-flash-261017", "requests": 120, "promptTokens": 400000, "completionTokens": 56000, "totalTokens": 456000, "share": 97.0, "estimatedRequests": 3 },
+    { "model": "Qwen2.5-32B-Instruct", "requests": 8, "promptTokens": 12000, "completionTokens": 2000, "totalTokens": 14000, "share": 3.0, "estimatedRequests": 0 }
+  ],
+  "purposes": [
+    { "purpose": "agent", "requests": 96, "promptTokens": 380000, "completionTokens": 52000, "totalTokens": 432000, "share": 91.9 },
+    { "purpose": "qa", "requests": 24, "promptTokens": 26000, "completionTokens": 4000, "totalTokens": 30000, "share": 6.4 }
+  ],
+  "trend": [ { "date": "2026-10-05", "requests": 3, "totalTokens": 9800 } ]
+}
+```
+
+- `usage` 由模型服务返回；未返回时按字符估算并计入 `estimatedRequests`（中文 1 字 1 token、其余 4 字符 1 token）。
+- `purpose` 取值：`agent`（终端 Agent）、`qa`（终端问答）、`assistant`（智能助手）、`approval`（AI 审批判断）、`reference`（命令检索）、`benchmark`（加速基准）。
+- 趋势按天补齐空缺日期；`share` 为该维度占总 token 的百分比。
+
 ### GET /settings
 
 ```json
@@ -919,7 +946,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.11", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.12", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -1020,7 +1047,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.11", "demo": true }
+{ "ok": true, "version": "0.7.12", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1188,7 +1215,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.11",
+  "version": "0.7.12",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],

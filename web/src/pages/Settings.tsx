@@ -3,6 +3,7 @@ import { Bell, History, KeyRound, Lock, Network, Plus, Power, RefreshCw, Save, S
 import { api } from "../lib/api";
 import type { AuditItem, OpsPolicy, ProductMapping, RiskPolicy, RuntimeSettingItem, SettingsData, SyncSource } from "../lib/types";
 import { Badge, Empty, Pagination, Skeleton } from "../components/ui";
+import { TokenUsagePanel } from "../components/TokenUsagePanel";
 import { compactNumber, formatTime, roleMeta, timeAgo } from "../lib/format";
 import { useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
@@ -1690,14 +1691,16 @@ function AuditPanel() {
   }
 
   return (
-    <section className="card overflow-hidden">
-      <header className="flex items-center justify-between px-5 py-3.5">
-        <div>
-          <h2 className="text-[14px] font-semibold text-ink">审计日志</h2>
-          <p className="mt-0.5 text-[11.5px] text-ink3">登录、扫描、状态变更、导出与策略调整全部留痕</p>
-        </div>
-        <span className="text-[11px] text-ink3">{dirty ? `筛选出 ${total} 条` : `共 ${total} 条`}</span>
-      </header>
+    <div>
+      <TokenUsagePanel />
+      <section className="card overflow-hidden">
+        <header className="flex items-center justify-between px-5 py-3.5">
+          <div>
+            <h2 className="text-[14px] font-semibold text-ink">审计日志</h2>
+            <p className="mt-0.5 text-[11.5px] text-ink3">登录、扫描、状态变更、导出与策略调整全部留痕</p>
+          </div>
+          <span className="text-[11px] text-ink3">{dirty ? `筛选出 ${total} 条` : `共 ${total} 条`}</span>
+        </header>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-2.5">
         <label className="relative">
@@ -1815,6 +1818,7 @@ function AuditPanel() {
           <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} />
         </>
       )}
-    </section>
+      </section>
+    </div>
   );
 }

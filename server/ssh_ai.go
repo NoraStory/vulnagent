@@ -141,7 +141,7 @@ func (a *App) handleSSHAssistant(w http.ResponseWriter, r *http.Request) {
 		usedTokens += estimateTokens(message.Content)
 	}
 	usage := buildContextUsage(usedTokens, agentContextBudget(), compressed, savedTokens, historyItems)
-	resp, err := llm.Chat(r.Context(), ports.LLMRequest{Messages: messages})
+	resp, err := llm.Chat(r.Context(), ports.LLMRequest{Purpose: "qa", Messages: messages})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "llm_failed", "模型调用失败："+err.Error())
 		return

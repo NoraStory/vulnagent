@@ -239,7 +239,7 @@ func (a *App) modelCommandTopics(ctx context.Context, question string) []string 
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Messages: []ports.LLMMessage{
+	resp, err := a.harness.LLM.Chat(callCtx, ports.LLMRequest{Purpose: "reference", Messages: []ports.LLMMessage{
 		{
 			Role: "system",
 			Content: "你是 Linux 命令检索助手。根据用户任务列出最相关的 1-3 个命令名，" +

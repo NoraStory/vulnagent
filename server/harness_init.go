@@ -17,6 +17,7 @@ func (a *App) initHarness(cfg config.Config) {
 			BaseURL: cfg.LLMBaseURL,
 			APIKey:  cfg.LLMAPIKey,
 			Model:   cfg.LLMModel,
+			OnUsage: a.recordLLMUsage,
 		})
 	}
 	if cfg.GPUEnabled() {
@@ -29,6 +30,7 @@ func (a *App) initHarness(cfg config.Config) {
 			BaseURL: cfg.GPUBaseURL,
 			APIKey:  apiKey,
 			Model:   cfg.GPUModel,
+			OnUsage: a.recordLLMUsage,
 		})
 		slog.Info("GPU 推理端点已配置", "model", cfg.GPUModel, "endpoint", cfg.GPUBaseURL)
 	}

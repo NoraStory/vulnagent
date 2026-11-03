@@ -33,12 +33,19 @@ type LLMToolDef struct {
 type LLMRequest struct {
 	Messages []LLMMessage
 	Tools    []LLMToolDef
+	// Purpose 调用用途（如 agent/qa/assistant/reference），用于 token 消耗统计
+	Purpose string
 }
 
 // LLMResponse 一次对话响应
 type LLMResponse struct {
 	Content   string
 	ToolCalls []LLMToolCall
+	// Usage 模型返回的 token 用量；部分服务不返回时为 0
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	UsageEstimated   bool
 }
 
 // LLM 通用 OpenAI 兼容模型端口

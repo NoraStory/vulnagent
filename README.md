@@ -53,8 +53,8 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 
 ## 版本与路线图
 
-- 当前发布版：`v0.7.11`（源码内版本标识 `0.7.11`；首个 Git Tag 为 `v0.7.9`）。
-- 发布构建（`server` 为 Go 模块根，需先进入该目录）：`cd server; go build -ldflags "-X main.appVersion=0.7.11 -X main.buildCommit=<commit> -X main.buildTime=<RFC3339>" -o bin/vulnagent.exe .`
+- 当前发布版：`v0.7.12`（源码内版本标识 `0.7.12`；首个 Git Tag 为 `v0.7.9`）。
+- 发布构建（`server` 为 Go 模块根，需先进入该目录）：`cd server; go build -ldflags "-X main.appVersion=0.7.12 -X main.buildCommit=<commit> -X main.buildTime=<RFC3339>" -o bin/vulnagent.exe .`
 - [版本更新日志](docs/CHANGELOG.md)：逐个版本说明新增/修复/迁移，并标注提交区间与已推送的 `origin/master` 终点。
 - [Roadmap](docs/ROADMAP.md)：`v0.8.0` 生产可用性、`v0.9.0` 分布式与规模化、`v1.0.0` 产品化与稳定契约。
 

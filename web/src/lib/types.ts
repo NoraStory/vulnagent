@@ -648,6 +648,49 @@ export interface AuditItem {
   detail: string;
 }
 
+export interface TokenUsageModel {
+  model: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  share: number;
+  estimatedRequests: number;
+}
+
+export interface TokenUsagePurpose {
+  purpose: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  share: number;
+}
+
+export interface TokenUsagePoint {
+  date: string;
+  requests: number;
+  totalTokens: number;
+}
+
+export interface TokenUsage {
+  demo: boolean;
+  days: number;
+  from: string;
+  to: string;
+  totals: {
+    requests: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    estimatedRequests: number;
+    avgTokensPerCall: number;
+  };
+  models: TokenUsageModel[];
+  purposes: TokenUsagePurpose[];
+  trend: TokenUsagePoint[];
+}
+
 export interface RiskPolicy {
   weights: { cvss: number; epss: number; exploit: number; asset: number };
   thresholds: { p0: number; p1: number; p2: number };

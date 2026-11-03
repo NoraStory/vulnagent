@@ -51,6 +51,7 @@ import type {
   AgentCommandItem,
   SyncSource,
   Ticket,
+  TokenUsage,
   TrajectoryItem,
   User,
   SshHost,
@@ -746,6 +747,10 @@ export const api = {
     to?: string;
   }): Promise<Paged<AuditItem>> {
     return request(`/audit-logs${query(params)}`);
+  },
+
+  tokenUsage(days = 30): Promise<TokenUsage> {
+    return request(`/audit/token-usage${query({ days })}`);
   },
 
   trajectory(params: { kind?: string; limit?: number } = {}): Promise<{ items: TrajectoryItem[]; total: number }> {

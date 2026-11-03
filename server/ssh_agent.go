@@ -503,7 +503,7 @@ func (a *App) summarizeSSHAgent(ctx context.Context, llm ports.LLM, host sshHost
 	user.WriteString("\n请基于以上观察给出最终结论。严格按以下中文 Markdown 结构输出，总长不超过 300 字，不要再要求执行命令，也不要粘贴命令原文、日志或退出码：\n")
 	user.WriteString("**结论**\n<一句话，不超过 50 字>\n\n**关键发现**\n- <最多 3 条，每条一行，不超过 40 字>\n\n**建议**\n- <最多 3 条，每条一行，可执行；没有则写“无”>")
 
-	resp, err := llm.Chat(ctx, ports.LLMRequest{Messages: []ports.LLMMessage{
+	resp, err := llm.Chat(ctx, ports.LLMRequest{Purpose: "agent", Messages: []ports.LLMMessage{
 		{Role: "system", Content: "你是资深 SRE。只输出最终结论，使用中文 Markdown，严格按 结论 / 关键发现 / 建议 三段组织，全篇不超过 300 字。"},
 		{Role: "user", Content: user.String()},
 	}})
@@ -536,7 +536,7 @@ func (a *App) askSSHAgent(ctx context.Context, llm ports.LLM, host sshHost, goal
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userText},
 	}
-	resp, err := llm.Chat(callCtx, ports.LLMRequest{Messages: messages})
+	resp, err := llm.Chat(callCtx, ports.LLMRequest{Purpose: "agent", Messages: messages})
 	if err != nil {
 		return sshAgentDecision{}, usage, err
 	}
@@ -554,7 +554,7 @@ func (a *App) askSSHAgent(ctx context.Context, llm ports.LLM, host sshHost, goal
 	)
 	repairCtx, cancelRepair := context.WithTimeout(ctx, 120*time.Second)
 	defer cancelRepair()
-	repairResp, repairErr := llm.Chat(repairCtx, ports.LLMRequest{Messages: repairMessages})
+	repairResp, repairErr := llm.Chat(repairCtx, ports.LLMRequest{Purpose: "agent", Messages: repairMessages})
 	if repairErr == nil {
 		if decision, parseErr := parseSSHAgentDecision(repairResp.Content); parseErr == nil {
 			return decision, usage, nil

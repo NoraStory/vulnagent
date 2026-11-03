@@ -1495,9 +1495,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.11 -t vulnagent:0.7.11 .
+docker build --build-arg VERSION=0.7.12 -t vulnagent:0.7.12 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.11
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.12
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```
@@ -1514,6 +1514,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 资产 | 主机列表、资产详情（组件清单 + 关联漏洞）、CPE 映射与推断标记 |
 | 自检 | 16 项真实检查，一键运行并落库，含历史记录与告警建议 |
 | 审计与设置 | 审计日志分页、风险权重与阈值调整（保存后重算全部 findings） |
+| Token 消耗审计 | 每次模型调用解析 `usage`（缺失时按字符估算并标记）写入 `llm_usage`；`GET /api/v1/audit/token-usage` 按模型/用途/天聚合，审计页展示总量、模型占比、每日趋势与明细 |
 | 采集器 | 单二进制子命令；Linux 解析 dpkg/rpm/apk，Windows 读取注册表卸载项，附带自身依赖 SBOM，统一产出 PURL |
 | Agent 上报 | Bearer 令牌鉴权；按 hostname upsert 资产、整体替换组件清单、清理失效漏洞并立即匹配 |
 | 情报同步 | 真实调用漏洞平台 `/api/cve/`、`/api/poc/`（公开接口免鉴权，可选 `X-API-Key`、429/5xx 重试、按 `updated_at` 游标增量）；兼容 `desc`/`description` 与 `CWE-xxx` 形式；CVSS 3.1 分值本地计算；支持 `vulnagent sync --bundle` 离线包导入 |

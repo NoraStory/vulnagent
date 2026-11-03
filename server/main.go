@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.11"
+	appVersion  = "0.7.12"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -325,6 +325,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/selfcheck/history", a.handleSelfcheckHistory)
 
 	mux.HandleFunc("GET /api/v1/audit-logs", a.handleAuditLogs)
+	mux.HandleFunc("GET /api/v1/audit/token-usage", a.handleTokenUsage)
 	mux.HandleFunc("GET /api/v1/settings", a.handleSettings)
 	mux.HandleFunc("GET /api/v1/settings/runtime", a.handleRuntimeSettings)
 	mux.HandleFunc("PUT /api/v1/settings/runtime", a.handleRuntimeSettingsUpdate)

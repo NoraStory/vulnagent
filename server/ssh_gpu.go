@@ -153,7 +153,7 @@ const sshGPUBenchmarkPrompt = "用一句话说明 SSH 最小权限原则，控�
 func benchmarkLLM(ctx context.Context, llm ports.LLM, prompt string, rounds int) llmBenchResult {
 	result := llmBenchResult{Model: llm.Model(), MinMs: -1}
 	warmCtx, cancelWarm := context.WithTimeout(ctx, 60*time.Second)
-	_, _ = llm.Chat(warmCtx, ports.LLMRequest{Messages: []ports.LLMMessage{{Role: "user", Content: prompt}}})
+	_, _ = llm.Chat(warmCtx, ports.LLMRequest{Purpose: "benchmark", Messages: []ports.LLMMessage{{Role: "user", Content: prompt}}})
 	cancelWarm()
 
 	var total time.Duration
@@ -164,7 +164,7 @@ func benchmarkLLM(ctx context.Context, llm ports.LLM, prompt string, rounds int)
 		}
 		callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		started := time.Now()
-		resp, err := llm.Chat(callCtx, ports.LLMRequest{Messages: []ports.LLMMessage{{Role: "user", Content: prompt}}})
+		resp, err := llm.Chat(callCtx, ports.LLMRequest{Purpose: "benchmark", Messages: []ports.LLMMessage{{Role: "user", Content: prompt}}})
 		elapsed := time.Since(started)
 		cancel()
 		if err != nil {

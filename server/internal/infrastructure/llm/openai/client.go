@@ -21,6 +21,19 @@ type Config struct {
 	APIKey  string
 	Model   string
 	Timeout time.Duration
+	// OnUsage 每次调用成功后回调 token 用量，用于审计统计；可为空
+	OnUsage func(Usage)
+}
+
+// Usage 一次模型调用的 token 用量
+type Usage struct {
+	Model            string
+	Purpose          string
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	// Estimated 服务未返回 usage 时为 true，表示按字符粗略估算
+	Estimated bool
 }
 
 // Client OpenAI 兼容客户端
@@ -34,8 +47,9 @@ func New(cfg Config) *Client {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 60 * time.Second
 	}
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &Client{
-		cfg:  Config{BaseURL: strings.TrimRight(cfg.BaseURL, "/"), APIKey: cfg.APIKey, Model: cfg.Model, Timeout: cfg.Timeout},
+		cfg:  cfg,
 		http: &http.Client{Timeout: cfg.Timeout},
 	}
 }
@@ -83,6 +97,11 @@ type chatResponse struct {
 			ToolCalls []chatToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -160,7 +179,57 @@ func (c *Client) Chat(ctx context.Context, req ports.LLMRequest) (ports.LLMRespo
 			Arguments: tc.Function.Arguments,
 		})
 	}
+	if parsed.Usage != nil && parsed.Usage.TotalTokens > 0 {
+		out.PromptTokens = parsed.Usage.PromptTokens
+		out.CompletionTokens = parsed.Usage.CompletionTokens
+		out.TotalTokens = parsed.Usage.TotalTokens
+	} else {
+		// 部分兼容服务不返回 usage，按字符粗略估算并标记，避免统计出现空白
+		out.PromptTokens = estimatePromptTokens(body.Messages)
+		out.CompletionTokens = estimateTextTokens(out.Content)
+		for _, tc := range out.ToolCalls {
+			out.CompletionTokens += estimateTextTokens(tc.Arguments)
+		}
+		out.TotalTokens = out.PromptTokens + out.CompletionTokens
+		out.UsageEstimated = true
+	}
+	if c.cfg.OnUsage != nil {
+		purpose := strings.TrimSpace(req.Purpose)
+		if purpose == "" {
+			purpose = "unknown"
+		}
+		c.cfg.OnUsage(Usage{
+			Model: c.cfg.Model, Purpose: purpose,
+			PromptTokens: out.PromptTokens, CompletionTokens: out.CompletionTokens,
+			TotalTokens: out.TotalTokens, Estimated: out.UsageEstimated,
+		})
+	}
 	return out, nil
+}
+
+func estimatePromptTokens(messages []chatMessage) int {
+	total := 0
+	for _, m := range messages {
+		total += estimateTextTokens(m.Content) + 4
+		for _, tc := range m.ToolCalls {
+			total += estimateTextTokens(tc.Function.Arguments) + 4
+		}
+	}
+	return total
+}
+
+// estimateTextTokens 粗略估算：中日韩字符 1 token，其余 4 字符 1 token
+func estimateTextTokens(text string) int {
+	cjk, other := 0, 0
+	for _, r := range text {
+		switch {
+		case r >= 0x2E80:
+			cjk++
+		case r > ' ':
+			other++
+		}
+	}
+	return cjk + (other+3)/4
 }
 
 func clip(s string, n int) string {
