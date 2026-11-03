@@ -45,7 +45,7 @@
 - 审计页顶部新增「Token 消耗」面板：总消耗/调用次数/输入输出/平均每次、模型占比条形图、每日趋势面积图、用途分布与明细表，支持近 7/30/90 天切换。
 
 ### 验证
-- 新增 `TestTokenUsageAggregatesByModel`（聚合、排序、占比、趋势补齐与角色校验）；`go vet ./...`、`go test ./...`、`npm run build` 通过。
+- 新增 `TestTokenUsageAggregatesByModel`（聚合、排序、占比、趋势补齐与角色校验）与 `TestChatParsesUsageAndReportsIt` / `TestChatEstimatesUsageWhenProviderOmitsIt`（usage 解析与估算回落）；`go vet ./...`、`go test ./...`、`npm run build` 通过。
 
 ### 主要提交
 `a91450e feat(audit): 审计页新增 Token 消耗统计与模型消耗图表`
