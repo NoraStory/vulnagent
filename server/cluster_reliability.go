@@ -316,7 +316,7 @@ func (a *App) clusterReliability(ctx context.Context, clusterID int64, windowHou
 	}
 
 	result.BurnRates = calculateBurnRates(samples, sloTarget)
-	result.RootCauses = rankRootCauses(result.Nodes, result.Relations, dependsOn)
+	result.RootCauses = rankRootCauses(result.Nodes, result.Relations)
 	return result, nil
 }
 
@@ -522,7 +522,7 @@ func transitiveDependents(nodeID int64, impact map[int64][]int64, names map[int6
 	return out
 }
 
-func rankRootCauses(nodes []clusterReliabilityNode, relations []clusterNodeRelation, dependsOn map[int64][]int64) []clusterRootCause {
+func rankRootCauses(nodes []clusterReliabilityNode, relations []clusterNodeRelation) []clusterRootCause {
 	nodeMap := make(map[int64]clusterReliabilityNode, len(nodes))
 	for _, node := range nodes {
 		nodeMap[node.ID] = node

@@ -250,6 +250,16 @@ func (a *App) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "删除项目失败")
 		return
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_node_relations WHERE cluster_id IN
+		(SELECT id FROM clusters WHERE project_id = ?)`, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "删除项目失败")
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_node_checks WHERE cluster_id IN
+		(SELECT id FROM clusters WHERE project_id = ?)`, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "删除项目失败")
+		return
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cluster_nodes WHERE cluster_id IN
 		(SELECT id FROM clusters WHERE project_id = ?)`, id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "删除项目失败")
