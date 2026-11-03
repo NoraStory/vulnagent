@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bot, CircleAlert, History, Loader2, RotateCcw, X } from "lucide-react";
+import { Bot, CircleAlert, History, Loader2, RotateCcw, SquareTerminal, X } from "lucide-react";
 import { api, ApiError } from "../lib/api";
 import { formatTime, timeAgo } from "../lib/format";
 import type { SshAgentRun, SshAgentRunDetail } from "../lib/types";
@@ -7,6 +7,7 @@ import type { SshAgentRun, SshAgentRunDetail } from "../lib/types";
 type Props = {
   onClose: () => void;
   onReuseGoal?: (goal: string) => void;
+  onResume?: (detail: SshAgentRunDetail) => void;
 };
 
 const modeLabel: Record<string, string> = {
@@ -21,7 +22,7 @@ const statusLabel: Record<string, string> = {
   failed: "失败"
 };
 
-export function AgentHistory({ onClose, onReuseGoal }: Props) {
+export function AgentHistory({ onClose, onReuseGoal, onResume }: Props) {
   const [runs, setRuns] = useState<SshAgentRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -190,19 +191,31 @@ export function AgentHistory({ onClose, onReuseGoal }: Props) {
                   <p className="mt-1.5 rounded-[8px] bg-subtle/70 px-2.5 py-2 text-[11px] leading-[17px] text-ink">
                     {detail.run.goal}
                   </p>
-                  {onReuseGoal && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary mt-1.5 h-6 px-2 text-[10px]"
-                      onClick={() => {
-                        onReuseGoal(detail.run.goal);
-                        onClose();
-                      }}
-                    >
-                      <RotateCcw size={10} />
-                      复用此目标
-                    </button>
-                  )}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {onResume && detail.run.hostId > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-primary h-6 px-2 text-[10px]"
+                        onClick={() => onResume(detail)}
+                      >
+                        <SquareTerminal size={10} />
+                        回到此对话
+                      </button>
+                    )}
+                    {onReuseGoal && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-6 px-2 text-[10px]"
+                        onClick={() => {
+                          onReuseGoal(detail.run.goal);
+                          onClose();
+                        }}
+                      >
+                        <RotateCcw size={10} />
+                        复用此目标
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {detail.steps.length === 0 && <p className="text-[11px] text-ink3">本次运行没有记录步骤。</p>}

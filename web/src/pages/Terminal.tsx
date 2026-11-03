@@ -764,6 +764,7 @@ export function TerminalPage() {
     setActiveKey(key);
     setPendingRun(null);
     setShareOpen(false);
+    return key;
   }
 
   function closeTab(key: string) {
@@ -1073,6 +1074,30 @@ export function TerminalPage() {
       agentStreaming.current.delete(key);
       agentAbort.current.delete(key);
     }
+  }
+
+  // resumeAgentRun 把历史运行还原到对应主机的 Agent 面板，便于回到那次对话继续查看
+  function resumeAgentRun(detail: SshAgentRunDetail) {
+    const host = hosts.find((item) => item.id === detail.run.hostId);
+    if (!host) {
+      toast.push("该运行对应的主机已不存在", "error");
+      return;
+    }
+    const existing = tabs.find((tab) => tab.host.id === host.id);
+    if (existing && agentStreaming.current.has(existing.key)) {
+      setActiveKey(existing.key);
+      setAgentHistoryOpen(false);
+      toast.push("该主机有正在运行的任务，请先等待完成或手动停止", "info");
+      return;
+    }
+    const key = existing?.key ?? openHost(host);
+    setActiveKey(key);
+    setAgentByTab((prev) => ({ ...prev, [key]: runDetailToView(detail) }));
+    setAgentGoal(detail.run.goal);
+    setAiMode("agent");
+    setAiOpen(true);
+    setAgentHistoryOpen(false);
+    toast.push("已恢复到该次对话", "success");
   }
 
   function stopAgent() {
@@ -2308,7 +2333,11 @@ export function TerminalPage() {
       )}
 
       {agentHistoryOpen && (
-        <AgentHistory onClose={() => setAgentHistoryOpen(false)} onReuseGoal={(goal) => setAgentGoal(goal)} />
+        <AgentHistory
+          onClose={() => setAgentHistoryOpen(false)}
+          onReuseGoal={(goal) => setAgentGoal(goal)}
+          onResume={resumeAgentRun}
+        />
       )}
 
       {scanResult && <ScanResultDialog result={scanResult} onClose={() => setScanResult(null)} />}
