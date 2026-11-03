@@ -1552,7 +1552,7 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 分组 | 检查项 id | 判定 |
 |---|---|---|
 | 数据库 | `db.integrity` / `db.volume` / `db.latency` | quick_check、表与行数、实测读写耗时（>200ms 警告） |
-| 情报同步 | `intel.cve_lag` / `intel.epss_coverage` / `intel.poc_feed` | CVE 阈值随同步周期联动（12h 周期下 >18h 警告、>24h 失败）；最近一次同步失败直接判失败并展示原因；EPSS 覆盖 <80% 警告 |
+| 情报同步 | `intel.cve_lag` / `intel.epss_coverage` / `intel.poc_feed` | CVE 阈值随同步周期联动（12h 周期下 >18h 警告、>24h 失败）；最近一次同步失败直接判失败并展示原因；EPSS 覆盖率仅统计标准 `CVE-` 编号（OSV/advisory 无 EPSS 评分），<80% 警告 |
 | 采集链路 | `collect.agent_online` / `collect.stale_agents` / `collect.last_report` | 在线率按最近 15 分钟是否上报判定，<80% 警告、<50% 失败；离线 >24h 警告 |
 | 平台自身 | `self.sbom_findings` / `self.build_info` / `self.disk` / `self.intel_api` | 自身 P0/P1 >0 失败；情报接口 6s 探测不可达告警 |
 | 权限与审计 | `auth.default_password` / `auth.rbac` / `audit.enabled` | 初始口令未改警告；仅 admin 角色告警；审计可写 |

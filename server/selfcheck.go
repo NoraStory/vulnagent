@@ -132,8 +132,9 @@ func (a *App) runSelfcheck(triggeredBy string) (selfcheckRun, error) {
 
 	t0 = time.Now()
 	var epssTotal, epssCovered int
-	a.db.QueryRow(`SELECT COUNT(*) FROM cves`).Scan(&epssTotal)
-	a.db.QueryRow(`SELECT COUNT(*) FROM cves WHERE epss > 0`).Scan(&epssCovered)
+	// 仅统计标准 CVE 编号：OSV/发行版 advisory（GO-、DEBIAN- 等）没有 EPSS 评分
+	a.db.QueryRow(`SELECT COUNT(*) FROM cves WHERE cve_id LIKE 'CVE-%'`).Scan(&epssTotal)
+	a.db.QueryRow(`SELECT COUNT(*) FROM cves WHERE cve_id LIKE 'CVE-%' AND epss > 0`).Scan(&epssCovered)
 	ratio := 1.0
 	if epssTotal > 0 {
 		ratio = float64(epssCovered) / float64(epssTotal)
