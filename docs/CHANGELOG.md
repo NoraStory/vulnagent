@@ -23,16 +23,16 @@
 | `v0.7.6` | 2026-11-02 | SSH 自动执行连续失败熔断 | `3ca16b4` | [3ca16b4](https://github.com/NoraStory/vulnagent/commit/3ca16b4) |
 | `v0.7.7` | 2026-11-02 | 终端技能调用与自动执行去步数上限 | `4c944c4` | [4c944c4](https://github.com/NoraStory/vulnagent/commit/4c944c4) |
 | `v0.7.8` | 2026-11-03 | 集群 SLO、依赖拓扑与根因分析 | `69b6fa2..382aff7` | [382aff7](https://github.com/NoraStory/vulnagent/commit/382aff7) |
-| `v0.7.9` | 2026-11-03 | SSH Agent 后台运行与页面恢复 | `409b9f4` | [409b9f4](https://github.com/NoraStory/vulnagent/commit/409b9f4) |
+| `v0.7.9` | 2026-11-03 | 首个 Git Tag：SSH Agent 后台运行与页面恢复 | `409b9f4..f41ee9e` | [f41ee9e](https://github.com/NoraStory/vulnagent/commit/f41ee9e) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
-> `v0.7.9` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
+> `v0.7.9` 之后的发布维护提交（如本表终点记录）属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
 
 ---
 
 ## v0.7.9 · 2026-11-03
 
-**主题**：终端 Agent 任务与页面解耦，离开页面不再中断。
+**主题**：首个 Git Tag 发布；终端 Agent 任务与页面解耦，离开页面不再中断。
 
 ### 修复
 - 运行上下文改用 `context.WithoutCancel` 派生并设置 45 分钟上限，浏览器断开 SSE 不再取消后台任务。
@@ -47,6 +47,7 @@
 
 ### 主要提交
 `409b9f4 fix(ssh): Agent 任务离开页面后继续后台执行`
+`f41ee9e chore(release): v0.7.9 首个正式发布`
 
 ---
 
