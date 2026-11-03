@@ -1,7 +1,7 @@
 # 版本更新日志
 
-- 文档更新：2026-11-02
-- 当前代码版本：`0.7.7-dev`（对应里程碑 `v0.7.7`）
+- 文档更新：2026-11-03
+- 当前代码版本：`0.7.8-dev`（对应里程碑 `v0.7.8`）
 - 说明：仓库此前未打 Git tag，以下版本按提交区间回溯整理；每个版本的「推送终点」就是当时已推送到 `origin/master` 的提交，可直接用 `git show <hash>` 查看该版本最终状态。
 
 ## 版本总览
@@ -22,9 +22,39 @@
 | `v0.7.5` | 2026-11-02 | 资产与 SSH 终端凭据复用 | `c35233d..2574d46` | [2574d46](https://github.com/NoraStory/vulnagent/commit/2574d46) |
 | `v0.7.6` | 2026-11-02 | SSH 自动执行连续失败熔断 | `3ca16b4` | [3ca16b4](https://github.com/NoraStory/vulnagent/commit/3ca16b4) |
 | `v0.7.7` | 2026-11-02 | 终端技能调用与自动执行去步数上限 | `4c944c4` | [4c944c4](https://github.com/NoraStory/vulnagent/commit/4c944c4) |
+| `v0.7.8` | 2026-11-03 | 集群 SLO、依赖拓扑与根因分析 | `69b6fa2..f04cfc0` | [f04cfc0](https://github.com/NoraStory/vulnagent/commit/f04cfc0) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
-> `v0.7.7` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
+> `v0.7.8` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
+
+---
+
+## v0.7.8 · 2026-11-03
+
+**主题**：把集群检查从「当前状态」升级为可持续的可靠性观测与根因定位。
+
+### 新增
+- 迁移 `0026_cluster_observability`：`clusters.slo_target/slo_window_hours`、`cluster_node_checks`、`cluster_node_relations`。
+- 每次节点检查写入历史，保留 30 天；`GET /clusters/{id}/checks` 支持按节点查看最近检查。
+- `GET /clusters/{id}/reliability`：SLO 可用率、错误预算、整体燃烧率、预计耗尽时间、1h/6h/24h/3d 多窗口燃烧率。
+- 节点延迟使用中位数 + MAD 的 modified z-score（阈值 3.5）与「基线两倍 + 200ms」双条件识别异常，并保留最近 40 次检查趋势。
+- 节点新增 `dependsOn` 依赖；基于依赖反向传递闭包计算影响范围，按失败、异常、影响数、共享基础依赖与上游传播排序根因候选。
+- 集群页面新增可靠性卡片、节点可用率/趋势/影响列与依赖选择；集群表单支持 SLO 目标与统计窗口。
+- Agent 新增 `cluster_reliability` 工具（工具总数 35）；`check_cluster` 响应同时返回可靠性快照，系统提示要求先看根因与影响面再操作主机。
+- 默认每 10 分钟对含节点的集群执行只读检查（`VA_CLUSTER_CHECK_INTERVAL`，`0/off` 关闭），跳过已有排队/执行中任务的集群；检查历史与已完成任务保留 30 天。
+
+### 研究依据
+- Google SRE Workbook 的 multiwindow multi-burn-rate 告警实践：1h 14.4x、6h 6x、24h 3x、3d 1x。
+- Iglewicz & Hoaglin modified z-score：`0.6745 × (x - median) / MAD`，NIST 推荐以 3.5 作为潜在离群点阈值。
+- TA-RCD / GALA / LATSRCA（2025–2026）关于依赖拓扑约束根因候选、减少故障传播误判与 LLM 幻觉的结论。
+
+### 验证
+- 新增 `TestClusterReliabilitySLOAndRootCause`，覆盖检查历史聚合、错误预算、依赖回填、影响范围、根因排序与多窗口燃烧率。
+- `go test . -count=1`、`go vet ./...`、`npm run build` 通过。
+
+### 主要提交
+- `69b6fa2 feat(cluster): 增加 SLO、依赖拓扑与根因分析`
+- `f04cfc0 fix(cluster): 集群定时检查不再阻塞服务启动`
 
 ---
 

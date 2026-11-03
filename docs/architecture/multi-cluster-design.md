@@ -1,7 +1,7 @@
-# 多集群与项目运维设计（v1.2）
+# 多集群与项目运维设计（v1.3）
 
-日期：2026-11-02
-状态：已落地（含异步任务、数据库深检与多 Agent 身份）
+日期：2026-11-03
+状态：已落地（含异步任务、数据库深检、多 Agent 身份、SLO 与依赖根因分析）
 
 ## 1. 背景与目标
 
@@ -23,8 +23,10 @@
 | 实体 | 说明 | 关键字段 |
 |---|---|---|
 | Project | 业务项目，按团队/系统聚合 | name、owner、description |
-| Cluster | 项目下的部署单元 | project_id、name、environment、provider、region |
+| Cluster | 项目下的部署单元 | project_id、name、environment、provider、region、slo_target、slo_window_hours |
 | ClusterNode | 集群中的角色节点 | role、host、port、url、ssh_host_id、check_type、path |
+| ClusterNodeRelation | 节点依赖边 | from_node_id（依赖方）、to_node_id（被依赖方）、kind=depends_on |
+| ClusterNodeCheck | 每次检查的时序样本 | cluster_id、node_id、status、latency_ms、detail、checked_at |
 | Asset | 现有资产，新增 `cluster_id` 关联 | hostname、ip、os_family |
 | Finding | 现有漏洞，通过资产间接归入集群 | priority、status |
 
@@ -55,7 +57,36 @@
 | scan_target / ssh | 复用 SSH 连接池执行 `echo` | 认证与命令执行成功 |
 | cache/proxy/storage / tcp | TCP 连接 | 连接成功 |
 
-检查结果保存在节点上（status、latency_ms、detail、checked_at），数据库深检另存 `db_detail`/`db_checked_at`；不做时序存储。
+检查结果保存在节点上（status、latency_ms、detail、checked_at），数据库深检另存 `db_detail`/`db_checked_at`；同时每次检查写入 `cluster_node_checks` 作为 30 天时序历史，供 SLO、趋势与异常检测使用。
+
+### 5.1 SLO 与错误预算
+
+- 每个集群配置 `slo_target`（默认 99.9%）与 `slo_window_hours`（默认 720 小时）。
+- 窗口可用率 = 窗口内成功检查数 / 总检查数；错误预算允许失败率 = `1 - sloTarget/100`。
+- 错误预算剩余 = `(1 - 失败率/允许失败率) × 100`，燃烧率 = `失败率/允许失败率`，预计耗尽时间按剩余预算与当前燃烧率估算。
+- 多窗口燃烧率使用 1h / 6h / 24h / 3d，阈值参考 Google SRE Workbook 的 multiwindow multi-burn-rate 实践：1h 14.4x、6h 6x、24h 3x、3d 1x。
+- 研究依据：SLO/error budget 已成为 AIOps 与 SRE 的通用治理框架，单纯阈值告警无法区分短时抖动与持续预算消耗；多窗口燃烧率能降低误报并给出可执行的预算结论。
+
+### 5.2 趋势与异常检测
+
+- 每个节点保存最近 40 次检查结果用于迷你趋势图；连续失败次数单独展示。
+- 延迟基线使用成功检查的中位数与 MAD（Median Absolute Deviation），异常分数采用 modified z-score：`0.6745 × (x - median) / MAD`。
+- `|z| ≥ 3.5`，或当前延迟超过基线两倍且多 200ms 时标记「延迟异常」；样本少于 3 条不判定异常，避免冷启动误报。
+- 研究依据：Iglewicz 与 Hoaglin 的 modified z-score 对离群值稳健，NIST 工程统计手册推荐以 3.5 作为潜在离群点阈值；相比均值/标准差，不会被历史尖峰拉偏。
+
+### 5.3 依赖拓扑与根因排序
+
+- `cluster_node_relations` 保存 `from_node_id → to_node_id` 的 `depends_on` 边：前者依赖后者。
+- 影响范围：从被依赖节点出发，沿反向边做传递闭包，得到全部受影响的下游节点；节点表展示「影响 N」。
+- 根因评分：失败 +60、延迟异常 +20、每个下游影响 +8、数据库/缓存/存储共享基础依赖 +5；若自身依赖的上游也失败，按每个上游 -15 表示故障传播，最终取前 5 条。
+- Agent 通过 `cluster_reliability` 工具读取 `rootCauses`、`impactNodes`、`burnRates` 与异常节点，先解释根因与影响面，再决定后续主机操作。
+- 研究依据：TA-RCD、GALA、LATSRCA 等 2025–2026 工作都表明，把服务依赖图作为约束能显著缩小根因候选并减少 LLM 幻觉；本实现采用可解释的规则化图传播，不引入黑盒模型。
+
+### 5.4 调度与保留
+
+- `VA_CLUSTER_CHECK_INTERVAL` 控制定时检查，默认 `10m`，`0/off` 关闭；到点对含节点的集群创建 `check` 任务，已有排队/执行中任务的集群跳过，避免重叠。
+- 检查历史与已完成任务保留 30 天；任务清理在定时调度中执行，检查历史在每次写入时清理。
+- 手动「检查集群」、Agent `check_cluster` 与定时任务共用同一套检查与历史写入逻辑，结果一致。
 
 ## 6. 漏洞扫描与资产归并
 

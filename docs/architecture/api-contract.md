@@ -919,7 +919,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.7-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.8-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -1020,7 +1020,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.7-dev", "demo": true }
+{ "ok": true, "version": "0.7.8-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1188,7 +1188,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.7-dev",
+  "version": "0.7.8-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1983,13 +1983,36 @@ Agent 的 `status` 事件新增：
 
 | 方法 | 路径 | 角色 | 说明 |
 |---|---|---|---|
-| GET | `/clusters?projectId=1` | viewer+ | 集群列表，含节点健康、资产数、未关闭漏洞 P0/P1 |
-| POST | `/clusters` | admin | `{projectId, name, environment, provider, region, description}` |
-| GET | `/clusters/{id}` | viewer+ | 详情：cluster + nodes + assets + findings 统计 |
-| PATCH | `/clusters/{id}` | admin | 修改环境/厂商/地域/说明 |
-| DELETE | `/clusters/{id}` | admin | 删除集群与节点，资产 `cluster_id` 置 0 |
+| GET | `/clusters?projectId=1` | viewer+ | 集群列表，含节点健康、资产数、未关闭漏洞 P0/P1、SLO 配置 |
+| POST | `/clusters` | admin | `{projectId, name, environment, provider, region, description, sloTarget?, sloWindowHours?}` |
+| GET | `/clusters/{id}` | viewer+ | 详情：cluster + nodes + assets + findings 统计 + relations |
+| PATCH | `/clusters/{id}` | admin | 修改环境/厂商/地域/说明/SLO 目标与窗口 |
+| DELETE | `/clusters/{id}` | admin | 删除集群与节点、检查历史与依赖，资产 `cluster_id` 置 0 |
+| GET | `/clusters/{id}/reliability?windowHours=720` | viewer+ | SLO 可用率、错误预算、多窗口燃烧率、节点基线/异常、影响范围与根因候选 |
+| GET | `/clusters/{id}/checks?nodeId=1&limit=100` | viewer+ | 节点检查历史（默认最近 100 条，最多 500） |
 
-`environment` 取值：`prod` / `staging` / `dev` / `test` / `other`。
+`environment` 取值：`prod` / `staging` / `dev` / `test` / `other`。`sloTarget` 默认 `99.9`（90–100，不含 100），`sloWindowHours` 默认 `720`（24–8760）。
+
+`GET /clusters/{id}/reliability` 返回：
+
+```json
+{
+  "clusterId": 1, "clusterName": "prod-a", "sloTarget": 99.9, "sloWindowHours": 720, "windowHours": 720,
+  "availability": 99.42, "hasData": true, "checks": 2880,
+  "errorBudgetRemaining": 0, "burnRate": 5.8, "projectedExhaustionHours": 0,
+  "healthyNodes": 4, "failedNodes": 1, "anomalyNodes": 1,
+  "burnRates": [{ "window": "1h", "availability": 98.9, "burnRate": 11, "severity": "warn", "hasData": true }],
+  "nodes": [{ "id": 2, "name": "db-1", "availability": 97.2, "failureStreak": 2, "baselineMs": 3, "latencyZ": 0.4,
+    "anomaly": false, "spark": [1,1,0], "dependsOn": [], "impactCount": 2, "impactNodes": ["backend-1","proxy-1"] }],
+  "rootCauses": [{ "nodeId": 2, "nodeName": "db-1", "role": "database", "score": 76,
+    "reason": "当前检查失败；影响 2 个下游节点；共享基础依赖", "impactCount": 2, "impactNodes": ["backend-1","proxy-1"] }],
+  "relations": [{ "fromNodeId": 1, "toNodeId": 2, "kind": "depends_on" }]
+}
+```
+
+- 可用率按窗口内全部节点检查样本聚合；错误预算 = `(1 - 失败率/允许失败率) × 100`，燃烧率 = `失败率/允许失败率`。
+- 多窗口燃烧率使用 1h/6h/24h/3d；节点延迟使用中位数 + MAD 的稳健 z 分数，`|z| ≥ 3.5` 或超过基线两倍且多 200ms 时标记异常。
+- 根因候选只包含失败或延迟异常节点，综合失败状态、下游影响数、共享基础依赖与上游失败传播排序，最多 5 条。
 
 #### 节点
 
@@ -2012,15 +2035,21 @@ Agent 的 `status` 事件新增：
   "sshHostId": 3, "checkType": "auto|http|tcp|ssh|ssh_file",
   "path": "/var/lib/app/app.db", "note": "主库",
   "dbEngine": "mysql|postgresql|", "dbName": "app", "dbUser": "vuln_readonly",
-  "dbPassword": "仅写入，不回显", "dbSslMode": "disable|require"
+  "dbPassword": "仅写入，不回显", "dbSslMode": "disable|require",
+  "dependsOn": [2, 3]
 }
 ```
+
+- `dependsOn` 为当前节点依赖的上游节点 ID；服务端只接受同一集群内的节点，自动去重并拒绝自依赖。
+- `GET /clusters/{id}` 的 `relations` 返回 `{fromNodeId,toNodeId,kind:"depends_on",fromNodeName,toNodeName}`，用于展示依赖与计算影响范围。
 
 - `checkType=auto` 时：backend→http，database→tcp（填了 `sshHostId` 与 `path` 则为 ssh_file），scan_target→ssh，其余→tcp。
 - SSH/ssh_file 检查复用已保存的 SSH 主机凭据；数据库深检凭据单独使用 AES-256-GCM 加密存储，接口只返回 `hasDbSecret`，不返回明文。
 - 配置 `dbEngine` 后，database 节点的 TCP 检查升级为只读深检：版本、当前/最大连接数、数据容量与运行时长；失败会返回连接或查询原因。
 - 扫描结果进入现有资产/漏洞流水线，并自动把资产 `cluster_id` 设为该集群。
 - 检查/扫描结果包含 `status`（ok/failed/unknown）、`latencyMs`、`detail`；扫描汇总包含每个节点的成功/失败原因。
+- 每次检查结果同时写入 `cluster_node_checks`，历史保留 30 天；可靠性接口基于该历史计算 SLO。
+- 定时检查：`VA_CLUSTER_CHECK_INTERVAL` 控制调度间隔（默认 `10m`，`0/off` 关闭），到点对含节点的集群创建 `check` 任务，已有排队/执行中任务的集群会跳过。
 
 #### 异步检查/扫描任务
 
