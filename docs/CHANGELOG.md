@@ -27,7 +27,7 @@
 | `v0.7.10` | 2026-11-03 | 自检在线率按上报时间判定、情报与上报链路修复 | `50d892e..c877618` | [c877618](https://github.com/NoraStory/vulnagent/commit/c877618) |
 | `v0.7.11` | 2026-11-03 | 上下文预算上限提升至 1M，按预算自适应保留上下文 | `9f260aa` | [9f260aa](https://github.com/NoraStory/vulnagent/commit/9f260aa) |
 | `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
-| `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | 本次提交 | 本次提交 |
+| `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | `5bdaf20` | [5bdaf20](https://github.com/NoraStory/vulnagent/commit/5bdaf20) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
@@ -50,7 +50,7 @@
 - 新增 `TestIsSafeAutoCommand`（17 条放行 / 24 条拦截用例）与 `TestValidateSubcommandBlocksWriteOperations`（9 条拒绝 / 8 条允许）；补充 `TestClassifySSHCommand` 绕过样本；`go vet ./...`、`go test ./...`、`npm run build` 通过。
 
 ### 主要提交
-`本次提交 fix(security): SSH Agent 只读白名单与只读运维模式加固`
+`5bdaf20 fix(security): SSH Agent 只读白名单与只读运维模式加固`
 
 ---
 
