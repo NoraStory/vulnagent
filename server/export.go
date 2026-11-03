@@ -10,6 +10,19 @@ import (
 
 const exportRowLimit = 5000
 
+// csvSafeCell 防止 Excel 将用户可控字段当作公式执行（CSV 注入）。
+func csvSafeCell(value string) string {
+	trimmed := strings.TrimLeft(value, " \t\r\n")
+	if trimmed == "" {
+		return value
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	}
+	return value
+}
+
 // handleFindingsCSV 按当前筛选导出 CSV（UTF-8 BOM，便于 Excel 直接打开）
 func (a *App) handleFindingsCSV(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requireRole(w, r, "operator"); !ok {
@@ -33,11 +46,12 @@ func (a *App) handleFindingsCSV(w http.ResponseWriter, r *http.Request) {
 	_ = cw.Write([]string{"优先级", "CVE", "标题", "组件", "当前版本", "修复版本", "资产", "CVSS", "EPSS", "风险分", "状态"})
 	for _, it := range items {
 		_ = cw.Write([]string{
-			it.Priority, it.CveID, it.Title, it.Component, it.Version, it.Fixed, it.Hostname,
-			strconv.FormatFloat(it.Cvss, 'f', 1, 64),
-			strconv.FormatFloat(it.Epss, 'f', 2, 64),
-			strconv.Itoa(it.Risk),
-			statusLabel(it.Status),
+			csvSafeCell(it.Priority), csvSafeCell(it.CveID), csvSafeCell(it.Title),
+			csvSafeCell(it.Component), csvSafeCell(it.Version), csvSafeCell(it.Fixed), csvSafeCell(it.Hostname),
+			csvSafeCell(strconv.FormatFloat(it.Cvss, 'f', 1, 64)),
+			csvSafeCell(strconv.FormatFloat(it.Epss, 'f', 2, 64)),
+			csvSafeCell(strconv.Itoa(it.Risk)),
+			csvSafeCell(statusLabel(it.Status)),
 		})
 	}
 	cw.Flush()

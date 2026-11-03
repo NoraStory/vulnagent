@@ -123,8 +123,8 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// 指标接口允许 Prometheus 使用 Agent Bearer 令牌抓取
-		if p == "/api/v1/metrics" && a.agentAuthorized(r) {
+		// 指标接口允许 Prometheus 使用专用令牌抓取（未配置时兼容 Agent Bearer 令牌）
+		if p == "/api/v1/metrics" && a.metricsAuthorized(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

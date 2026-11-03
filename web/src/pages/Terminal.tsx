@@ -2445,10 +2445,19 @@ function HostDialog({
     setTestResult("");
     try {
       const result = await api.sshTestHost(host.id);
+      const trustNote = result.pinned
+        ? result.trusted
+          ? ""
+          : "（指纹不匹配）"
+        : "（首次连接，已记录指纹）";
       setTestResult(
-        `连接成功 · ${result.serverVersion} · ${result.elapsedMs}ms · ${result.fingerprint}${result.trusted ? "" : "（指纹不匹配）"}`
+        `连接成功 · ${result.serverVersion} · ${result.elapsedMs}ms · ${result.fingerprint}${trustNote}`
       );
-      if (!result.trusted) toast.push("主机指纹与已保存值不一致，请确认目标主机", "error");
+      if (result.pinned && !result.trusted) {
+        toast.push("主机指纹与已保存值不一致，请确认目标主机", "error");
+      } else if (!result.pinned) {
+        toast.push("首次连接已记录主机指纹，后续将强制校验", "info");
+      }
     } catch (err) {
       setTestResult(err instanceof ApiError ? err.message : "连接测试失败");
     } finally {

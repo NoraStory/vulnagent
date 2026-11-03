@@ -53,8 +53,8 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 
 ## 版本与路线图
 
-- 当前发布版：`v0.7.14`（源码内版本标识 `0.7.14`；首个 Git Tag 为 `v0.7.9`）。
-- 发布构建（`server` 为 Go 模块根，需先进入该目录）：`cd server; go build -ldflags "-X main.appVersion=0.7.14 -X main.buildCommit=<commit> -X main.buildTime=<RFC3339>" -o bin/vulnagent.exe .`
+- 当前发布版：`v0.7.15`（源码内版本标识 `0.7.15`；首个 Git Tag 为 `v0.7.9`）。
+- 发布构建（`server` 为 Go 模块根，需先进入该目录）：`cd server; go build -ldflags "-X main.appVersion=0.7.15 -X main.buildCommit=<commit> -X main.buildTime=<RFC3339>" -o bin/vulnagent.exe .`
 - [版本更新日志](docs/CHANGELOG.md)：逐个版本说明新增/修复/迁移，并标注提交区间与已推送的 `origin/master` 终点。
 - [Roadmap](docs/ROADMAP.md)：`v0.8.0` 生产可用性、`v0.9.0` 分布式与规模化、`v1.0.0` 产品化与稳定契约。
 
@@ -257,6 +257,7 @@ npm run build    # tsc --noEmit + vite build，产物在 web/dist
 | `VA_SESSION_IDLE` | `30m` | 登录会话空闲过期时长 |
 | `VA_COOKIE_SECURE` | `off` | HTTPS 部署时置 `1`，Cookie 增加 `Secure` |
 | `VA_TRUST_PROXY` | `off` | 前置可信反向代理时置 `1`，登录限速与审计按 `X-Forwarded-For` 最右值取真实 IP；直连部署保持关闭以防伪造 |
+| `VA_METRICS_TOKEN` | — | Prometheus 抓取 `/api/v1/metrics` 的专用 Bearer 令牌；未设置时兼容 Agent 令牌 |
 | `VA_LLM_BASE_URL` | — | OpenAI 兼容模型地址 |
 | `VA_LLM_API_KEY` | — | 模型密钥 |
 | `VA_LLM_MODEL` | — | 模型名称；三项齐备才启用助手 |

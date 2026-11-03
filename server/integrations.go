@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,6 +104,13 @@ func validateIntegration(kind string, config map[string]any, credentials map[str
 	if _, err := cloud.New(kind); err != nil {
 		return err
 	}
+	// 集成地址由管理员填写，仍拒绝云元数据等敏感目标，降低配置被滥用时的 SSRF 影响
+	if err := validateIntegrationEndpoint(integrationConfigString(config, "url")); err != nil {
+		return fmt.Errorf("URL：%w", err)
+	}
+	if err := validateIntegrationEndpoint(integrationConfigString(config, "endpoint")); err != nil {
+		return fmt.Errorf("Endpoint：%w", err)
+	}
 	requireKey := func(key string, label string) error {
 		// 已保存的凭据可以补齐未提交的字段，支持单键轮换；清空凭据后则必须重新提供全部字段
 		if strings.TrimSpace(credentials[key]) != "" || hasStoredSecret {
@@ -163,6 +172,34 @@ func validateIntegration(kind string, config map[string]any, credentials map[str
 			return requireKey("password", "password")
 		default:
 			return fmt.Errorf("认证方式仅支持 none / bearer / basic")
+		}
+	}
+	return nil
+}
+
+// validateIntegrationEndpoint 校验集成地址并拒绝云元数据、链路本地与未指定地址。
+// 内网 CMDB 等合法私有地址仍允许，由管理员自行承担信任边界。
+func validateIntegrationEndpoint(raw string) error {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("必须是合法的 http(s) URL")
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "metadata.google.internal", "metadata", "instance-data":
+		return fmt.Errorf("不允许指向云元数据地址")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("不允许指向链路本地或未指定地址")
+		}
+		switch ip.String() {
+		case "100.100.100.200", "fd00:ec2::254":
+			return fmt.Errorf("不允许指向云元数据地址")
 		}
 	}
 	return nil

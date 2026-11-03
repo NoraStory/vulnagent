@@ -1378,6 +1378,7 @@ export interface SshHostTestResult {
   serverVersion: string;
   elapsedMs: number;
   trusted: boolean;
+  pinned: boolean;
 }
 
 export interface SshSessionItem {

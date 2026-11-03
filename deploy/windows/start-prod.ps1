@@ -17,6 +17,8 @@ $env:VA_SYNC_INTERVAL = '12h'
 # $env:VA_COOKIE_SECURE = '1'
 # 前置可信反向代理时开启，登录限速与审计按 X-Forwarded-For 取真实 IP
 # $env:VA_TRUST_PROXY = '1'
+# Prometheus 指标抓取专用令牌（未设置时兼容 Agent 令牌）
+# $env:VA_METRICS_TOKEN = '...'
 # CVE 情报密钥建议放系统环境变量，避免写进脚本
 # $env:VULNAGENT_CVE_API_KEY = '...'
 # Agent Harness：三项齐备才启用，建议从系统环境变量注入，不要写进脚本

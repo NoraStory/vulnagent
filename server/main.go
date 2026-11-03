@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.14"
+	appVersion  = "0.7.15"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -448,6 +448,11 @@ func runServer() {
 		Addr:              cfg.Addr,
 		Handler:           withLogging(withSecurity(withCompression(app.withAuth(mux)))),
 		ReadHeaderTimeout: 10 * time.Second,
+		// 覆盖请求体慢速上传；WebSocket 升级时 net/http 会清除该读期限，不影响长连接。
+		ReadTimeout: 3 * time.Minute,
+		IdleTimeout: 2 * time.Minute,
+		// 不设 WriteTimeout：SSE（助手对话、SSH Agent）需要长时间持续写。
+		MaxHeaderBytes: 64 << 10,
 	}
 
 	errCh := make(chan error, 1)

@@ -30,7 +30,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
+	// 保留 HTML 转义（默认开启）：API 响应若被嵌入页面，<、>、& 不会形成标签
 	_ = enc.Encode(v)
 }
 

@@ -1,12 +1,33 @@
 package main
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"vulnagent/server/internal/platform/config"
 )
 
-// handleMetrics 输出 Prometheus 文本指标；允许会话或 Agent Bearer 令牌访问
+// metricsAuthorized 校验指标抓取凭据：优先使用 VA_METRICS_TOKEN；
+// 未配置时兼容旧的 Agent Bearer 令牌，避免已有 Prometheus 抓取任务中断。
+func (a *App) metricsAuthorized(r *http.Request) bool {
+	expected := strings.TrimSpace(config.Load().MetricsToken)
+	header := r.Header.Get("Authorization")
+	provided := ""
+	if strings.HasPrefix(header, "Bearer ") {
+		provided = strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	}
+	if expected == "" {
+		return a.agentAuthorized(r)
+	}
+	if provided == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
+}
+
+// handleMetrics 输出 Prometheus 文本指标；允许会话或专用指标令牌访问
 func (a *App) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

@@ -1495,9 +1495,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.14 -t vulnagent:0.7.14 .
+docker build --build-arg VERSION=0.7.15 -t vulnagent:0.7.15 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.14
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.15
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```

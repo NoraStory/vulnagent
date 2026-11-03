@@ -13,6 +13,30 @@ import (
 	"vulnagent/server/internal/application/ports"
 )
 
+func TestValidateIntegrationEndpointBlocksMetadata(t *testing.T) {
+	bad := []string{
+		"http://169.254.169.254/latest/meta-data",
+		"http://100.100.100.200/latest/meta-data",
+		"http://metadata.google.internal/computeMetadata/v1",
+		"ftp://cmdb.internal/api",
+	}
+	for _, raw := range bad {
+		if err := validateIntegrationEndpoint(raw); err == nil {
+			t.Fatalf("%q 应被拒绝", raw)
+		}
+	}
+	good := []string{
+		"",
+		"https://cmdb.internal/api",
+		"http://10.0.0.5:8080/api",
+	}
+	for _, raw := range good {
+		if err := validateIntegrationEndpoint(raw); err != nil {
+			t.Fatalf("%q 应被允许，实际 %v", raw, err)
+		}
+	}
+}
+
 func newIntegrationTestApp(t *testing.T) *App {
 	t.Helper()
 	db, err := openDB(filepath.Join(t.TempDir(), "integrations.db"))

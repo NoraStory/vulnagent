@@ -755,6 +755,8 @@ Webhook 请求体：
 | POST | `/integrations/{id}/test` | 只读拉取样例，不写资产 |
 | POST | `/integrations/{id}/sync` | 手动同步一次，写入资产台账 |
 
+集成地址（`config.url` / `config.endpoint`）必须是合法的 http(s) URL；拒绝云元数据与链路本地地址（`169.254.0.0/16`、`100.100.100.200`、`metadata.google.internal` 等），内网私有地址仍允许。
+
 集成类型：`cloud_aliyun`（ECS DescribeInstances）、`cloud_aws`（EC2 DescribeInstances）、
 `cloud_azure`（ARM 虚拟机列表）、`cmdb_api`（GET JSON）。
 
@@ -946,7 +948,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.14", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.15", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -1047,7 +1049,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.14", "demo": true }
+{ "ok": true, "version": "0.7.15", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1070,7 +1072,7 @@ Webhook 请求体：
 
 ### GET /metrics
 
-Prometheus 文本格式（`text/plain; version=0.0.4`）。允许登录会话或 Agent Bearer 令牌访问，便于 Prometheus 抓取。
+Prometheus 文本格式（`text/plain; version=0.0.4`）。允许登录会话访问；无会话时可使用 `VA_METRICS_TOKEN` 专用 Bearer 令牌抓取（未配置该变量时兼容 Agent Bearer 令牌）。
 
 ```
 vulnagent_findings_total{priority="P0"} 17
@@ -1217,7 +1219,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.14",
+  "version": "0.7.15",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1387,10 +1389,10 @@ vulnagent_selfcheck_failed 0
 
 ```json
 { "ok": true, "fingerprint": "SHA256:…", "serverVersion": "SSH-2.0-OpenSSH_9.6",
-  "elapsedMs": 42, "trusted": true }
+  "elapsedMs": 42, "trusted": false, "pinned": false }
 ```
 
-首次连接记录 TOFU 指纹；指纹不匹配或连接失败返回 `502 ssh_failed`。
+首次连接记录 TOFU 指纹：未保存过指纹时 `pinned=false`、`trusted=false`，前端提示“首次连接已记录指纹”；已保存指纹且匹配时 `trusted=true`；指纹不匹配时 `trusted=false` 并提示风险；连接失败返回 `502 ssh_failed`。
 
 ### GET /ssh/sessions?limit=50（viewer+）
 

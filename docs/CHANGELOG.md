@@ -1,7 +1,7 @@
 # 版本更新日志
 
 - 文档更新：2026-11-03
-- 当前代码版本：`0.7.14`（首个 Git Tag 为 `v0.7.9`）
+- 当前代码版本：`0.7.15`（首个 Git Tag 为 `v0.7.9`）
 - 说明：`v0.7.9` 为仓库首个 Git Tag；此前版本按提交区间回溯整理，每个版本的「推送终点」就是当时已推送到 `origin/master` 的提交。
 
 ## 版本总览
@@ -29,9 +29,32 @@
 | `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
 | `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | `5bdaf20` | [5bdaf20](https://github.com/NoraStory/vulnagent/commit/5bdaf20) |
 | `v0.7.14` | 2026-11-03 | 修复中危：运行记录越权、WebSocket Origin、CSRF null、Agent 主机绑定等 | `0032459` | [0032459](https://github.com/NoraStory/vulnagent/commit/0032459) |
+| `v0.7.15` | 2026-11-03 | 修复低危：CSP/HSTS、CSV 注入、SSRF 限制、指标令牌等 | 本次提交 | 本次提交 |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
+
+---
+
+## v0.7.15 · 2026-11-03
+
+**主题**：收尾安全审查发现低危项，补齐浏览器安全响应头、导出注入防护与外部地址限制。
+
+### 安全修复
+- **安全响应头**：新增 `Content-Security-Policy`（`script-src 'self'`、`object-src 'none'`、`frame-ancestors 'none'`，同源 WebSocket 白名单）、`Permissions-Policy`；HTTPS/`VA_COOKIE_SECURE` 下输出 HSTS。
+- **CSV 公式注入**：漏洞与资产 CSV 导出对以 `= + - @` 开头的字段加 `'` 前缀，避免在 Excel 中执行公式。
+- **HTTP 慢速攻击**：`http.Server` 增加 `ReadTimeout`（3 分钟）、`IdleTimeout`（2 分钟）与 `MaxHeaderBytes`（64KB）；不设 `WriteTimeout` 以保留 SSE 长连接。
+- **指标令牌分离**：新增 `VA_METRICS_TOKEN`，Prometheus 可用专用 Bearer 令牌抓取；未配置时保持兼容 Agent 令牌。
+- **集成源 SSRF 收口**：`config.url` / `config.endpoint` 校验 http(s) 并拒绝云元数据、链路本地与未指定地址，内网私有地址仍允许。
+- **自更新强制 https**：远程清单与二进制地址必须使用 https（本地回环除外），仍需 Ed25519 签名与 SHA256 校验。
+- **TOFU 语义修正**：SSH 主机首次连接时 `trusted=false`、`pinned=false`，前端提示“首次连接已记录指纹”，不再把未校验主机显示为受信任。
+- **JSON 输出恢复 HTML 转义**：API 响应默认转义 `<`、`>`、`&`，降低被嵌入页面时的注入风险。
+
+### 验证
+- 新增 `TestCSVSafeCell`、`TestSecurityHeaders`、`TestMetricsAuthorizedUsesDedicatedToken`、`TestValidateIntegrationEndpointBlocksMetadata`、`TestRequireSecureSource`；`go vet ./...`、`go test ./...`、`npm run build` 通过。
+
+### 主要提交
+`本次提交 fix(security): 补齐安全响应头、导出注入与外部地址限制`
 
 ---
 

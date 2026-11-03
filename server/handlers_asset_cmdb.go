@@ -321,7 +321,7 @@ func (a *App) handleAssetExport(w http.ResponseWriter, r *http.Request) {
 		for _, it := range items {
 			row := make([]string, 0, len(assetCSVColumns))
 			for _, col := range assetCSVColumns {
-				row = append(row, assetCSVValue(it, col.key))
+				row = append(row, csvSafeCell(assetCSVValue(it, col.key)))
 			}
 			_ = cw.Write(row)
 		}

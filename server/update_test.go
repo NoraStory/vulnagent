@@ -12,6 +12,29 @@ import (
 	"testing"
 )
 
+func TestRequireSecureSource(t *testing.T) {
+	rejected := []string{
+		"http://example.com/vulnagent.json",
+		"http://169.254.169.254/latest/meta-data",
+	}
+	for _, raw := range rejected {
+		if err := requireSecureSource(raw); err == nil {
+			t.Fatalf("%q 应被拒绝", raw)
+		}
+	}
+	allowed := []string{
+		"https://example.com/vulnagent.json",
+		"http://127.0.0.1:8080/vulnagent.exe",
+		"http://localhost/release.json",
+		"manifest.json",
+	}
+	for _, raw := range allowed {
+		if err := requireSecureSource(raw); err != nil {
+			t.Fatalf("%q 应被允许，实际 %v", raw, err)
+		}
+	}
+}
+
 func TestManifestSignAndVerify(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

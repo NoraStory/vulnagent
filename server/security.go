@@ -150,6 +150,20 @@ func withSecurity(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=()")
+		// 前端为 Vite 构建的静态资源，无内联脚本；样式内联来自 React/xterm，需放行 style 的 unsafe-inline
+		wsOrigin := "ws://" + r.Host
+		if cookieSecure(r) {
+			wsOrigin = "wss://" + r.Host
+		}
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob:; font-src 'self' data:; "+
+				"connect-src 'self' "+wsOrigin+"; object-src 'none'; base-uri 'self'; "+
+				"form-action 'self'; frame-ancestors 'none'")
+		if r.TLS != nil || config.Load().CookieSecure {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		switch r.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 			origin := strings.TrimSpace(r.Header.Get("Origin"))

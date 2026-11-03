@@ -55,6 +55,8 @@ type Config struct {
 	AgentToken     string
 	// TrustProxy 信任反向代理写入的 X-Forwarded-For / X-Real-IP，用于登录限速与审计来源 IP
 	TrustProxy bool
+	// MetricsToken 专用指标抓取令牌；未设置时兼容 Agent 令牌访问 /metrics
+	MetricsToken string
 
 	// LLM 相关：未配置凭据时 Harness 自动关闭
 	LLMBaseURL string
@@ -103,6 +105,7 @@ func Load() Config {
 		CookieSecure:   truthy("VA_COOKIE_SECURE"),
 		AgentToken:     strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN")),
 		TrustProxy:     truthy("VA_TRUST_PROXY"),
+		MetricsToken:   strings.TrimSpace(os.Getenv("VA_METRICS_TOKEN")),
 		LLMBaseURL:     strings.TrimSpace(os.Getenv("VA_LLM_BASE_URL")),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("VA_LLM_API_KEY")),
 		LLMModel:       strings.TrimSpace(os.Getenv("VA_LLM_MODEL")),

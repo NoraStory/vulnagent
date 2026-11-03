@@ -524,12 +524,16 @@ func (a *App) handleSSHHostTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.audit(r, "ssh.host.test", h.Name, "成功："+h.addr())
+	// 首次连接采用 TOFU：没有已保存指纹时 trusted=false，由前端提示“首次记录”
+	pinned := h.HostKey != ""
+	trusted := pinned && strings.EqualFold(h.HostKey, fingerprint)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":            true,
 		"fingerprint":   fingerprint,
 		"serverVersion": string(client.ServerVersion()),
 		"elapsedMs":     time.Since(start).Milliseconds(),
-		"trusted":       h.HostKey == "" || strings.EqualFold(h.HostKey, fingerprint),
+		"trusted":       trusted,
+		"pinned":        pinned,
 		"actor":         u.Username,
 	})
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -69,6 +70,9 @@ func readManifest(source string) (updateManifest, error) {
 	var data []byte
 	var err error
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		if err := requireSecureSource(source); err != nil {
+			return m, err
+		}
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Get(source)
 		if err != nil {
@@ -244,9 +248,31 @@ func runSelfUpdateCommand(args []string) {
 	fmt.Fprintf(os.Stderr, "更新完成：%s → %s（旧版本保留为 %s）\n", appVersion, m.Version, backup)
 }
 
+// requireSecureSource 远程清单/二进制必须走 https；本地回环保留 http 便于离线测试。
+func requireSecureSource(raw string) error {
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("地址格式非法：%s", raw)
+	}
+	if u.Scheme != "http" {
+		return nil
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "localhost", "127.0.0.1", "::1":
+		return nil
+	}
+	return fmt.Errorf("远程地址必须使用 https：%s", raw)
+}
+
 func downloadBinary(m updateManifest, target string) error {
 	var reader io.Reader
 	if strings.HasPrefix(m.URL, "http://") || strings.HasPrefix(m.URL, "https://") {
+		if err := requireSecureSource(m.URL); err != nil {
+			return err
+		}
 		client := &http.Client{Timeout: 5 * time.Minute}
 		resp, err := client.Get(m.URL)
 		if err != nil {

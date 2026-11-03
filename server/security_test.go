@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,6 +116,47 @@ func TestCheckWebSocketOrigin(t *testing.T) {
 		if !c.want && rec.Code != http.StatusForbidden {
 			t.Fatalf("Origin=%q 应返回 403，实际 %d", c.origin, rec.Code)
 		}
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	handler := withSecurity(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "127.0.0.1:8787"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
+		t.Fatalf("缺少 CSP 或策略不完整：%q", csp)
+	}
+	if rec.Header().Get("Permissions-Policy") == "" {
+		t.Fatal("缺少 Permissions-Policy")
+	}
+	if rec.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatal("HTTP 请求不应返回 HSTS")
+	}
+
+	secureReq := httptest.NewRequest(http.MethodGet, "https://127.0.0.1:8787/", nil)
+	secureReq.TLS = &tls.ConnectionState{}
+	secureRec := httptest.NewRecorder()
+	handler.ServeHTTP(secureRec, secureReq)
+	if secureRec.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatal("HTTPS 请求应返回 HSTS")
+	}
+}
+
+func TestMetricsAuthorizedUsesDedicatedToken(t *testing.T) {
+	t.Setenv("VA_METRICS_TOKEN", "metrics-secret")
+	app := &App{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics", nil)
+	req.Header.Set("Authorization", "Bearer metrics-secret")
+	if !app.metricsAuthorized(req) {
+		t.Fatal("专用指标令牌应通过校验")
+	}
+	req.Header.Set("Authorization", "Bearer wrong")
+	if app.metricsAuthorized(req) {
+		t.Fatal("错误令牌不应通过校验")
 	}
 }
 
