@@ -919,7 +919,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.8-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.9-dev", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -1020,7 +1020,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.8-dev", "demo": true }
+{ "ok": true, "version": "0.7.9-dev", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1188,7 +1188,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.8-dev",
+  "version": "0.7.9-dev",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],
@@ -1438,8 +1438,9 @@ vulnagent_selfcheck_failed 0
 | `error` | `{message}` | 运行失败 |
 
 - 不限制执行步数，直到模型返回 `done=true`、用户停止或触发失败熔断；连续 5 条命令执行失败（退出码非 0 或执行错误）时自动停止并生成收尾结论，成功命令会重置连续失败计数。单条命令 90 秒超时；运行与每一步写入 `ssh_agent_runs` / `ssh_agent_steps`。
+- 运行与浏览器 SSE 连接解耦：离开页面只会断开事件流，后台继续执行，最长 45 分钟；重新进入终端后通过运行详情恢复进度与待审批命令。
 - `skillId` 可选；填写后按 `/ssh/assistant` 相同规则注入技能资料，并在 `ssh.agent.run` 审计中记录技能 ID。
-- 运行与当前浏览器 SSE 连接绑定，断开即终止；审计记录 `ssh.agent.run` / `ssh.agent.done`。
+- 运行与当前浏览器 SSE 连接解耦，断开事件流不会终止后台任务；`POST /ssh/agent/runs/{id}/cancel` 可显式取消。审计记录 `ssh.agent.run` / `ssh.agent.done` / `ssh.agent.cancel`。
 
 ### POST /ssh/agent/approvals/{id}（operator+）
 
@@ -1461,7 +1462,11 @@ vulnagent_selfcheck_failed 0
 
 ### GET /ssh/agent/runs/{id}（viewer+）
 
-返回 `{ "run": {…}, "steps": [ { "index": 0, "thought": "…", "command": "df -h", "output": "…", "risk": "normal", "approved": "auto", "exitCode": 0, "createdAt": "…" } ] }`，用于审计与复盘。
+返回 `{ "run": {…}, "steps": [ { "index": 0, "thought": "…", "command": "df -h", "output": "…", "risk": "normal", "approved": "auto", "exitCode": 0, "createdAt": "…" } ], "pendingApprovals": [ { "approvalId": "…", "runId": "…", "index": 3, "command": "systemctl restart nginx", "risk": "high", "reason": "需要确认", "createdAt": "…" } ] }`，用于审计、复盘与离开页面后的进度恢复。
+
+### POST /ssh/agent/runs/{id}/cancel（operator+）
+
+显式取消仍在运行的 Agent 任务，返回 `{ "ok": true }`；运行不存在或已结束时返回 `404 not_found`。取消会终止后续命令并写入 `ssh.agent.cancel` 审计。
 
 ### 12.1 SFTP 文件管理（operator+）
 

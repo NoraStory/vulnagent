@@ -1170,7 +1170,8 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 技能调用：请求可携带 `skillId`，服务端读取技能 `SKILL.md` 与 `guides/workflow.md`、`guides/capability-index.md`、`guides/scenario-routing.md`（存在时，总预算 6000 字）注入系统提示；明确要求不得假装读取未提供的子文件，也不得把控制面路径当作目标机路径。
 - 风险分级：`critical`（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机重启、分区工具）始终需要人工确认；`high`（递归删除、停服、清空防火墙、删用户、批量容器操作等）在 `safe` 模式需要确认；`normal` 直接执行。
 - 审批：内存审批表 + 5 分钟 TTL，`POST /ssh/agent/approvals/{id}` 唤醒等待中的运行；审批人、命令与结果写入步骤与审计。
-- 约束：运行绑定当前 SSE 连接，客户端断开即终止；单命令 90 秒超时、单步输出 16KB 截断；服务启动时清理遗留的 `running` 记录。
+- 约束：运行与浏览器 SSE 连接解耦，离开页面后继续后台执行（最长 45 分钟）；`POST /ssh/agent/runs/{id}/cancel` 可显式取消。单命令 90 秒超时、单步输出 16KB 截断；服务启动时清理遗留的 `running` 记录。
+- 恢复：重新进入终端时按主机查询运行中的记录，轮询运行详情恢复步骤、输出与待审批命令；审批元数据保存在进程内，审批结果仍通过原接口回传。
 - 问答内自动执行：问答页勾选「自动执行」后，前端把问题与最近 6 条问答上下文组装为 Agent 目标，复用同一套 SSE 循环执行；命令失败时输出与退出码回填模型由其自行判断，步数不限且连续 5 条命令执行失败时自动停止；支持 `/技能` 前缀调用技能；审批模式、停止按钮、审计与 Agent 页一致，执行结论回写问答消息便于继续追问。
 
 #### 7.6.5 SFTP 文件管理
@@ -1494,9 +1495,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.8 -t vulnagent:0.7.8 .
+docker build --build-arg VERSION=0.7.9 -t vulnagent:0.7.9 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.8
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.9
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```

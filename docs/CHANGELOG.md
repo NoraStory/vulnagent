@@ -1,7 +1,7 @@
 # 版本更新日志
 
 - 文档更新：2026-11-03
-- 当前代码版本：`0.7.8-dev`（对应里程碑 `v0.7.8`）
+- 当前代码版本：`0.7.9-dev`（对应里程碑 `v0.7.9`）
 - 说明：仓库此前未打 Git tag，以下版本按提交区间回溯整理；每个版本的「推送终点」就是当时已推送到 `origin/master` 的提交，可直接用 `git show <hash>` 查看该版本最终状态。
 
 ## 版本总览
@@ -23,9 +23,30 @@
 | `v0.7.6` | 2026-11-02 | SSH 自动执行连续失败熔断 | `3ca16b4` | [3ca16b4](https://github.com/NoraStory/vulnagent/commit/3ca16b4) |
 | `v0.7.7` | 2026-11-02 | 终端技能调用与自动执行去步数上限 | `4c944c4` | [4c944c4](https://github.com/NoraStory/vulnagent/commit/4c944c4) |
 | `v0.7.8` | 2026-11-03 | 集群 SLO、依赖拓扑与根因分析 | `69b6fa2..382aff7` | [382aff7](https://github.com/NoraStory/vulnagent/commit/382aff7) |
+| `v0.7.9` | 2026-11-03 | SSH Agent 后台运行与页面恢复 | `409b9f4` | [409b9f4](https://github.com/NoraStory/vulnagent/commit/409b9f4) |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
-> `v0.7.8` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
+> `v0.7.9` 之后的文档补充属于维护性提交，不单独升级版本；当前 HEAD 可能领先于表中终点。
+
+---
+
+## v0.7.9 · 2026-11-03
+
+**主题**：终端 Agent 任务与页面解耦，离开页面不再中断。
+
+### 修复
+- 运行上下文改用 `context.WithoutCancel` 派生并设置 45 分钟上限，浏览器断开 SSE 不再取消后台任务。
+- 新增 `POST /ssh/agent/runs/{id}/cancel`：前端「停止」显式取消后台运行，写 `ssh.agent.cancel` 审计。
+- `GET /ssh/agent/runs/{id}` 返回 `pendingApprovals`，审批元数据与等待通道同步登记/清理。
+- 终端重新进入时按主机查找运行中的任务，切换 Agent 面板并轮询运行详情，恢复步骤、输出、结论与待审批命令。
+- 前端不再把 SSE 断开误判为运行失败；仅在真实网络/接口错误或手动停止时显示中断。
+
+### 验证
+- 新增 `TestSSHBackgroundRunMetadataAndCancel`：待审批元数据、运行取消与注销清理。
+- `go test . -count=1`、`go vet ./...`、`npm run build` 通过。
+
+### 主要提交
+`409b9f4 fix(ssh): Agent 任务离开页面后继续后台执行`
 
 ---
 
