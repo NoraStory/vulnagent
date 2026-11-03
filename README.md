@@ -499,7 +499,7 @@ sudo bash deploy/linux/install.sh --port 8787 --open-firewall \
 
 - **systemd 手工部署**：`deploy/systemd/`（server / agent 服务单元、agent timer、helper sudoers 与 env 示例）
 - **Kubernetes**：`deploy/k8s/`（server 与 agent CronJob 清单）
-- **Windows 手工启动**：`deploy/windows/start-prod.ps1`
+- **Windows 手工启动**：`deploy/windows/start-prod.ps1`（控制面）、`deploy/windows/agent-prod.ps1`（本机 Agent 常驻上报）
 - **容器**：仓库根目录 `Dockerfile`
 
 生产建议：`VA_SEED_DEMO=off`、设置强口令、HTTPS 前置并开启 `VA_COOKIE_SECURE=1`、定期 `vulnagent backup`。

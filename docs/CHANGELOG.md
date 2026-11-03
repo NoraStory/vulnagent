@@ -42,10 +42,13 @@
 - `intel.epss_coverage` 只统计标准 `CVE-` 编号（OSV/发行版 advisory 无 EPSS 评分），避免把 `GO-`、`DEBIAN-` 记录算作未覆盖。
 
 ### 验证
-- `go vet ./...`、`go test ./...` 通过；同步游标状态均为 `ok`；自检「情报同步」「采集链路」两组恢复通过。
+- `go vet ./...`、`go test ./...` 通过；`cve` / `poc` / `epss` 同步游标均为 `ok`。
+- EPSS 覆盖率（仅标准 CVE 编号）91.4%，Agent 恢复常驻上报，在线率 1/1。
+- 遗留 1 台 SSH 资产超过 24 小时未重新扫描，仍保留「失联资产」警告（端口可达，待复扫或归档）。
 
 ### 主要提交
 `50d892e fix(selfcheck): 在线率按最近上报判定，修复情报与采集链路失败项`
+`bd20f09 fix(selfcheck): EPSS 覆盖率仅统计标准 CVE 编号；补充 Agent 常驻脚本`
 
 ---
 
