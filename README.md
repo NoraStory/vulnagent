@@ -47,7 +47,7 @@ Signal 是一个面向主机与软件组件的**漏洞运营控制面**：Agent 
 - **集群 / 终端 / Agent 联动**：节点可直接新建 SSH 凭据并在终端打开；终端主机列表显示项目/集群归属；Agent 先调用 `list_clusters`/`check_cluster` 检查集群状态，再执行后续主机操作。
 - **资产 / 终端联动**：资产详情与资产列表可一键打开终端；已有 SSH 主机直接复用，缺少凭据时在资产内填写一次并加密保存。资产页「SSH 采集」默认将凭据沉淀为 SSH 主机，终端、集群节点与后续扫描共用同一份凭据，不再重复录入。
 - **终端技能调用**：AI 终端助手与 Agent 支持 `/` 技能补全与 `/技能 问题` 直输；技能入口文档与核心指引注入提示，自动执行不再限制步数，改为连续 5 条命令失败熔断。
-- **迁移**：新增 `0021_app_settings`、`0022_projects_clusters`、`0023_cluster_jobs`、`0024_cluster_db_checks`、`0025_agents`，既有资产与漏洞数据不受影响（`assets.cluster_id` 默认 0）。
+- **迁移**：新增 `0021_app_settings`、`0022_projects_clusters`、`0023_cluster_jobs`、`0024_cluster_db_checks`、`0025_agents`、`0026_cluster_observability`，既有资产与漏洞数据不受影响（`assets.cluster_id` 默认 0）。
 
 ---
 
