@@ -1235,6 +1235,10 @@ export const api = {
     return request(`/ssh/agent/runs/${encodeURIComponent(id)}`);
   },
 
+  sshAgentRunCancel(id: string): Promise<{ ok: boolean }> {
+    return request(`/ssh/agent/runs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
+  },
+
   // ---------- SFTP 文件管理 ----------
 
   sftpList(hostId: number, path: string): Promise<SftpList> {

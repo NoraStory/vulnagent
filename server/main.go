@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.8-dev"
+	appVersion  = "0.7.9-dev"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -92,9 +92,12 @@ type App struct {
 	sshPoolMu sync.Mutex
 	sshPool   map[int64]*sshPoolEntry
 
-	// SSH Agent 自动执行：命令审批等待队列
-	sshApprovalMu sync.Mutex
-	sshApprovals  map[string]chan bool
+	// SSH Agent 自动执行：命令审批等待队列与运行取消
+	sshApprovalMu   sync.Mutex
+	sshApprovals    map[string]chan bool
+	sshApprovalMeta map[string]sshApprovalInfo
+	sshRunMu        sync.Mutex
+	sshRunCancels   map[string]context.CancelFunc
 
 	// 服务加速：最近的加速能力探测结果（用于调度节点列表）
 	accelMu       sync.Mutex
@@ -240,6 +243,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/ssh/agent/approvals/{id}", a.handleSSHAgentApproval)
 	mux.HandleFunc("GET /api/v1/ssh/agent/runs", a.handleSSHAgentRuns)
 	mux.HandleFunc("GET /api/v1/ssh/agent/runs/{id}", a.handleSSHAgentRunDetail)
+	mux.HandleFunc("POST /api/v1/ssh/agent/runs/{id}/cancel", a.handleSSHAgentRunCancel)
 	mux.HandleFunc("GET /api/v1/ssh/files/list", a.handleSFTPList)
 	mux.HandleFunc("GET /api/v1/ssh/files/download", a.handleSFTPDownload)
 	mux.HandleFunc("POST /api/v1/ssh/files/upload", a.handleSFTPUpload)
@@ -394,7 +398,8 @@ func runServer() {
 	app := &App{db: db, sessions: newSessionStore(), dataDir: dataDir, webDist: webDist,
 		selfDigest: computeSelfSBOMDigest(), scanDebounce: scanDebounceFromEnv(),
 		lastScan: make(map[int64]time.Time), loginGuard: newLoginLimiter(), jobKey: []byte(agentToken),
-		sshApprovals: make(map[string]chan bool)}
+		sshApprovals: make(map[string]chan bool), sshApprovalMeta: make(map[string]sshApprovalInfo),
+		sshRunCancels: make(map[string]context.CancelFunc)}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
 	// 上次进程退出时仍在运行的 SSH Agent 任务标记为中断，避免长期停留在 running
 	if _, err := db.Exec(`UPDATE ssh_agent_runs SET status='failed', error='服务重启，运行中断', finished_at=? WHERE status='running'`,

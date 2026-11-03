@@ -66,6 +66,7 @@ import type {
   HarnessSkill,
   SshAgentEvent,
   SshAgentMode,
+  SshAgentRunDetail,
   SshAssistantReply,
   SshCommandReference,
   SshHost,
@@ -133,6 +134,40 @@ type AgentRunView = {
   context?: ContextUsage;
   warnings?: string[];
 };
+
+// runDetailToView 把后台运行记录还原为前端视图，离开页面后返回可继续展示进度。
+function runDetailToView(detail: SshAgentRunDetail): AgentRunView {
+  const run = detail.run;
+  const steps: AgentStepView[] = detail.steps.map((step) => ({
+    index: step.index,
+    thought: step.thought,
+    command: step.command,
+    risk: step.risk,
+    approval: step.approved === "rejected" ? "rejected" : "not_required",
+    approved: step.approved === "auto" || step.approved === "user",
+    output: step.output,
+    exitCode: step.exitCode
+  }));
+  const pending = detail.pendingApprovals?.[0];
+  return {
+    runId: run.id,
+    status: run.status === "running" ? "running" : run.status === "completed" ? "done" : "error",
+    goal: run.goal,
+    mode: run.mode,
+    steps,
+    summary: run.summary,
+    error: run.error,
+    pending: pending
+      ? {
+          id: pending.approvalId,
+          index: pending.index,
+          command: pending.command,
+          risk: pending.risk,
+          reason: pending.reason
+        }
+      : undefined
+  };
+}
 
 const agentRiskMeta: Record<string, { label: string; className: string }> = {
   normal: { label: "只读", className: "bg-signal-soft text-signal" },
@@ -543,6 +578,7 @@ export function TerminalPage() {
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
   const agentScrollRef = useRef<HTMLDivElement | null>(null);
   const agentAbort = useRef(new Map<string, AbortController>());
+  const agentStreaming = useRef(new Set<string>());
   const aiInputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null;
   const activeAi = activeTab ? aiByTab[activeTab.key] ?? [] : [];
@@ -589,6 +625,53 @@ export function TerminalPage() {
       .then((result) => setSkills(result.skills ?? []))
       .catch(() => undefined);
   }, [loadHosts, loadSessions]);
+
+  // 页面重新进入时恢复仍在后台运行的 Agent 任务
+  useEffect(() => {
+    if (!activeTab) return;
+    const key = activeTab.key;
+    if (agentByTab[key]?.runId) return;
+    const hostId = activeTab.host.id;
+    let cancelled = false;
+    api
+      .sshAgentRuns({ hostId, limit: 5 })
+      .then(async (result) => {
+        const running = result.items.find((item) => item.status === "running");
+        if (!running || cancelled) return;
+        const detail = await api.sshAgentRunDetail(running.id);
+        if (cancelled) return;
+        setAgentByTab((prev) => (prev[key] ? prev : { ...prev, [key]: runDetailToView(detail) }));
+        setAiMode("agent");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab?.key, activeTab?.host.id, agentByTab]);
+
+  // 后台运行轮询：SSE 断开或离开页面后，通过运行详情继续展示进度与审批
+  useEffect(() => {
+    if (!activeTab || !agentState?.runId || agentState.status !== "running") return;
+    if (agentStreaming.current.has(activeTab.key)) return;
+    const key = activeTab.key;
+    const runId = agentState.runId;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const detail = await api.sshAgentRunDetail(runId);
+        if (cancelled) return;
+        setAgentByTab((prev) => ({ ...prev, [key]: runDetailToView(detail) }));
+      } catch {
+        /* 后台轮询失败时保持现有状态 */
+      }
+    };
+    void pull();
+    const timer = window.setInterval(() => void pull(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeTab?.key, agentState?.runId, agentState?.status]);
 
   // 支持从集群节点跳转：/terminal?hostId=3 自动打开对应主机
   useEffect(() => {
@@ -975,6 +1058,7 @@ export function TerminalPage() {
     };
 
     try {
+      agentStreaming.current.add(key);
       await api.sshAgentRun(activeTab.host.id, goal, mode, aiSearch, handle, controller.signal, skillId || undefined);
       void loadSessions();
     } catch (err) {
@@ -986,20 +1070,21 @@ export function TerminalPage() {
         }));
       }
     } finally {
+      agentStreaming.current.delete(key);
       agentAbort.current.delete(key);
-      updateAgentState(key, (current) =>
-        current.status === "running"
-          ? { ...current, status: "error", error: current.error || "运行中断" }
-          : current
-      );
     }
   }
 
   function stopAgent() {
     if (!activeTab) return;
     const key = activeTab.key;
+    const runId = agentByTab[key]?.runId;
+    if (runId) {
+      void api.sshAgentRunCancel(runId).catch(() => undefined);
+    }
     agentAbort.current.get(key)?.abort();
     agentAbort.current.delete(key);
+    agentStreaming.current.delete(key);
     updateAgentState(key, (current) => ({ ...current, status: "error", error: "已手动停止", pending: undefined }));
   }
 

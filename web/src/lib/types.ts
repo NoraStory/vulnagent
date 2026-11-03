@@ -1502,6 +1502,15 @@ export interface SshAgentStepRecord {
 export interface SshAgentRunDetail {
   run: SshAgentRun;
   steps: SshAgentStepRecord[];
+  pendingApprovals: Array<{
+    approvalId: string;
+    runId: string;
+    index: number;
+    command: string;
+    risk: string;
+    reason: string;
+    createdAt: string;
+  }>;
 }
 
 export interface SshAgentEvent {

@@ -160,6 +160,9 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accelerated := a.hostAccelerated(host)
+	// 运行与浏览器 SSE 连接解耦：离开页面后继续执行，可通过运行详情恢复进度或显式取消。
+	runCtx, runCancel := context.WithTimeout(context.WithoutCancel(r.Context()), 45*time.Minute)
+	defer runCancel()
 
 	searchEnabled := req.Search == nil || *req.Search
 	var (
@@ -168,20 +171,22 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		referenceBlock string
 	)
 	if searchEnabled {
-		refCtx, cancelRef := context.WithTimeout(r.Context(), 15*time.Second)
+		refCtx, cancelRef := context.WithTimeout(runCtx, 15*time.Second)
 		references, refErr = a.commandReferences(refCtx, goal)
 		cancelRef()
 		referenceBlock = commandReferencePrompt(references)
 	}
-	previousRuns := a.recentSSHAgentRuns(r.Context(), host.ID, 3)
+	previousRuns := a.recentSSHAgentRuns(runCtx, host.ID, 3)
 	previousBlock := formatPreviousAgentRuns(previousRuns)
 
 	stream := newSSEStream(w)
 	defer stream.close()
 
 	runID := newSSHRunID()
+	a.registerSSHRunCancel(runID, runCancel)
+	defer a.unregisterSSHRunCancel(runID)
 	startedAt := fmtT(nowT())
-	if _, err := a.db.ExecContext(r.Context(), `INSERT INTO ssh_agent_runs
+	if _, err := a.db.ExecContext(runCtx, `INSERT INTO ssh_agent_runs
 		(id, host_id, host_name, actor, role, goal, mode, status, steps, summary, error, started_at, finished_at)
 		VALUES(?,?,?,?,?,?,?,?,0,'','',?,'')`,
 		runID, host.ID, host.Name, u.Username, u.Role, goal, mode, "running", startedAt); err != nil {
@@ -216,7 +221,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		"contextRuns": len(previousRuns), "accelerated": accelerated, "model": llm.Model(),
 	}})
 
-	ctx := r.Context()
+	ctx := runCtx
 	client, fingerprint, err := a.dialSSHHost(ctx, host)
 	if err != nil {
 		errText = err.Error()
@@ -245,7 +250,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 	consecutiveFailures := 0
 	for index := 0; ; index++ {
 		if ctx.Err() != nil {
-			errText = "请求已取消"
+			errText = "运行已取消或超时"
 			return
 		}
 		remaining := 0
@@ -328,7 +333,10 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 		}})
 		if needApproval {
 			approvalID := newSSHRunID()
-			a.registerSSHApproval(approvalID)
+			a.registerSSHApproval(approvalID, sshApprovalInfo{
+				RunID: runID, Index: index, Command: command, Risk: risk,
+				Reason: sshRiskReason(risk), CreatedAt: fmtT(nowT()),
+			})
 			stream.emit(harnessapp.Event{Type: "await_approval", Data: map[string]any{
 				"approvalId": approvalID, "index": index, "command": command, "risk": risk,
 				"reason": sshRiskReason(risk),
@@ -337,7 +345,7 @@ func (a *App) handleSSHAgentRun(w http.ResponseWriter, r *http.Request) {
 			a.unregisterSSHApproval(approvalID)
 			if !resolved {
 				if ctx.Err() != nil {
-					errText = "连接已断开，运行终止"
+					errText = "运行已取消或超时"
 				} else {
 					errText = "审批等待超时"
 				}
@@ -789,19 +797,94 @@ func newSSHRunID() string {
 
 // ---------- 审批 ----------
 
-func (a *App) registerSSHApproval(id string) {
+type sshApprovalInfo struct {
+	RunID     string `json:"runId"`
+	Index     int    `json:"index"`
+	Command   string `json:"command"`
+	Risk      string `json:"risk"`
+	Reason    string `json:"reason"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func (a *App) registerSSHApproval(id string, info ...sshApprovalInfo) {
 	a.sshApprovalMu.Lock()
 	defer a.sshApprovalMu.Unlock()
 	if a.sshApprovals == nil {
 		a.sshApprovals = make(map[string]chan bool)
 	}
+	if a.sshApprovalMeta == nil {
+		a.sshApprovalMeta = make(map[string]sshApprovalInfo)
+	}
 	a.sshApprovals[id] = make(chan bool, 1)
+	if len(info) > 0 {
+		a.sshApprovalMeta[id] = info[0]
+	}
 }
 
 func (a *App) unregisterSSHApproval(id string) {
 	a.sshApprovalMu.Lock()
 	delete(a.sshApprovals, id)
+	delete(a.sshApprovalMeta, id)
 	a.sshApprovalMu.Unlock()
+}
+
+func (a *App) pendingSSHApprovals(runID string) []map[string]any {
+	a.sshApprovalMu.Lock()
+	defer a.sshApprovalMu.Unlock()
+	out := make([]map[string]any, 0, 2)
+	for id, info := range a.sshApprovalMeta {
+		if info.RunID != runID {
+			continue
+		}
+		out = append(out, map[string]any{
+			"approvalId": id, "runId": info.RunID, "index": info.Index, "command": info.Command,
+			"risk": info.Risk, "reason": info.Reason, "createdAt": info.CreatedAt,
+		})
+	}
+	return out
+}
+
+func (a *App) registerSSHRunCancel(id string, cancel context.CancelFunc) {
+	a.sshRunMu.Lock()
+	if a.sshRunCancels == nil {
+		a.sshRunCancels = make(map[string]context.CancelFunc)
+	}
+	a.sshRunCancels[id] = cancel
+	a.sshRunMu.Unlock()
+}
+
+func (a *App) unregisterSSHRunCancel(id string) {
+	a.sshRunMu.Lock()
+	delete(a.sshRunCancels, id)
+	a.sshRunMu.Unlock()
+}
+
+func (a *App) cancelSSHRun(id string) bool {
+	a.sshRunMu.Lock()
+	cancel, ok := a.sshRunCancels[id]
+	a.sshRunMu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (a *App) handleSSHAgentRunCancel(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireRole(w, r, "operator"); !ok {
+		return
+	}
+	runID := strings.TrimSpace(r.PathValue("id"))
+	if runID == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "运行 ID 无效")
+		return
+	}
+	if !a.cancelSSHRun(runID) {
+		writeErr(w, http.StatusNotFound, "not_found", "运行不存在或已结束")
+		return
+	}
+	a.audit(r, "ssh.agent.cancel", runID, "手动取消 SSH Agent 运行")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *App) waitSSHApproval(ctx context.Context, id string, timeout time.Duration) (bool, bool) {
@@ -952,6 +1035,7 @@ func (a *App) handleSSHAgentRunDetail(w http.ResponseWriter, r *http.Request) {
 			"goal": goal, "mode": mode, "status": status, "steps": steps, "summary": summary,
 			"error": errText, "startedAt": startedAt, "endedAt": endedAt,
 		},
-		"steps": stepItems,
+		"steps":            stepItems,
+		"pendingApprovals": a.pendingSSHApprovals(runID),
 	})
 }

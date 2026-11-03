@@ -159,6 +159,41 @@ func TestSSHApprovalRegistry(t *testing.T) {
 	}
 }
 
+func TestSSHBackgroundRunMetadataAndCancel(t *testing.T) {
+	app := &App{
+		sshApprovals:    make(map[string]chan bool),
+		sshApprovalMeta: make(map[string]sshApprovalInfo),
+		sshRunCancels:   make(map[string]context.CancelFunc),
+	}
+	app.registerSSHApproval("ap-1", sshApprovalInfo{
+		RunID: "run-1", Index: 2, Command: "systemctl restart nginx", Risk: "high", Reason: "需要确认",
+	})
+	pending := app.pendingSSHApprovals("run-1")
+	if len(pending) != 1 || pending[0]["approvalId"] != "ap-1" || pending[0]["command"] != "systemctl restart nginx" {
+		t.Fatalf("待审批元数据异常：%+v", pending)
+	}
+	if len(app.pendingSSHApprovals("other")) != 0 {
+		t.Fatal("不应返回其他运行的审批")
+	}
+	app.unregisterSSHApproval("ap-1")
+	if len(app.pendingSSHApprovals("run-1")) != 0 {
+		t.Fatal("注销后不应保留待审批")
+	}
+
+	cancelled := false
+	app.registerSSHRunCancel("run-1", func() { cancelled = true })
+	if !app.cancelSSHRun("run-1") {
+		t.Fatal("运行应可取消")
+	}
+	if !cancelled {
+		t.Fatal("取消函数未执行")
+	}
+	app.unregisterSSHRunCancel("run-1")
+	if app.cancelSSHRun("run-1") {
+		t.Fatal("已注销的运行不应再次取消")
+	}
+}
+
 func TestRunSSHCommand(t *testing.T) {
 	addr, _ := startTestSSHServer(t)
 	host, portText, err := net.SplitHostPort(addr)
