@@ -1,7 +1,7 @@
 # 回归测试报告
 
 日期：2026-11-03
-范围：当前主线能力（资产 CMDB、漏洞匹配、Agent Harness、SSH 智能终端、性能监控、服务加速与实时运行态、上下文压缩、项目集群、异步任务、数据库深检、多 Agent 身份、集群/终端/Agent 联动、资产与终端凭据复用、SSH 自动执行失败熔断与技能调用、集群 SLO 与依赖根因）
+范围：当前主线能力（资产 CMDB、漏洞匹配、Agent Harness、SSH 智能终端、性能监控、服务加速与实时运行态、上下文压缩、项目集群、异步任务、数据库深检、多 Agent 身份、集群/终端/Agent 联动、资产与终端凭据复用、SSH 自动执行失败熔断与技能调用、集群 SLO 与依赖根因、v0.7.13–v0.7.15 安全加固）
 
 ## 1. 回归与单元测试
 
@@ -37,17 +37,23 @@
 - 资产与终端联动：按 IP 优先/主机名回退复用 SSH 主机、未关联返回 404、重复提交仅保留一台主机、资产内联凭据加密保存
 - 数据库深检：DSN 构建、MySQL/PostgreSQL 凭据加密与不回显、清除凭据
 - 多 Agent：一次性注册令牌、身份注册、心跳在线、命令下发/拉取/回传、吊销后拒绝访问、注册令牌优先级
+- 安全边界（v0.7.13–v0.7.15）：`safe` 只读白名单 17 条放行 / 24 条拦截、只读运维模式 `ip`/`journalctl`/`ss`/`hostname`/`ipconfig` 子命令校验、运行/录制/审批发起人隔离、WebSocket `Origin` 校验、CSRF `null` 拒绝、访问日志脱敏、Agent 主机名绑定、审批降权复核、登录限速 `VA_TRUST_PROXY` 与用户名枚举耗时抹平、CSV 公式转义、集成地址 SSRF 限制、自更新 https、TOFU 首次连接语义、`VA_METRICS_TOKEN` 与 CSP/HSTS/Permissions-Policy
 
 ## 2. 接口冒烟
 
 | 检查 | 期望 | 实际 |
 |---|---|---|
-| `GET /api/v1/healthz` | 200 且 `demo=false` | 通过 |
+| `GET /api/v1/healthz` | 200，`demo=false`，`version=0.7.15` | 通过 |
+| 安全响应头 | 返回 CSP / Permissions-Policy / nosniff；HTTPS 下返回 HSTS | 通过 |
+| 登录页渲染 | CSP 启用后页面正常渲染，控制台无 CSP 违规 | 通过 |
+| `GET /api/v1/metrics` | 配置 `VA_METRICS_TOKEN` 后仅专用令牌可抓取 | 通过 |
+| SSH 运行记录权限 | viewer 返回 403；operator 仅能读取本人运行 | 通过 |
 | 迁移 0019/0020 | `ssh_hosts.gpu_accel`、`ssh_accel_baselines` 存在 | 通过 |
 | 迁移 0021/0022 | `app_settings`、`projects/clusters/cluster_nodes`、`assets.cluster_id` 存在 | 通过 |
 | 迁移 0023/0024 | `cluster_jobs`、数据库深检字段存在 | 通过 |
 | 迁移 0025 | `agents`、`agent_enroll_tokens`、`agent_commands` 存在 | 通过 |
 | 迁移 0026 | `clusters.slo_target/slo_window_hours`、`cluster_node_checks`、`cluster_node_relations` 存在 | 通过 |
+| 迁移 0027 | `llm_usage` 表与模型/时间索引存在 | 通过 |
 | `POST /api/v1/agents/enroll` | 缺失令牌返回 400；有效令牌返回身份 | 通过 |
 | `GET /api/v1/ssh/hosts/{id}/accel/live` | 未登录 401；登录后返回 GPU 运行态 | 通过 |
 | `vulnagent backup --compress` | 生成可解压的 `.db.gz` | 通过 |

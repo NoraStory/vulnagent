@@ -12,7 +12,7 @@ type Props = {
 
 const modeLabel: Record<string, string> = {
   confirm: "逐条确认",
-  safe: "仅危险确认",
+  safe: "只读自动，其余确认",
   auto: "全自动"
 };
 

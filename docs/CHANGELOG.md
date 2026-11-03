@@ -53,6 +53,11 @@
 ### 验证
 - 新增 `TestCSVSafeCell`、`TestSecurityHeaders`、`TestMetricsAuthorizedUsesDedicatedToken`、`TestValidateIntegrationEndpointBlocksMetadata`、`TestRequireSecureSource`；`go vet ./...`、`go test ./...`、`npm run build` 通过。
 
+### 维护
+- 同步 Dockerfile 默认版本与 K8s 镜像标签至 `0.7.15`；K8s/systemd 示例补充 `VA_TRUST_PROXY`、`VA_METRICS_TOKEN`。
+- Linux/Windows 安装脚本升级时保留 `VA_TRUST_PROXY` 与 `VA_METRICS_TOKEN`，并修正上下文预算范围说明（4000–1000000）。
+- 文档同步安全模型、`safe` 模式白名单、TOFU 首次连接、指标令牌、运行记录权限、迁移清单与测试报告。
+
 ### 主要提交
 `739fefb fix(security): 补齐安全响应头、导出注入与外部地址限制`
 
@@ -534,6 +539,8 @@
 | `0010`–`0013` | v0.3.0–v0.4.0 | SSH 主机、Agent 运行、工作区、分享 |
 | `0014`–`0018` | v0.5.0–v0.6.0 | 资产 CMDB、发现、业务系统、集成、性能索引 |
 | `0019`–`0025` | v0.7.0 | GPU/服务加速、运行配置、项目集群、异步任务、数据库深检、多 Agent |
+| `0026` | v0.7.8 | 集群可靠性：SLO、节点检查历史与依赖关系 |
+| `0027` | v0.7.12 | Token 消耗审计 `llm_usage` |
 
 迁移由服务启动时自动执行，已应用的版本记录在 `schema_migrations`，重复启动不会重复执行。
 

@@ -39,7 +39,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: server
-          image: vulnagent:0.7.4
+          image: vulnagent:0.7.15
           imagePullPolicy: IfNotPresent
           args: ["server"]
           ports:
@@ -98,6 +98,16 @@ spec:
                   optional: true
             - name: VA_AGENT_CONTEXT_BUDGET
               value: "16000"
+            # 经 Ingress 访问时可开启可信代理，让登录限速与审计按真实 IP 生效
+            # - name: VA_TRUST_PROXY
+            #   value: "1"
+            # Prometheus 指标抓取专用令牌（可选，未配置时兼容 Agent 令牌）
+            # - name: VA_METRICS_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: vulnagent-secrets
+            #       key: metrics-token
+            #       optional: true
           volumeMounts:
             - name: data
               mountPath: /app/data

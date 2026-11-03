@@ -27,7 +27,7 @@
 
 - 同一「账号 + IP」10 分钟内失败 5 次返回 `429 too_many_attempts`，并带 `Retry-After`（秒）。
 - 失败、锁定与成功登录都会写审计（`auth.login_failed` / `auth.login_blocked` / `auth.login`）。
-- 会话空闲 30 分钟过期（`VA_SESSION_IDLE` 可调），Cookie `HttpOnly; SameSite=Lax`，HTTPS 或 `VA_COOKIE_SECURE=1` 时加 `Secure`。
+- 会话空闲 30 分钟过期（`VA_SESSION_IDLE` 可调），Cookie `HttpOnly; SameSite=Lax`，HTTPS 或 `VA_COOKIE_SECURE=1` 时加 `Secure`；写请求校验 `Origin`（拒绝 `null` 与跨站），WebSocket 握手单独校验同源。前置可信代理时设置 `VA_TRUST_PROXY=1`，登录限速与审计按 `X-Forwarded-For` 最右值取真实 IP。
 
 ### POST /auth/logout → `{ "ok": true }`
 
@@ -1409,7 +1409,7 @@ vulnagent_selfcheck_failed 0
 
 ### GET /ssh/terminal?hostId=1&cols=120&rows=32（WebSocket，operator+）
 
-同源 Cookie 会话鉴权后升级为 WebSocket。
+同源 Cookie 会话鉴权并校验 `Origin` 后升级为 WebSocket。
 
 | 方向 | 消息 |
 |---|---|

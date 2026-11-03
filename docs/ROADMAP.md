@@ -18,6 +18,7 @@ VulnAgent 是面向主机与软件组件的**漏洞运营控制面**：Agent 采
 | 运维 | SSH 终端、SFTP、会话录制/协同、命令参考、主机性能监控、GPU/服务加速（含实时运行态与进程）、hashcat 审计、集群节点直连终端与内联 SSH 凭据 |
 | 多主机 | 项目 → 集群 → 节点、异步检查/扫描、MySQL/PostgreSQL 只读深检、跨页漏洞/资产筛选、SLO/错误预算、依赖拓扑与根因候选 |
 | 平台 | 网页运行配置、分级权限、审计与操作轨迹、自检、备份、Windows/Linux 部署脚本 |
+| 安全 | 结构化只读命令白名单、审批与发起人隔离、Agent 主机绑定、CSP/CSRF/WebSocket 同源、日志脱敏、注入与 SSRF 防护、`VA_TRUST_PROXY` / `VA_METRICS_TOKEN` |
 
 ## 2. 版本策略
 
@@ -25,7 +26,7 @@ VulnAgent 是面向主机与软件组件的**漏洞运营控制面**：Agent 采
 - 每个版本必须包含：更新日志、迁移说明、验收结果、回滚方式。
 - 数据库迁移在一个 MINOR 内保持向后兼容；删除字段/表只允许在 MAJOR 版本。
 - 正式发布通过 `-ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…"` 注入版本与构建信息，并打 Git tag。
-- 当前仓库尚未打 tag，`CHANGELOG.md` 中的历史版本为按提交区间回溯的里程碑，终点提交即当时的 `origin/master` 推送。
+- 首个 Git Tag 为 `v0.7.9`；此后每个 PATCH 版本更新 `CHANGELOG.md` 的提交区间与推送终点，未单独发版的安全/文档修复会并入下一个版本说明。
 
 ## 3. 路线图总览
 

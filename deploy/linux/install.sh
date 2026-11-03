@@ -29,6 +29,8 @@ GPU_API_KEY=""
 GPU_MODEL=""
 CVE_API_KEY=""
 COOKIE_SECURE=0
+TRUST_PROXY=""
+METRICS_TOKEN=""
 OPEN_FIREWALL=0
 INSTALL_DEPS=0
 WITH_AGENT=1
@@ -314,6 +316,8 @@ if [[ -f "$SERVER_ENV" ]]; then
   [[ -z "$GPU_API_KEY" ]] && GPU_API_KEY="$(env_value VA_GPU_LLM_API_KEY)"
   [[ -z "$GPU_MODEL" ]] && GPU_MODEL="$(env_value VA_GPU_LLM_MODEL)"
   [[ "$COOKIE_SECURE" == "0" && "$(env_value VA_COOKIE_SECURE)" == "1" ]] && COOKIE_SECURE=1
+  TRUST_PROXY="$(env_value VA_TRUST_PROXY)"
+  METRICS_TOKEN="$(env_value VA_METRICS_TOKEN)"
   ok "已合并现有 server.env"
 fi
 NEW_DB=0
@@ -333,6 +337,8 @@ fi
   printf 'VA_RESCAN_DEBOUNCE=10m\n'
   printf 'VA_SYNC_INTERVAL=12h\n'
   if (( COOKIE_SECURE == 1 )); then printf 'VA_COOKIE_SECURE=1\n'; else printf '# VA_COOKIE_SECURE=1\n'; fi
+  if [[ -n "$TRUST_PROXY" ]]; then printf 'VA_TRUST_PROXY=%s\n' "$TRUST_PROXY"; else printf '# VA_TRUST_PROXY=1\n'; fi
+  if [[ -n "$METRICS_TOKEN" ]]; then printf 'VA_METRICS_TOKEN=%s\n' "$METRICS_TOKEN"; else printf '# VA_METRICS_TOKEN=\n'; fi
   if [[ -n "$ADMIN_PASSWORD" ]]; then printf 'VA_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"; else printf '# VA_ADMIN_PASSWORD 沿用现有数据库\n'; fi
   if [[ -n "$CVE_API_KEY" ]]; then printf 'VULNAGENT_CVE_API_KEY=%s\n' "$CVE_API_KEY"; else printf '# VULNAGENT_CVE_API_KEY=\n'; fi
   if [[ -n "$LLM_BASE_URL" ]]; then printf 'VA_LLM_BASE_URL=%s\n' "$LLM_BASE_URL"; else printf '# VA_LLM_BASE_URL=\n'; fi
@@ -341,7 +347,7 @@ fi
   if [[ -n "$GPU_BASE_URL" ]]; then printf 'VA_GPU_LLM_BASE_URL=%s\n' "$GPU_BASE_URL"; else printf '# VA_GPU_LLM_BASE_URL=\n'; fi
   if [[ -n "$GPU_API_KEY" ]]; then printf 'VA_GPU_LLM_API_KEY=%s\n' "$GPU_API_KEY"; else printf '# VA_GPU_LLM_API_KEY=\n'; fi
   if [[ -n "$GPU_MODEL" ]]; then printf 'VA_GPU_LLM_MODEL=%s\n' "$GPU_MODEL"; else printf '# VA_GPU_LLM_MODEL=\n'; fi
-  printf '# VA_AGENT_CONTEXT_BUDGET=16000\n'
+  printf '# VA_AGENT_CONTEXT_BUDGET=16000  # 4000–1000000，按模型上下文调整\n'
 } > "$SERVER_ENV"
 chmod 0600 "$SERVER_ENV"
 chown root:root "$SERVER_ENV"

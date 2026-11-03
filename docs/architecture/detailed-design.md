@@ -114,7 +114,7 @@
 
 - 由**控制面**发起（Agent 侧无 SSH 能力），支持口令或私钥认证；默认凭据只用于本次连接、不落库、不写日志。控制台勾选「保存为 SSH 主机」时，采集成功后通过 `POST /assets/{id}/ssh-host` 使用 AES-256-GCM 加密沉淀，终端、集群节点与后续扫描复用同一份凭据。
 - 远程执行只读脚本：优先 `dpkg-query`，其次 `rpm -qa`，最后解析 `/lib/apk/db/installed`，输出 `生态→名称→版本→架构` 的 TSV。
-- 主机指纹：留空时接受并回报 `SHA256:...`（TOFU），填入后指纹不匹配立即拒绝，防止中间人。
+- 主机指纹：留空时接受并回报 `SHA256:...`（TOFU），填入后指纹不匹配立即拒绝，防止中间人；测试连接接口同时返回 `pinned`（是否已有保存指纹），首次连接 `trusted=false`，前端提示“首次连接已记录指纹”。
 - 结果进入与 Agent 完全相同的 `ingestComponents` 管道（资产 upsert → 组件替换 → 区间匹配 → 状态收敛），资产来源标记为 `ssh`。
 - 入口：控制台「资产 · SSH 采集」、`POST /api/v1/assets/ssh-scan`、`vulnagent sshscan --host ...`。
 
@@ -310,10 +310,10 @@ S_asset   = exposure × business_tier × business_system_tier   # 0–1，上限
 | `viewer` | 只读看板与报告，不可导出原始 SBOM |
 
 - 认证：本地账号（bcrypt cost 10）。会话 Cookie `HttpOnly; SameSite=Lax`，`Secure` 在 HTTPS 下自动开启，也可用 `VA_COOKIE_SECURE=1` 强制；会话空闲 `VA_SESSION_IDLE`（默认 30 min）滑动过期，当前保存在进程内，控制面重启后需重新登录。
-- 登录防护：同一「账号 + IP」10 分钟内连续失败 5 次锁定 5 分钟，返回 `429 too_many_attempts` 与 `Retry-After`；失败、锁定、成功登录均写审计。
+- 登录防护：同一「账号 + IP」10 分钟内连续失败 5 次锁定 5 分钟，返回 `429 too_many_attempts` 与 `Retry-After`；失败、锁定、成功登录均写审计；账号不存在时同样执行一次 bcrypt，抹平用户名枚举的耗时差异。
 - 账号管理：`admin` 可新建账号、调整角色、停用/启用、重置口令；不能停用或降级当前登录账号，且至少保留一个启用状态的管理员。修改本人口令、管理员重置口令、停用账号都会立即使其会话失效。
 - Agent 令牌：仅保存 SHA-256 摘要，明文只落在数据目录 `agent.token`（0600）；`admin` 可在控制台一键轮换，旧令牌立即失效；使用 `VA_AGENT_TOKEN` 托管时禁止控制台轮换。
-- 安全响应头：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`；所有写操作校验 `Origin` 与当前站点同源（忽略端口，兼容前端开发代理）。
+- 安全响应头：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy` 与 CSP（`script-src 'self'`、`object-src 'none'`、`frame-ancestors 'none'`，同源 WebSocket 白名单）；HTTPS 或 `VA_COOKIE_SECURE=1` 时附加 HSTS。所有写操作校验 `Origin` 与当前站点同源（忽略端口，兼容前端开发代理），拒绝 `Origin: null` 与 `Sec-Fetch-Site: cross-site`；WebSocket 握手单独做同源校验。
 - 尚未实现：OIDC 单点登录、按 scope 签发的细粒度 API Token（见 §12.5）。
 - 审计：登录/登出、登录失败与锁定、扫描触发、状态变更、策略修改、账号与令牌操作、数据导出，全部落 `audit_logs`（含 IP、UA），只追加不可改。
 - 数据隔离：按资产分组授权（v1 单租户，预留 `tenant_id` 字段）。
@@ -1168,8 +1168,9 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 数据表：`ssh_agent_runs`（目标、模式、状态、步数、总结）、`ssh_agent_steps`（思考、命令、输出、风险、审批结果、退出码），迁移见 `sqlite/migrations/0011_ssh_agent.sql`。
 - 控制循环：目标 + 最近 6 步观察 → 模型输出单条 JSON 决策 → 风险分级与审批 → 独立 SSH 会话执行 → 输出回填 → 继续；不限制步数，直到模型返回完成、用户停止或触发失败熔断。连续 5 条命令执行失败（退出码非 0 或执行错误）时自动停止并生成收尾结论，成功命令会重置连续失败计数。
 - 技能调用：请求可携带 `skillId`，服务端读取技能 `SKILL.md` 与 `guides/workflow.md`、`guides/capability-index.md`、`guides/scenario-routing.md`（存在时，总预算 6000 字）注入系统提示；明确要求不得假装读取未提供的子文件，也不得把控制面路径当作目标机路径。
-- 风险分级：`critical`（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机重启、分区工具）始终需要人工确认；`high`（递归删除、停服、清空防火墙、删用户、批量容器操作等）在 `safe` 模式需要确认；`normal` 直接执行。
-- 审批：内存审批表 + 5 分钟 TTL，`POST /ssh/agent/approvals/{id}` 唤醒等待中的运行；审批人、命令与结果写入步骤与审计。
+- 风险分级：`critical`（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机重启、分区工具等）始终需要人工确认；`safe` 模式只自动执行结构化只读白名单（裸命令名 + 允许的子命令 + 无 shell 元字符 + 非敏感路径，如 `df`/`ps`/`ss`/`ip addr`/`systemctl status`/`journalctl` 查询），其余命令一律转人工；`auto` 仅 critical 需要确认。
+- 审批：内存审批表 + 5 分钟 TTL，`POST /ssh/agent/approvals/{id}` 唤醒等待中的运行；审批仅限运行发起人或管理员，审批人、命令与结果写入步骤与审计。
+- 越权边界：运行列表只返回本人记录（管理员可看全部），运行详情、取消、审批与会话录制回放均校验发起人；命令输出可能含敏感信息，不再对 `viewer` 开放。
 - 约束：运行与浏览器 SSE 连接解耦，离开页面后继续后台执行（最长 45 分钟）；`POST /ssh/agent/runs/{id}/cancel` 可显式取消。单命令 90 秒超时、单步输出 16KB 截断；服务启动时清理遗留的 `running` 记录。
 - 恢复：重新进入终端时按主机查询运行中的记录，轮询运行详情恢复步骤、输出与待审批命令；审批元数据保存在进程内，审批结果仍通过原接口回传。
 - 问答内自动执行：问答页勾选「自动执行」后，前端把问题与最近 6 条问答上下文组装为 Agent 目标，复用同一套 SSE 循环执行；命令失败时输出与退出码回填模型由其自行判断，步数不限且连续 5 条命令执行失败时自动停止；支持 `/技能` 前缀调用技能；审批模式、停止按钮、审计与 Agent 页一致，执行结论回写问答消息便于继续追问。
@@ -1536,14 +1537,14 @@ docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
 | 定时/批量复扫 | 控制面常驻 ticker 每 `VA_RESCAN_INTERVAL`（默认 30m）全量收敛；`POST /api/v1/scans` 支持指定资产或全量；单资产 `VA_RESCAN_DEBOUNCE`（默认 10m）防抖，命中窗口返回 `skipped` |
 | PDF 报告 | 漏洞页按当前筛选导出 A4 中文报告（概览卡片 + 明细），内嵌思源黑体保证离线可用，`operator+` 权限，导出写审计 |
 | 账号与登录防护 | 控制台可新建/改角色/停用/重置口令；本人口令修改后其他会话下线；同账号+IP 连错 5 次锁定 5 分钟；失败与锁定写审计 |
-| 会话与安全头 | 空闲 30 min 滑动过期（`VA_SESSION_IDLE`）、Cookie `HttpOnly/SameSite=Lax`、HTTPS 或 `VA_COOKIE_SECURE=1` 时启用 `Secure`；nosniff / frame-deny / no-referrer，写操作同源校验 |
+| 会话与安全头 | 空闲 30 min 滑动过期（`VA_SESSION_IDLE`）、Cookie `HttpOnly/SameSite=Lax`、HTTPS 或 `VA_COOKIE_SECURE=1` 时启用 `Secure`；nosniff / frame-deny / no-referrer / Permissions-Policy / CSP，HTTPS 下 HSTS；写操作与 WebSocket 均校验同源；访问日志对分享令牌与敏感查询参数脱敏；`VA_TRUST_PROXY` 开启后按 `X-Forwarded-For` 取真实 IP |
 | Agent 令牌轮换 | `admin` 一键轮换，旧令牌立即失效，新令牌仅返回一次并写入 `agent.token`（0600） |
 | CSV 导出 | 漏洞清单按当前筛选导出 CSV（UTF-8 BOM、上限 5000 条），写 `report.export_csv` 审计 |
 | Webhook 通知 | 新增 P0/P1、工单创建、同步失败、自检失败四类事件，HMAC 签名 + 3 次退避重试，设置页可视化配置与测试 |
 | 数据备份 | `vulnagent backup --out <file>` 走 SQLite `VACUUM INTO`，服务运行中可生成一致性快照；`--compress` 使用多协程并行 gzip（分块压缩、顺序拼接 member） |
 | 运行模式 | 默认不灌演示数据；仅 `VA_SEED_DEMO=on/1/true/yes` 时灌入演示资产并标记 `demo_mode`。生产模式用 `VA_ADMIN_PASSWORD` 初始化管理员，`/healthz` 与前端「演示数据」标识保持一致 |
-| 观测 | `GET /api/v1/metrics` 输出 Prometheus 文本指标（漏洞按优先级/状态、资产、组件、CVE、在线 Agent、最近自检失败数），支持 Agent Bearer 令牌抓取 |
-| 自更新签名链 | `keygen` 生成 Ed25519 密钥对，`sign` 产出带签名清单，`self-update` 校验签名 + SHA-256 后原子替换并保留 `.old`；已实测篡改清单被拒 |
+| 观测 | `GET /api/v1/metrics` 输出 Prometheus 文本指标（漏洞按优先级/状态、资产、组件、CVE、在线 Agent、最近自检失败数），抓取可使用 `VA_METRICS_TOKEN` 专用 Bearer 令牌（未配置时兼容 Agent 令牌） |
+| 自更新签名链 | `keygen` 生成 Ed25519 密钥对，`sign` 产出带签名清单，`self-update` 校验签名 + SHA-256 后原子替换并保留 `.old`；远程清单与下载地址强制 https（本地回环除外），已实测篡改清单被拒 |
 | 交付物 | 多阶段 Dockerfile（前端 + Go 单镜像）、systemd server/agent 单元与 timer、K8s Deployment/Service/PVC 与 Agent CronJob |
 | 版本区间匹配 | dpkg / rpm / apk / semver 比较器 + `cve_affected` 左闭右开区间；演示数据同样由该规则生成，不再精确比对版本号 |
 | 演示数据 | 完全入库的真实 CVE 编号与组件版本，界面标注「演示数据」 |

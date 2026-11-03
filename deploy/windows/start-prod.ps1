@@ -29,7 +29,7 @@ $env:VA_SYNC_INTERVAL = '12h'
 # $env:VA_GPU_LLM_BASE_URL = 'http://127.0.0.1:8000/v1'
 # $env:VA_GPU_LLM_API_KEY = 'local'
 # $env:VA_GPU_LLM_MODEL = 'Qwen2.5-32B-Instruct'
-# 可选上下文预算（4000–128000，默认 16000）
+# 可选上下文预算（4000–1000000，默认 16000）
 # $env:VA_AGENT_CONTEXT_BUDGET = '16000'
 
 Write-Host "VulnAgent 生产模式启动：$env:VA_ADDR，数据目录 $env:VA_DATA_DIR" -ForegroundColor Cyan
