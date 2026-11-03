@@ -1991,7 +1991,7 @@ Agent 的 `status` 事件新增：
 | GET | `/clusters/{id}/reliability?windowHours=720` | viewer+ | SLO 可用率、错误预算、多窗口燃烧率、节点基线/异常、影响范围与根因候选 |
 | GET | `/clusters/{id}/checks?nodeId=1&limit=100` | viewer+ | 节点检查历史（默认最近 100 条，最多 500） |
 
-`environment` 取值：`prod` / `staging` / `dev` / `test` / `other`。`sloTarget` 默认 `99.9`（90–100，不含 100），`sloWindowHours` 默认 `720`（24–8760）。
+`environment` 取值：`prod` / `staging` / `dev` / `test` / `other`。`sloTarget` 默认 `99.9`（90–100，不含 100），`sloWindowHours` 默认 `720`（24–720，与 30 天检查历史一致）。
 
 `GET /clusters/{id}/reliability` 返回：
 
