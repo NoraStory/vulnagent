@@ -174,7 +174,7 @@ func (a *App) toolClusterReliability() harness.Tool {
 		Spec: toolSpec("cluster_reliability", "读取集群可靠性快照：SLO 可用率、错误预算、多窗口燃烧率、节点延迟基线/异常、依赖影响范围与根因候选。诊断集群异常或评估影响面时使用。", harness.RiskLow, "viewer", `{
 			"type":"object","properties":{
 				"clusterId":{"type":"integer","minimum":1,"description":"集群 ID，可先从 list_clusters 获取"},
-				"windowHours":{"type":"integer","minimum":1,"maximum":8760,"description":"统计窗口小时数，缺省使用集群 SLO 配置"}
+				"windowHours":{"type":"integer","minimum":1,"maximum":720,"description":"统计窗口小时数（最多 30 天），缺省使用集群 SLO 配置"}
 			},"required":["clusterId"],"additionalProperties":false}`),
 		Run: func(raw json.RawMessage) (any, error) {
 			var args struct {

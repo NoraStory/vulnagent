@@ -183,7 +183,7 @@ func (a *App) clusterReliability(ctx context.Context, clusterID int64, windowHou
 	if err != nil {
 		return result, err
 	}
-	if windowHours <= 0 {
+	if windowHours <= 0 || windowHours > 720 {
 		windowHours = sloWindow
 	}
 	if windowHours < 1 {

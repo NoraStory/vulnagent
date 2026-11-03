@@ -345,8 +345,8 @@ func normalizeClusterSLO(target *float64, windowHours *int) (float64, int, error
 	if windowHours != nil {
 		sloWindow = *windowHours
 	}
-	if sloWindow < 24 || sloWindow > 8760 {
-		return 0, 0, errors.New("SLO 统计窗口必须在 24 到 8760 小时之间")
+	if sloWindow < 24 || sloWindow > 720 {
+		return 0, 0, errors.New("SLO 统计窗口必须在 24 到 720 小时（30 天）之间")
 	}
 	return sloTarget, sloWindow, nil
 }
