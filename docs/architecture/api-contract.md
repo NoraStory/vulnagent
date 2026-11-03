@@ -1221,11 +1221,11 @@ vulnagent_selfcheck_failed 0
               "readOnly": true, "minRole": "viewer", "params": { "type": "object" } }] }
 ```
 
-工具共 34 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
+工具共 35 个，静态注册，按角色裁剪；**不暴露** SSH 扫描、令牌轮换、账号增删改、策略修改、shell、任意 SQL/URL。
 
 | 风险 | 工具 |
 |---|---|
-| low（只读，直接执行） | overview_summary、list_clusters、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
+| low（只读，直接执行） | overview_summary、list_clusters、cluster_reliability、list_assets、get_asset、host_metrics、host_hardware、list_skill_files、read_skill_file、list_findings、get_finding、search_cves、get_cve、list_product_map、get_sync_status、get_selfcheck_latest、list_host_jobs、get_host_job |
 | low（只读，operator+） | check_cluster、host_diagnose、recall_memory |
 | low（admin） | list_audit_logs |
 | medium（需审批） | rescan_asset、read_host_file、create_snapshot、remember |
