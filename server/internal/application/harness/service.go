@@ -49,6 +49,13 @@ func DefaultOptions() Options {
 	}
 }
 
+const (
+	// defaultContextChars 默认上下文裁剪字符预算（约 48K 字符）
+	defaultContextChars = 48 << 10
+	// defaultKeepRecent 默认保留的最近消息条数
+	defaultKeepRecent = 20
+)
+
 // Event 流式事件
 type Event struct {
 	Type string `json:"type"`
@@ -69,7 +76,9 @@ type Service struct {
 	Registry       *Registry
 	VerifyPassword func(username, password string) bool
 	SystemPrompt   string
-	Opts           Options
+	// ContextBudget 返回当前上下文预算（估算 token），为空时使用默认值
+	ContextBudget func() int
+	Opts          Options
 
 	mu     sync.Mutex
 	calls  map[string][]time.Time
@@ -401,8 +410,24 @@ func (s *Service) runLoop(ctx context.Context, p Principal, sess harness.Session
 
 // buildContext 组装上下文：系统提示 + 长期记忆 + 早期消息摘要 + 最近消息，并做字符预算裁剪。
 func (s *Service) buildContext(ctx context.Context, history []harness.Message) []ports.LLMMessage {
-	const keepRecent = 20
-	const budgetChars = 48 << 10
+	keepRecent := defaultKeepRecent
+	budgetChars := defaultContextChars
+	if s.ContextBudget != nil {
+		if tokens := s.ContextBudget(); tokens > 0 {
+			// 1 token 约对应 2 个字符（中英混合），预算放宽后同步放宽裁剪窗口
+			if chars := tokens * 2; chars > budgetChars {
+				budgetChars = chars
+			}
+			switch {
+			case tokens >= 256000:
+				keepRecent = 160
+			case tokens >= 64000:
+				keepRecent = 60
+			case tokens >= 32000:
+				keepRecent = 32
+			}
+		}
+	}
 
 	out := make([]ports.LLMMessage, 0, len(history)+3)
 	if s.SystemPrompt != "" {

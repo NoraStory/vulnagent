@@ -1257,9 +1257,9 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 修复重试：解析失败会把原始输出回填为 assistant 消息，要求模型只输出 JSON；单步内对格式异常与临时模型错误各最多重试 2 次，并向前端推送 `warning`。
 - 优雅结束：连续失败不再直接报错中断，改为生成收尾结论、发送 `done`（`truncated=true`），已执行步骤、命令与输出全部保留，运行记录标记 completed 并附带原因。
 - 总结排版：最终结论强制中文 Markdown 三段（`**结论**` / `**关键发现**` / `**建议**`），总长 ≤300 字、每条 ≤40 字，禁止粘贴命令原文与日志；服务端 `normalizeAgentSummary` 去除代码围栏、小标题前补空行、连续空行归一，超过 600 字按行截断并加省略号；问答与 Agent 面板均按 Markdown 渲染。
-- 上下文预算与压缩：按「中文 1 字 1 token、其他 4 字符 1 token」估算，默认预算 16000（`VA_AGENT_CONTEXT_BUDGET` 可调，范围 4000–128000）。Agent 保留最近 4 步完整输出（1500 字），更早步骤压缩为「命令 + 退出码 + 关键行」；超预算时依次收紧参考资料、历史任务、最近输出与保留步数。问答历史超过 8 条或 6000 字时，将更早对话压缩为一段摘要而非直接丢弃。
+- 上下文预算与压缩：按「中文 1 字 1 token、其他 4 字符 1 token」估算，默认预算 16000（`VA_AGENT_CONTEXT_BUDGET` 可调，范围 4000–1000000）。按预算选择起始档位：≥512k 保留最近 12 步完整输出（单步最多 12000 字，早期摘要最多 30 步）、≥192k 为 10 步、≥96k 为 8 步；默认 16k 保留最近 4 步（1500 字），更早步骤压缩为「命令 + 退出码 + 关键行」；超预算时依次收紧参考资料、历史任务、最近输出与保留步数。问答历史随预算放宽（1M 时最多 40 条、单条 12000 字；默认 8 条 / 6000 字），更早对话压缩为摘要而非直接丢弃。
 - 占用展示：Agent SSE 新增 `context` 事件（`usedTokens`/`budgetTokens`/`percent`/`compressedItems`/`savedTokens`），问答响应返回 `context`；终端 AI 面板与问答自动执行区显示占用条，≥70% 黄色、≥90% 红色，并提示已压缩项与节省量。
-- 多轮对话：AI 问答请求携带最近 8 条历史（单条 1500 字、总计 6000 字），服务端过滤非法角色后按时间顺序注入；系统提示要求结合历史理解指代与省略。
+- 多轮对话：AI 问答请求携带历史对话（默认最近 8 条、单条 1500 字、总计 6000 字，随预算放宽至 1M 时 40 条 / 12000 字），服务端过滤非法角色后按时间顺序注入；系统提示要求结合历史理解指代与省略。
 - 跨任务上下文：Agent 启动时读取同一主机最近 3 次已完成任务的「目标 + 结论」注入提示，状态事件返回 `contextRuns`，面板显示已载入的历史任务数。
 - 验收：单元测试覆盖尾逗号/中文引号/前后解释/围栏/纯命令降级、历史裁剪与历史任务上下文查询；接口实测多轮问答可正确引用上一轮信息。
 
@@ -1285,8 +1285,8 @@ harness_handlers.go          SSE 会话接口与审批接口
 - 入口：设置页「运行配置」标签；管理员可见全部配置，运维可查看并修改模型名称/上下文预算，只读角色仅查看。
 - 存储：迁移 0021 `app_settings`（key/value/secret/updated_by/updated_at）；密钥使用 SSH 凭据同一 AES-256-GCM 密钥加密，接口只返回 `hasValue`。
 - 优先级：网页保存值 > 环境变量/`.env` > 默认值；启动时 `applyStoredRuntimeSettings` 在初始化 Harness 与调度器前注入进程环境。
-- 生效：会话空闲、Cookie Secure、情报源地址即时生效；AI/GPU 端点与模型、同步/复扫周期标注「重启后生效」。
-- 校验：URL 必须 http(s)、上下文预算 4000–128000、周期为时长或 `0/off`、布尔为 `1/0|on/off|true/false`；写审计 `settings.runtime.update`（不记录值）。
+- 生效：上下文预算、会话空闲、Cookie Secure、情报源地址即时生效；AI/GPU 端点与模型、同步/复扫周期标注「重启后生效」。
+- 校验：URL 必须 http(s)、上下文预算 4000–1000000、周期为时长或 `0/off`、布尔为 `1/0|on/off|true/false`；写审计 `settings.runtime.update`（不记录值）。
 - 角色：`operator` 仅允许 `VA_LLM_MODEL`、`VA_AGENT_CONTEXT_BUDGET`；其余端点/密钥/周期/安全项仅 `admin`。
 
 ---
@@ -1495,9 +1495,9 @@ npm run build                         # 产物输出到 web/dist，由 Go 二进
 .\bin\vulnagent.exe self-update --manifest .\manifest.json --pubkey .\release-keys\update.pub
 
 # 容器化（单镜像，内含前端产物与字体；可注入版本/提交/构建时间）
-docker build --build-arg VERSION=0.7.9 -t vulnagent:0.7.9 .
+docker build --build-arg VERSION=0.7.11 -t vulnagent:0.7.11 .
 docker run -d --name vulnagent -p 8787:8787 -v vulnagent-data:/app/data \
-  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.9
+  -e VA_COOKIE_SECURE=1 -e VULNAGENT_CVE_API_KEY=xxx vulnagent:0.7.11
 
 # systemd / K8s 交付物见 deploy/ 目录（server.service、agent.service+timer、k8s/*.yaml）
 ```

@@ -919,7 +919,7 @@ Webhook 请求体：
   "demo": true,
   "riskPolicy": { "weights": { "cvss": 0.4, "epss": 0.2, "exploit": 0.25, "asset": 0.15 }, "thresholds": { "p0": 85, "p1": 70, "p2": 50 } },
   "users": [ { "username": "admin", "name": "张启明", "role": "admin", "lastLogin": "2026-10-22T09:00:00+08:00", "disabled": false } ],
-  "build": { "version": "0.7.10", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
+  "build": { "version": "0.7.11", "commit": "local", "builtAt": "2026-11-02T00:00:00+08:00", "sbomDigest": "sha256:demo" }
 }
 ```
 
@@ -948,8 +948,8 @@ Webhook 请求体：
 - 密钥使用 AES-256-GCM 加密存储；请求传 `********` 表示保持原值。
 - `operator` 仅可修改 `VA_LLM_MODEL`、`VA_AGENT_CONTEXT_BUDGET`；其余 AI 端点/密钥、同步周期、情报源与安全项仅 `admin`。
 - 响应：`{"ok":true,"changed":["…"],"restartRequired":true,"message":"已保存，部分配置需重启服务后生效"}`。
-- AI 端点/模型、GPU 端点、同步/复扫周期需重启生效；会话空闲、Cookie Secure 与情报源地址即时生效。
-- 校验：URL 必须 http(s)，上下文预算 4000–128000，周期为时长或 `0/off`，布尔为 `1/0`、`on/off`、`true/false`。
+- AI 端点/模型、GPU 端点、同步/复扫周期需重启生效；上下文预算、会话空闲、Cookie Secure 与情报源地址即时生效。
+- 校验：URL 必须 http(s)，上下文预算 4000–1000000，周期为时长或 `0/off`，布尔为 `1/0`、`on/off`、`true/false`。
 - 写审计 `settings.runtime.update`（只记录键名，不记录值）。
 
 ### PATCH /settings/risk-policy（admin）
@@ -1020,7 +1020,7 @@ Webhook 请求体：
 ### GET /healthz
 
 ```json
-{ "ok": true, "version": "0.7.10", "demo": true }
+{ "ok": true, "version": "0.7.11", "demo": true }
 ```
 
 - `demo` 表示当前是否为演示数据模式（`VA_SEED_DEMO=off` 时为 false），登录页据此决定是否展示演示账号。
@@ -1188,7 +1188,7 @@ vulnagent_selfcheck_failed 0
 
 ```json
 {
-  "version": "0.7.10",
+  "version": "0.7.11",
   "demo": false,
   "statuses": [{ "value": "open", "label": "待处理" }],
   "priorities": [{ "value": "P0", "label": "立即处置" }],

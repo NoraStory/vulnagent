@@ -85,3 +85,45 @@ func TestBudgetedSSHAIHistoryCompresses(t *testing.T) {
 		t.Fatalf("保留消息数超出上限：%d", len(messages))
 	}
 }
+
+func TestAgentContextBudgetSupportsLongContext(t *testing.T) {
+	t.Setenv("VA_AGENT_CONTEXT_BUDGET", "1000000")
+	if got := agentContextBudget(); got != 1000000 {
+		t.Fatalf("应允许 1M 预算，实际 %d", got)
+	}
+	t.Setenv("VA_AGENT_CONTEXT_BUDGET", "2000000")
+	if got := agentContextBudget(); got != agentContextBudgetMax {
+		t.Fatalf("超上限应钳制到 %d，实际 %d", agentContextBudgetMax, got)
+	}
+	t.Setenv("VA_AGENT_CONTEXT_BUDGET", "1000")
+	if got := agentContextBudget(); got != agentContextBudgetDefault {
+		t.Fatalf("低于下限应回落默认值，实际 %d", got)
+	}
+}
+
+func TestBuildSSHAgentPromptUsesLargeBudget(t *testing.T) {
+	host := sshHost{Name: "web-01", Host: "10.0.0.1", Port: 22, Username: "root"}
+	history := make([]sshAgentStep, 0, 30)
+	for index := 0; index < 30; index++ {
+		history = append(history, sshAgentStep{
+			Index:    index,
+			Command:  "journalctl -u nginx --no-pager -n 500",
+			Output:   strings.Repeat("2026-11-03 access log line with detail\n", 500),
+			ExitCode: 0,
+		})
+	}
+	t.Setenv("VA_AGENT_CONTEXT_BUDGET", "1000000")
+	text, usage := buildSSHAgentPrompt(host, "分析访问日志", "", "", history, 0)
+	if usage.BudgetTokens != 1000000 {
+		t.Fatalf("预算应取环境值，实际 %+v", usage)
+	}
+	if usage.UsedTokens <= 30000 {
+		t.Fatalf("大预算应保留更多上下文，实际仅 %d token", usage.UsedTokens)
+	}
+	if usage.UsedTokens > usage.BudgetTokens {
+		t.Fatalf("超出预算：%+v", usage)
+	}
+	if !strings.Contains(text, "最近步骤") {
+		t.Fatal("大预算应保留最近步骤完整输出")
+	}
+}

@@ -11,6 +11,11 @@ import (
 // agentContextBudgetDefault 单次模型调用的上下文预算（估算 token）
 const agentContextBudgetDefault = 16000
 
+const (
+	agentContextBudgetMin = 4000
+	agentContextBudgetMax = 1_000_000
+)
+
 // contextUsage 一次模型调用的上下文占用，用于 SSE 事件与界面展示
 type contextUsage struct {
 	UsedTokens      int     `json:"usedTokens"`
@@ -21,18 +26,18 @@ type contextUsage struct {
 	HistoryItems    int     `json:"historyItems"`
 }
 
-// agentContextBudget 读取 VA_AGENT_CONTEXT_BUDGET，缺省 16000，限制在 4000–128000
+// agentContextBudget 读取 VA_AGENT_CONTEXT_BUDGET，缺省 16000，限制在 4000–1000000
 func agentContextBudget() int {
 	raw := strings.TrimSpace(os.Getenv("VA_AGENT_CONTEXT_BUDGET"))
 	if raw == "" {
 		return agentContextBudgetDefault
 	}
 	value, err := strconv.Atoi(raw)
-	if err != nil || value < 4000 {
+	if err != nil || value < agentContextBudgetMin {
 		return agentContextBudgetDefault
 	}
-	if value > 128000 {
-		return 128000
+	if value > agentContextBudgetMax {
+		return agentContextBudgetMax
 	}
 	return value
 }
@@ -112,6 +117,26 @@ func budgetedSSHAIHistory(items []sshAIHistoryItem, max int) ([]ports.LLMMessage
 	if max <= 0 {
 		max = 8
 	}
+	budget := agentContextBudget()
+	perMessageCap, totalCap := 1500, 6000
+	summaryItemCap, summaryCap, summaryPerItem := 6, 900, 200
+	switch {
+	case budget >= 256000:
+		if max < 40 {
+			max = 40
+		}
+		perMessageCap, totalCap, summaryItemCap, summaryCap, summaryPerItem = 12000, 200000, 24, 6000, 900
+	case budget >= 64000:
+		if max < 20 {
+			max = 20
+		}
+		perMessageCap, totalCap, summaryItemCap, summaryCap, summaryPerItem = 4000, 48000, 12, 2400, 600
+	case budget >= 32000:
+		if max < 12 {
+			max = 12
+		}
+		perMessageCap, totalCap, summaryItemCap, summaryCap, summaryPerItem = 2500, 20000, 8, 1500, 400
+	}
 	out := make([]ports.LLMMessage, 0, max)
 	var dropped []sshAIHistoryItem
 	total := 0
@@ -126,9 +151,9 @@ func budgetedSSHAIHistory(items []sshAIHistoryItem, max int) ([]ports.LLMMessage
 			continue
 		}
 		valid++
-		content = truncateRunes(content, 1500)
+		content = truncateRunes(content, perMessageCap)
 		length := len([]rune(content))
-		if len(out) >= max || total+length > 6000 {
+		if len(out) >= max || total+length > totalCap {
 			dropped = append(dropped, sshAIHistoryItem{Role: role, Content: content})
 			continue
 		}
@@ -147,16 +172,16 @@ func budgetedSSHAIHistory(items []sshAIHistoryItem, max int) ([]ports.LLMMessage
 	droppedRunes := 0
 	count := 0
 	for _, item := range dropped {
-		if count >= 6 {
+		if count >= summaryItemCap {
 			break
 		}
 		builder.WriteString(map[bool]string{true: "用户：", false: "助手："}[item.Role == "user"])
-		builder.WriteString(truncateRunes(item.Content, 200))
+		builder.WriteString(truncateRunes(item.Content, summaryPerItem))
 		builder.WriteString("\n")
 		droppedRunes += len([]rune(item.Content))
 		count++
 	}
-	summary := truncateRunes(builder.String(), 900)
+	summary := truncateRunes(builder.String(), summaryCap)
 	out = append([]ports.LLMMessage{{Role: "system", Content: summary}}, out...)
 	saved := droppedRunes - len([]rune(summary))
 	if saved < 0 {
@@ -173,6 +198,41 @@ type agentPromptTier struct {
 	previousCap     int
 	recentOutputCap int
 	keepRecent      int
+	olderCap        int
+	olderSteps      int
+	olderLineCap    int
+}
+
+// agentPromptTiers 从最大档开始组装，超出预算时逐级收紧。
+// 大预算（128k–1M）保留更多完整步骤与输出，小预算回落到默认压缩档。
+var agentPromptTiers = []agentPromptTier{
+	{referenceCap: 60000, previousCap: 8000, recentOutputCap: 12000, keepRecent: 12, olderCap: 40000, olderSteps: 30, olderLineCap: 1200},
+	{referenceCap: 32000, previousCap: 6000, recentOutputCap: 8000, keepRecent: 10, olderCap: 24000, olderSteps: 24, olderLineCap: 900},
+	{referenceCap: 16000, previousCap: 4000, recentOutputCap: 4000, keepRecent: 8, olderCap: 12000, olderSteps: 16, olderLineCap: 600},
+	{referenceCap: 8000, previousCap: 2000, recentOutputCap: 1500, keepRecent: 4, olderCap: 1500, olderSteps: 6, olderLineCap: 240},
+	{referenceCap: 4000, previousCap: 1000, recentOutputCap: 1200, keepRecent: 4, olderCap: 1200, olderSteps: 6, olderLineCap: 200},
+	{referenceCap: 2000, previousCap: 600, recentOutputCap: 800, keepRecent: 3, olderCap: 800, olderSteps: 4, olderLineCap: 160},
+	{referenceCap: 0, previousCap: 0, recentOutputCap: 400, keepRecent: 2, olderCap: 400, olderSteps: 4, olderLineCap: 120},
+}
+
+// startAgentPromptTier 按预算选择起始档位：预算越大，保留的步骤与输出越多。
+func startAgentPromptTier(budget int) int {
+	switch {
+	case budget >= 512000:
+		return 0
+	case budget >= 192000:
+		return 1
+	case budget >= 96000:
+		return 2
+	case budget >= 12000:
+		return 3
+	case budget >= 8000:
+		return 4
+	case budget >= 6000:
+		return 5
+	default:
+		return len(agentPromptTiers) - 1
+	}
 }
 
 // buildSSHAgentPrompt 组装 Agent 提示词，并在预算内做分级压缩。
@@ -180,28 +240,28 @@ type agentPromptTier struct {
 func buildSSHAgentPrompt(host sshHost, goal, reference, previous string, history []sshAgentStep, remaining int) (string, contextUsage) {
 	budget := agentContextBudget()
 	goal = truncateRunes(goal, 4000)
-	reference = truncateRunes(reference, 8000)
-	previous = truncateRunes(previous, 2000)
-	tiers := []agentPromptTier{
-		{referenceCap: 8000, previousCap: 2000, recentOutputCap: 1500, keepRecent: 4},
-		{referenceCap: 4000, previousCap: 1000, recentOutputCap: 1200, keepRecent: 4},
-		{referenceCap: 2000, previousCap: 600, recentOutputCap: 800, keepRecent: 3},
-		{referenceCap: 0, previousCap: 0, recentOutputCap: 400, keepRecent: 2},
-	}
+	maxReference := agentPromptTiers[0].referenceCap
+	maxPrevious := agentPromptTiers[0].previousCap
+	reference = truncateRunes(reference, maxReference)
+	previous = truncateRunes(previous, maxPrevious)
 
-	text, compressed := composeAgentPrompt(host, goal, truncateRunes(reference, tiers[0].referenceCap),
-		truncateRunes(previous, tiers[0].previousCap), history, remaining, tiers[0])
-	for _, tier := range tiers[1:] {
+	start := startAgentPromptTier(budget)
+	first := agentPromptTiers[start]
+	text, compressed := composeAgentPrompt(host, goal, truncateRunes(reference, first.referenceCap),
+		truncateRunes(previous, first.previousCap), history, remaining, first)
+	for index := start + 1; index < len(agentPromptTiers); index++ {
 		if estimateTokens(text) <= budget {
 			break
 		}
+		tier := agentPromptTiers[index]
 		text, compressed = composeAgentPrompt(host, goal, truncateRunes(reference, tier.referenceCap),
 			truncateRunes(previous, tier.previousCap), history, remaining, tier)
 	}
 
 	used := estimateTokens(text)
 	baselineText, _ := composeAgentPrompt(host, goal, reference, previous, history, remaining,
-		agentPromptTier{referenceCap: 8000, previousCap: 2000, recentOutputCap: 4000, keepRecent: len(history)})
+		agentPromptTier{referenceCap: maxReference, previousCap: maxPrevious, recentOutputCap: 4000,
+			keepRecent: len(history), olderCap: 40000, olderSteps: 30, olderLineCap: 1200})
 	baselineTokens := estimateTokens(baselineText)
 	return text, buildContextUsage(used, budget, compressed, baselineTokens-used, len(history))
 }
@@ -250,11 +310,23 @@ func composeAgentPrompt(host sshHost, goal, reference, previous string, history 
 	compressed := 0
 
 	if len(older) > 0 {
+		olderSteps := tier.olderSteps
+		if olderSteps <= 0 {
+			olderSteps = 6
+		}
+		olderCap := tier.olderCap
+		if olderCap <= 0 {
+			olderCap = 1500
+		}
+		olderLineCap := tier.olderLineCap
+		if olderLineCap <= 0 {
+			olderLineCap = 240
+		}
 		user.WriteString("较早步骤摘要（已压缩，保留命令、退出码与关键输出）：\n")
 		total := 0
 		start := 0
-		if len(older) > 6 {
-			start = len(older) - 6
+		if len(older) > olderSteps {
+			start = len(older) - olderSteps
 			compressed += start
 		}
 		for _, step := range older[start:] {
@@ -262,8 +334,8 @@ func composeAgentPrompt(host sshHost, goal, reference, previous string, history 
 			if step.ExitCode != 0 {
 				line += "（exit " + strconv.Itoa(step.ExitCode) + "）"
 			}
-			line += " → " + summarizeStepOutput(step.Output, 240) + "\n"
-			if total+len([]rune(line)) > 1500 {
+			line += " → " + summarizeStepOutput(step.Output, olderLineCap) + "\n"
+			if total+len([]rune(line)) > olderCap {
 				compressed++
 				continue
 			}

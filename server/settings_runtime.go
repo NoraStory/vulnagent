@@ -39,7 +39,7 @@ var runtimeSettingDefs = []runtimeSettingDef{
 	{Key: "VA_GPU_LLM_MODEL", Group: "GPU 推理", Label: "GPU 模型名称", Kind: "text", MinRole: "admin", Restart: true,
 		Description: "GPU 端点上的模型名称，按主机加速开关生效", Placeholder: "Qwen2.5-32B-Instruct"},
 	{Key: "VA_AGENT_CONTEXT_BUDGET", Group: "AI 模型", Label: "上下文预算", Kind: "int", MinRole: "operator",
-		Description: "Agent/问答上下文 token 预算，范围 4000–128000", Placeholder: "16000"},
+		Description: "Agent/问答上下文 token 预算，范围 4000–1000000（长上下文模型可调到 1M）", Placeholder: "16000"},
 	{Key: "VA_SYNC_INTERVAL", Group: "情报与扫描", Label: "情报同步周期", Kind: "duration", MinRole: "admin", Default: "12h", Restart: true,
 		Description: "CVE/POC 定时同步周期，支持 30m/12h，0 或 off 关闭", Placeholder: "12h"},
 	{Key: "VA_RESCAN_INTERVAL", Group: "情报与扫描", Label: "定时复扫周期", Kind: "duration", MinRole: "admin", Default: "30m", Restart: true,
@@ -281,8 +281,8 @@ func validateRuntimeSetting(def runtimeSettingDef, value string) error {
 		if err != nil {
 			return fmt.Errorf("必须是整数")
 		}
-		if def.Key == "VA_AGENT_CONTEXT_BUDGET" && (number < 4000 || number > 128000) {
-			return fmt.Errorf("必须在 4000–128000 之间")
+		if def.Key == "VA_AGENT_CONTEXT_BUDGET" && (number < agentContextBudgetMin || number > agentContextBudgetMax) {
+			return fmt.Errorf("必须在 %d–%d 之间", agentContextBudgetMin, agentContextBudgetMax)
 		}
 	case "duration":
 		if value == "0" || strings.EqualFold(value, "off") {
