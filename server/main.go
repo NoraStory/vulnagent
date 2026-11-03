@@ -25,7 +25,7 @@ import (
 // 版本元数据：发布时可经 -ldflags "-X main.appVersion=… -X main.buildCommit=… -X main.buildTime=…" 注入；
 // 未注入时回落到 Go 构建信息中的 VCS 记录，避免展示写死的假时间。
 var (
-	appVersion  = "0.7.13"
+	appVersion  = "0.7.14"
 	buildCommit = ""
 	buildTime   = ""
 )
@@ -515,11 +515,40 @@ func withLogging(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		slog.Info("http request",
 			"method", r.Method,
-			"path", r.URL.RequestURI(),
+			"path", redactedRequestURI(r),
 			"status", rec.status,
 			"durationMs", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+// sensitiveQueryKeys 访问日志中需要脱敏的查询参数（分享令牌、文件路径、凭据）。
+var sensitiveQueryKeys = map[string]bool{
+	"token": true, "path": true, "password": true, "secret": true,
+}
+
+// redactedRequestURI 生成可安全写入日志的请求地址：
+// 分享令牌位于路径中，需整体替换；敏感查询参数只保留键名。
+func redactedRequestURI(r *http.Request) string {
+	path := r.URL.Path
+	if strings.HasPrefix(path, "/api/v1/ssh/shared/") {
+		path = "/api/v1/ssh/shared/[redacted]"
+	}
+	if r.URL.RawQuery == "" {
+		return path
+	}
+	query := r.URL.Query()
+	changed := false
+	for key := range query {
+		if sensitiveQueryKeys[strings.ToLower(key)] {
+			query.Set(key, "[redacted]")
+			changed = true
+		}
+	}
+	if !changed {
+		return path + "?" + r.URL.RawQuery
+	}
+	return path + "?" + query.Encode()
 }
 
 // spaHandler 静态文件优先，未命中时回退到 index.html。

@@ -54,6 +54,10 @@ func (a *App) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// WebSocket 握手是 GET，必须单独做同源校验，防止跨站 WebSocket 劫持
+	if !checkWebSocketOrigin(w, r) {
+		return
+	}
 	hostID, err := strconv.ParseInt(r.URL.Query().Get("hostId"), 10, 64)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "hostId 无效")

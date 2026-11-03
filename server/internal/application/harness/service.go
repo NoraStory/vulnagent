@@ -307,6 +307,10 @@ func (s *Service) Decide(ctx context.Context, p Principal, approvalID, decision,
 	if !ok {
 		return ap, nil, fmt.Errorf("工具已下线：%s", ap.Tool)
 	}
+	// 审批时复核当前角色：账号被降权后不能再批准此前排队的高风险工具
+	if identity.Role(p.Role).Rank() < identity.Role(tool.Spec.MinRole).Rank() {
+		return ap, nil, ErrUnauthorized
+	}
 	if decision == "reject" {
 		if err := s.Repo.DecideApproval(ctx, ap.ID, "rejected", p.Username, now); err != nil {
 			return ap, nil, err

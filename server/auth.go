@@ -264,6 +264,15 @@ func ensureBootstrapAdmin(db *sql.DB) error {
 	return nil
 }
 
+// dummyPasswordHash 账号不存在时也执行一次 bcrypt，避免通过响应耗时枚举用户名。
+var dummyPasswordHash = sync.OnceValue(func() []byte {
+	hash, err := bcrypt.GenerateFromPassword([]byte("vulnagent-dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		return []byte("$2a$10$01234567890123456789012345678901234567890123456789012")
+	}
+	return hash
+})
+
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
@@ -290,7 +299,16 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	acc, err := a.identityRepo().FindAccount(r.Context(), req.Username)
-	if err != nil || acc.Disabled || bcrypt.CompareHashAndPassword([]byte(acc.PwdHash), []byte(req.Password)) != nil {
+	hash := dummyPasswordHash()
+	valid := false
+	if err == nil {
+		hash = []byte(acc.PwdHash)
+		valid = bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) == nil
+	} else {
+		// 账号不存在时仍执行一次等价的 bcrypt 校验，抹平耗时差异
+		_ = bcrypt.CompareHashAndPassword(hash, []byte(req.Password))
+	}
+	if err != nil || acc.Disabled || !valid {
 		locked := a.loginGuard.fail(key)
 		detail := "用户名或口令错误"
 		if locked {

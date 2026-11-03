@@ -1,6 +1,9 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +57,63 @@ func TestSameOrigin(t *testing.T) {
 	for _, c := range cases {
 		if got := sameOrigin(c.origin, c.host); got != c.want {
 			t.Fatalf("sameOrigin(%q,%q) = %t, want %t", c.origin, c.host, got, c.want)
+		}
+	}
+}
+
+func TestRedactedRequestURI(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ssh/shared/secret-token?token=abc123&path=%2Fetc%2Fpasswd&hostId=1", nil)
+	got := redactedRequestURI(req)
+	for _, leaked := range []string{"secret-token", "abc123", "/etc/passwd"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("日志地址仍包含敏感信息 %q：%s", leaked, got)
+		}
+	}
+	if !strings.Contains(got, "hostId=1") {
+		t.Fatalf("非敏感参数应保留：%s", got)
+	}
+}
+
+func TestClientIPTrustProxy(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "9.9.9.9, 1.2.3.4")
+
+	t.Setenv("VA_TRUST_PROXY", "off")
+	if got := clientIP(req); got != "10.0.0.1" {
+		t.Fatalf("未信任代理时应使用 RemoteAddr，实际 %s", got)
+	}
+	t.Setenv("VA_TRUST_PROXY", "on")
+	if got := clientIP(req); got != "1.2.3.4" {
+		t.Fatalf("信任代理时应取 X-Forwarded-For 最右值，实际 %s", got)
+	}
+}
+
+func TestCheckWebSocketOrigin(t *testing.T) {
+	newReq := func(origin string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/ssh/terminal", nil)
+		req.Host = "127.0.0.1:8787"
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		return req
+	}
+	cases := []struct {
+		origin string
+		want   bool
+	}{
+		{"http://127.0.0.1:5173", true},
+		{"https://evil.example.com", false},
+		{"null", false},
+		{"", true},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		if got := checkWebSocketOrigin(rec, newReq(c.origin)); got != c.want {
+			t.Fatalf("Origin=%q 期望 %t，实际 %t", c.origin, c.want, got)
+		}
+		if !c.want && rec.Code != http.StatusForbidden {
+			t.Fatalf("Origin=%q 应返回 403，实际 %d", c.origin, rec.Code)
 		}
 	}
 }

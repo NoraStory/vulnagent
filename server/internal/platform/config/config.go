@@ -53,6 +53,8 @@ type Config struct {
 	OSVURL         string
 	CookieSecure   bool
 	AgentToken     string
+	// TrustProxy 信任反向代理写入的 X-Forwarded-For / X-Real-IP，用于登录限速与审计来源 IP
+	TrustProxy bool
 
 	// LLM 相关：未配置凭据时 Harness 自动关闭
 	LLMBaseURL string
@@ -100,6 +102,7 @@ func Load() Config {
 		OSVURL:         envOr("VA_OSV_URL", DefaultOSVURL),
 		CookieSecure:   truthy("VA_COOKIE_SECURE"),
 		AgentToken:     strings.TrimSpace(os.Getenv("VA_AGENT_TOKEN")),
+		TrustProxy:     truthy("VA_TRUST_PROXY"),
 		LLMBaseURL:     strings.TrimSpace(os.Getenv("VA_LLM_BASE_URL")),
 		LLMAPIKey:      strings.TrimSpace(os.Getenv("VA_LLM_API_KEY")),
 		LLMModel:       strings.TrimSpace(os.Getenv("VA_LLM_MODEL")),

@@ -82,6 +82,11 @@ func (a *App) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "缺少 hostname")
 		return
 	}
+	// 已注册 Agent 只能上报自己的主机，避免冒用他人主机名污染资产与漏洞数据
+	if !principal.allowsHostname(hostname) {
+		writeErr(w, http.StatusForbidden, "agent_hostname_mismatch", "上报主机名与注册身份不一致，请重新注册")
+		return
+	}
 	if len(payload.Components) > 20000 {
 		writeErr(w, http.StatusBadRequest, "too_many_components", "单次上报组件数超过 20000")
 		return

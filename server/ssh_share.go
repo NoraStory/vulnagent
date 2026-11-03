@@ -386,6 +386,10 @@ func (a *App) handleSharedTerminal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// WebSocket 握手是 GET，必须单独做同源校验，防止跨站 WebSocket 劫持
+	if !checkWebSocketOrigin(w, r) {
+		return
+	}
 	link, err := a.resolveShareToken(r.PathValue("token"))
 	if errors.Is(err, errShareNotFound) {
 		writeErr(w, http.StatusNotFound, "not_found", "分享链接不存在")

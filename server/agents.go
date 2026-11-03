@@ -79,6 +79,14 @@ type agentPrincipal struct {
 	Key    []byte
 }
 
+// allowsHostname 已注册 Agent 只能操作自己的主机名；全局令牌没有主机绑定。
+func (p agentPrincipal) allowsHostname(hostname string) bool {
+	if p.Legacy || strings.TrimSpace(p.Agent.Hostname) == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(hostname), strings.TrimSpace(p.Agent.Hostname))
+}
+
 func agentSecretHash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])

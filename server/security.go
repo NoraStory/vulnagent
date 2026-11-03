@@ -152,15 +152,34 @@ func withSecurity(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		switch r.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-			if origin := r.Header.Get("Origin"); origin != "" && origin != "null" {
-				if !sameOrigin(origin, r.Host) {
-					writeErr(w, http.StatusForbidden, "csrf_origin_mismatch", "请求来源与当前站点不一致")
-					return
-				}
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			// Origin: null 来自沙箱 iframe / data: 页面，一律拒绝；
+			// 浏览器跨站请求会带 Sec-Fetch-Site: cross-site，作为 Origin 缺失时的兜底。
+			if origin == "null" || strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+				writeErr(w, http.StatusForbidden, "csrf_origin_mismatch", "请求来源与当前站点不一致")
+				return
+			}
+			if origin != "" && !sameOrigin(origin, r.Host) {
+				writeErr(w, http.StatusForbidden, "csrf_origin_mismatch", "请求来源与当前站点不一致")
+				return
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// checkWebSocketOrigin 为 WebSocket 握手补上同源校验。
+// 浏览器的握手是 GET，不会经过 withSecurity 的写方法校验，必须单独检查。
+func checkWebSocketOrigin(w http.ResponseWriter, r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	if origin == "null" || !sameOrigin(origin, r.Host) {
+		writeErr(w, http.StatusForbidden, "csrf_origin_mismatch", "请求来源与当前站点不一致")
+		return false
+	}
+	return true
 }
 
 // sameOrigin 忽略端口与 localhost/127.0.0.1 差异，兼容前端开发代理

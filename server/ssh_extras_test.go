@@ -182,13 +182,13 @@ func TestSSHRecordingAPIAndSessionFlags(t *testing.T) {
 	now := fmtT(nowT())
 	if _, err := app.db.Exec(`INSERT INTO ssh_sessions
 		(id, host_id, host_name, addr, actor, role, status, error, client_ip, started_at, ended_at, bytes_in, bytes_out)
-		VALUES('sess-view', 1, 'demo', '127.0.0.1:22', 'tester', 'operator', 'closed', '', '127.0.0.1', ?, ?, 10, 20)`,
+		VALUES('sess-view', 1, 'demo', '127.0.0.1:22', 'ops', 'operator', 'closed', '', '127.0.0.1', ?, ?, 10, 20)`,
 		now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := app.db.Exec(`INSERT INTO ssh_recordings
 		(session_id, host_id, host_name, actor, started_at, ended_at, duration_ms, chunks, bytes, truncated)
-		VALUES('sess-view', 1, 'demo', 'tester', ?, ?, 5000, 1, 5, 0)`, now, now); err != nil {
+		VALUES('sess-view', 1, 'demo', 'ops', ?, ?, 5000, 1, 5, 0)`, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := app.db.Exec(`INSERT INTO ssh_recording_chunks(session_id, seq, offset_ms, data, created_at)

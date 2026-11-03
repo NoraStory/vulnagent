@@ -24,6 +24,24 @@ func agentJSONRequest(method, path string, body any, headers map[string]string) 
 	return req
 }
 
+func TestAgentPrincipalHostnameBinding(t *testing.T) {
+	legacy := agentPrincipal{Legacy: true}
+	if !legacy.allowsHostname("any-host") {
+		t.Fatal("全局令牌不应限制主机名")
+	}
+	enrolled := agentPrincipal{Agent: agentRecord{Hostname: "web-01"}}
+	if !enrolled.allowsHostname("WEB-01") {
+		t.Fatal("主机名比较应忽略大小写")
+	}
+	if enrolled.allowsHostname("db-02") {
+		t.Fatal("已注册 Agent 不应操作其他主机名")
+	}
+	unbound := agentPrincipal{Agent: agentRecord{}}
+	if !unbound.allowsHostname("any-host") {
+		t.Fatal("未记录主机名的历史 Agent 应保持兼容")
+	}
+}
+
 func TestAgentEnrollmentHeartbeatAndCommands(t *testing.T) {
 	app := newRuntimeTestApp(t)
 

@@ -151,6 +151,10 @@ func (a *App) handleAgentJobs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "缺少 hostname")
 		return
 	}
+	if !principal.allowsHostname(hostname) {
+		writeErr(w, http.StatusForbidden, "hostname_mismatch", "主机名与 Agent 注册身份不一致")
+		return
+	}
 	jobs, err := a.jobRepo().DueForHost(r.Context(), hostname, fmtT(nowT()), 5)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "查询主机作业失败")
@@ -182,6 +186,10 @@ func (a *App) handleAgentJobClaim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "缺少 hostname")
 		return
 	}
+	if !principal.allowsHostname(hostname) {
+		writeErr(w, http.StatusForbidden, "hostname_mismatch", "主机名与 Agent 注册身份不一致")
+		return
+	}
 	job, ok, err := a.jobRepo().Claim(r.Context(), r.PathValue("id"), hostname, fmtT(nowT()))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "抢占作业失败")
@@ -196,7 +204,8 @@ func (a *App) handleAgentJobClaim(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentJobResult 接收 Agent 执行结果并按需安排重试
 func (a *App) handleAgentJobResult(w http.ResponseWriter, r *http.Request) {
-	if !a.agentAuthorized(r) {
+	principal, ok := a.authenticateAgent(r)
+	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", "Agent 身份无效")
 		return
 	}
@@ -206,6 +215,10 @@ func (a *App) handleAgentJobResult(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+		return
+	}
+	if !principal.allowsHostname(req.Hostname) {
+		writeErr(w, http.StatusForbidden, "hostname_mismatch", "主机名与 Agent 注册身份不一致")
 		return
 	}
 	if req.Status != "succeeded" && req.Status != "failed" {

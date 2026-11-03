@@ -1,7 +1,7 @@
 # 版本更新日志
 
 - 文档更新：2026-11-03
-- 当前代码版本：`0.7.13`（首个 Git Tag 为 `v0.7.9`）
+- 当前代码版本：`0.7.14`（首个 Git Tag 为 `v0.7.9`）
 - 说明：`v0.7.9` 为仓库首个 Git Tag；此前版本按提交区间回溯整理，每个版本的「推送终点」就是当时已推送到 `origin/master` 的提交。
 
 ## 版本总览
@@ -28,9 +28,31 @@
 | `v0.7.11` | 2026-11-03 | 上下文预算上限提升至 1M，按预算自适应保留上下文 | `9f260aa` | [9f260aa](https://github.com/NoraStory/vulnagent/commit/9f260aa) |
 | `v0.7.12` | 2026-11-03 | 审计页新增 Token 消耗统计与模型消耗图表 | `a91450e` | [a91450e](https://github.com/NoraStory/vulnagent/commit/a91450e) |
 | `v0.7.13` | 2026-11-03 | 修复高危：SSH Agent 只读白名单与只读运维模式绕过 | `5bdaf20` | [5bdaf20](https://github.com/NoraStory/vulnagent/commit/5bdaf20) |
+| `v0.7.14` | 2026-11-03 | 修复中危：运行记录越权、WebSocket Origin、CSRF null、Agent 主机绑定等 | 本次提交 | 本次提交 |
 
 > 推送终点仅代表该版本完成时的 `master` HEAD；后续版本会继续在其上叠加。提交区间均含起止两端。
 > 发布之后的文档维护提交不单独升级版本；当前 HEAD 可能领先于表中终点。
+
+---
+
+## v0.7.14 · 2026-11-03
+
+**主题**：修复安全审查发现的中危问题，收口敏感运维数据的访问边界与浏览器侧请求来源校验。
+
+### 安全修复
+- **运行记录与审批归属**：`GET /ssh/agent/runs` 改为 operator+ 且只返回自己发起的运行（管理员可看全部）；`GET /ssh/agent/runs/{id}`、`POST /ssh/agent/runs/{id}/cancel` 与 `POST /ssh/agent/approvals/{id}` 仅允许运行发起人或管理员；`GET /ssh/sessions/{id}/recording` 由 viewer+ 收紧为 operator+ 且仅发起人/管理员可回放。
+- **WebSocket 同源校验**：终端与协同终端握手补上 `Origin` 校验（拒绝 `null` 与跨站来源），不再只依赖 `SameSite=Lax`。
+- **CSRF 加固**：写请求拒绝 `Origin: null`，并在 `Sec-Fetch-Site: cross-site` 时直接拒绝。
+- **访问日志脱敏**：分享令牌路径整体替换为 `[redacted]`，`token/path/password/secret` 查询参数只保留键名。
+- **Agent 主机绑定**：已注册 Agent 的上报、作业拉取/领取/结果回传都必须使用注册身份的主机名，跨主机返回 403，避免冒用 hostname 污染资产或窃取他人作业；全局令牌保持兼容。
+- **审批角色复核**：Harness `Decide` 在批准前复核当前角色是否仍满足工具 `MinRole`，账号降权后不能继续批准此前排队的高风险操作。
+- **登录安全**：新增 `VA_TRUST_PROXY`，前置可信代理时登录限速与审计按 `X-Forwarded-For` 最右值取真实 IP，避免代理后统一 IP 导致账号可被恶意锁定；账号不存在时也执行一次 bcrypt，抹平用户名枚举的耗时差异。
+
+### 验证
+- 新增 `TestRedactedRequestURI`、`TestClientIPTrustProxy`、`TestCheckWebSocketOrigin`、`TestAgentPrincipalHostnameBinding`；录制接口测试同步为“发起人访问”；`go vet ./...`、`go test ./...` 通过。
+
+### 主要提交
+`本次提交 fix(security): 收敛运行记录越权与浏览器请求来源校验`
 
 ---
 

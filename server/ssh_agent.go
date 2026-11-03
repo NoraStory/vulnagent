@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1150,13 +1151,39 @@ func (a *App) cancelSSHRun(id string) bool {
 	return true
 }
 
+// sshRunActor 返回运行发起人；不存在时返回 sql.ErrNoRows。
+func (a *App) sshRunActor(ctx context.Context, runID string) (string, error) {
+	var actor string
+	err := a.db.QueryRowContext(ctx, `SELECT actor FROM ssh_agent_runs WHERE id = ?`, runID).Scan(&actor)
+	return actor, err
+}
+
+// mayAccessSSHRun 运行详情、审批与取消仅允许发起人或管理员。
+func mayAccessSSHRun(u *User, actor string) bool {
+	return u != nil && (u.Username == actor || roleRank(u.Role) >= roleRank("admin"))
+}
+
 func (a *App) handleSSHAgentRunCancel(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "operator"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	runID := strings.TrimSpace(r.PathValue("id"))
 	if runID == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", "运行 ID 无效")
+		return
+	}
+	actor, err := a.sshRunActor(r.Context(), runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "not_found", "运行不存在或已结束")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "读取运行记录失败")
+		return
+	}
+	if !mayAccessSSHRun(u, actor) {
+		writeErr(w, http.StatusForbidden, "forbidden", "只能取消自己发起的运行")
 		return
 	}
 	if !a.cancelSSHRun(runID) {
@@ -1199,7 +1226,8 @@ func (a *App) resolveSSHApproval(id string, approved bool) bool {
 }
 
 func (a *App) handleSSHAgentApproval(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "operator"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	var req struct {
@@ -1214,6 +1242,21 @@ func (a *App) handleSSHAgentApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	runID, found := a.sshApprovalRunID(id)
+	if !found {
+		writeErr(w, http.StatusNotFound, "not_found", "审批不存在或已失效")
+		return
+	}
+	actor, err := a.sshRunActor(r.Context(), runID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "审批对应的运行不存在")
+		return
+	}
+	// 审批只能由运行发起人或管理员处理，避免越权批准他人的高风险命令
+	if !mayAccessSSHRun(u, actor) {
+		writeErr(w, http.StatusForbidden, "forbidden", "只能审批自己发起的运行")
+		return
+	}
 	if !a.resolveSSHApproval(id, req.Decision == "approve") {
 		writeErr(w, http.StatusNotFound, "not_found", "审批不存在或已失效")
 		return
@@ -1222,10 +1265,22 @@ func (a *App) handleSSHAgentApproval(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// sshApprovalRunID 返回待审批命令所属的运行 ID。
+func (a *App) sshApprovalRunID(id string) (string, bool) {
+	a.sshApprovalMu.Lock()
+	defer a.sshApprovalMu.Unlock()
+	info, ok := a.sshApprovalMeta[id]
+	if !ok {
+		return "", false
+	}
+	return info.RunID, true
+}
+
 // ---------- 运行记录 ----------
 
 func (a *App) handleSSHAgentRuns(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "viewer"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	limit := clampInt(queryInt(r, "limit", 20), 1, 100)
@@ -1237,10 +1292,19 @@ func (a *App) handleSSHAgentRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	query := `SELECT id, host_id, host_name, actor, role, goal, mode, status, steps, summary, error, started_at, finished_at
 		FROM ssh_agent_runs`
+	conditions := make([]string, 0, 2)
 	args := []any{}
 	if hostID > 0 {
-		query += ` WHERE host_id = ?`
+		conditions = append(conditions, "host_id = ?")
 		args = append(args, hostID)
+	}
+	// 运维只能看到自己发起的运行，管理员可查看全部
+	if roleRank(u.Role) < roleRank("admin") {
+		conditions = append(conditions, "actor = ?")
+		args = append(args, u.Username)
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, " AND ")
 	}
 	query += ` ORDER BY started_at DESC LIMIT ?`
 	args = append(args, limit)
@@ -1271,7 +1335,8 @@ func (a *App) handleSSHAgentRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleSSHAgentRunDetail(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "viewer"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	runID := r.PathValue("id")
@@ -1285,6 +1350,10 @@ func (a *App) handleSSHAgentRunDetail(w http.ResponseWriter, r *http.Request) {
 		Scan(&id, &hostID, &hostName, &actor, &role, &goal, &mode, &status, &steps, &summary, &errText, &startedAt, &endedAt)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "运行记录不存在")
+		return
+	}
+	if !mayAccessSSHRun(u, actor) {
+		writeErr(w, http.StatusForbidden, "forbidden", "只能查看自己发起的运行")
 		return
 	}
 	rows, err := a.db.QueryContext(r.Context(), `SELECT idx, thought, command, output, risk, approved, exit_code, created_at

@@ -161,7 +161,8 @@ func (r *sshRecorder) Stop() {
 
 // handleSSHRecording 返回一次会话的录制元数据与回放分片（data 为 base64）。
 func (a *App) handleSSHRecording(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "viewer"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	sessionID := r.PathValue("id")
@@ -179,6 +180,11 @@ func (a *App) handleSSHRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "读取会话录制失败")
+		return
+	}
+	// 录制内容可能包含口令与配置，仅发起人或管理员可回放
+	if !mayAccessSSHRun(u, actor) {
+		writeErr(w, http.StatusForbidden, "forbidden", "只能回放自己发起的会话")
 		return
 	}
 	rows, err := a.db.QueryContext(r.Context(), `SELECT offset_ms, data FROM ssh_recording_chunks

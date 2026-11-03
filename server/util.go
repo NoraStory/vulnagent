@@ -7,9 +7,11 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"vulnagent/server/internal/platform/clock"
+	"vulnagent/server/internal/platform/config"
 )
 
 // 时间与时区统一由 platform/clock 提供，这里保留包内别名以减少改动。
@@ -70,7 +72,20 @@ func round1(f float64) float64 { return math.Round(f*10) / 10 }
 
 func round2(f float64) float64 { return math.Round(f*100) / 100 }
 
+// clientIP 返回请求来源 IP；仅在显式信任反向代理时读取 X-Forwarded-For，
+// 避免客户端伪造头绕过登录限速，也避免代理后所有请求被当成同一 IP。
 func clientIP(r *http.Request) string {
+	if config.Load().TrustProxy {
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			parts := strings.Split(forwarded, ",")
+			if candidate := strings.TrimSpace(parts[len(parts)-1]); candidate != "" {
+				return candidate
+			}
+		}
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			return realIP
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
