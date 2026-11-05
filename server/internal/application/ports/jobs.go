@@ -32,6 +32,7 @@ type HostJobResult struct {
 	ExitCode   int    `json:"exitCode"`
 	DurationMs int64  `json:"durationMs"`
 	Retryable  bool   `json:"retryable"`
+	Attempt    int    `json:"attempt,omitempty"`
 }
 
 // JobRepository 主机作业持久化端口

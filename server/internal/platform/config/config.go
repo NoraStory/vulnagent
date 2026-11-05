@@ -40,6 +40,7 @@ const (
 type Config struct {
 	Addr           string
 	DataDir        string
+	Hostname       string
 	DBPath         string
 	WebDist        string
 	SeedDemo       bool
@@ -91,6 +92,7 @@ func Load() Config {
 	return Config{
 		Addr:           envOr("VA_ADDR", DefaultAddr),
 		DataDir:        dataDir,
+		Hostname:       strings.TrimSpace(os.Getenv("VA_HOSTNAME")),
 		DBPath:         filepath.Join(dataDir, DefaultDBFile),
 		WebDist:        webDist(),
 		SeedDemo:       seedDemo(),

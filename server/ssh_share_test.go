@@ -19,6 +19,10 @@ func (m *memoryWriteCloser) Write(p []byte) (int, error) { return m.buf.Write(p)
 func (m *memoryWriteCloser) Close() error                { return nil }
 
 func serveSSHAs(role string, app *App, method, target string, body any) *httptest.ResponseRecorder {
+	return serveSSHAsUser(role+"-user", role, app, method, target, body)
+}
+
+func serveSSHAsUser(username, role string, app *App, method, target string, body any) *httptest.ResponseRecorder {
 	var reader *bytes.Reader
 	if body == nil {
 		reader = bytes.NewReader(nil)
@@ -27,7 +31,7 @@ func serveSSHAs(role string, app *App, method, target string, body any) *httptes
 		reader = bytes.NewReader(raw)
 	}
 	req := httptest.NewRequest(method, target, reader)
-	req = req.WithContext(context.WithValue(req.Context(), ctxKeyUser{}, User{Username: role + "-user", Name: role, Role: role}))
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyUser{}, User{Username: username, Name: username, Role: role}))
 	rec := httptest.NewRecorder()
 	mux := http.NewServeMux()
 	app.routes(mux)
@@ -52,7 +56,7 @@ func TestSharePermission(t *testing.T) {
 func TestShareLifecycle(t *testing.T) {
 	app := newSSHWorkspaceApp(t)
 	stdin := &memoryWriteCloser{}
-	live := app.registerLiveSession("sess-live", "web-01", "10.0.0.1:22", "tester", "SSH-2.0-Go", stdin)
+	live := app.registerLiveSession("sess-live", "web-01", "10.0.0.1:22", "operator-user", "SSH-2.0-Go", stdin)
 	defer app.releaseLiveSession("sess-live")
 
 	rec := serveSSHAs("operator", app, http.MethodPost, "/api/v1/ssh/sessions/sess-live/share",
@@ -114,6 +118,41 @@ func TestShareLifecycle(t *testing.T) {
 	}
 }
 
+func TestShareManagementRequiresOwnerOrAdmin(t *testing.T) {
+	app := newSSHWorkspaceApp(t)
+	app.registerLiveSession("sess-owned", "web-02", "10.0.0.4:22", "owner", "SSH-2.0-Go", &memoryWriteCloser{})
+	defer app.releaseLiveSession("sess-owned")
+
+	rec := serveSSHAsUser("owner", "operator", app, http.MethodPost, "/api/v1/ssh/sessions/sess-owned/share",
+		map[string]any{"permission": "write", "ttlMinutes": 30})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("会话发起人创建分享失败：%d %s", rec.Code, rec.Body.String())
+	}
+	var shareID int64
+	if err := app.db.QueryRow(`SELECT id FROM ssh_share_links WHERE session_id=?`, "sess-owned").Scan(&shareID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = serveSSHAsUser("other", "operator", app, http.MethodPost, "/api/v1/ssh/sessions/sess-owned/share",
+		map[string]any{"permission": "write"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("其他运维创建分享应返回 403，实际 %d", rec.Code)
+	}
+	rec = serveSSHAsUser("other", "operator", app, http.MethodGet, "/api/v1/ssh/sessions/sess-owned/shares", nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("其他运维查看分享应返回 403，实际 %d", rec.Code)
+	}
+	rec = serveSSHAsUser("other", "operator", app, http.MethodDelete, "/api/v1/ssh/shares/"+snippetID(shareID), nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("其他运维撤销分享应返回 403，实际 %d", rec.Code)
+	}
+
+	rec = serveSSHAsUser("root-admin", "admin", app, http.MethodDelete, "/api/v1/ssh/shares/"+snippetID(shareID), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("管理员撤销分享失败：%d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestShareCreateRequiresLiveSession(t *testing.T) {
 	app := newSSHWorkspaceApp(t)
 	rec := serveSSHAs("operator", app, http.MethodPost, "/api/v1/ssh/sessions/missing/share", map[string]any{})
@@ -125,7 +164,7 @@ func TestShareCreateRequiresLiveSession(t *testing.T) {
 func TestShareWritePermissionDowngrade(t *testing.T) {
 	app := newSSHWorkspaceApp(t)
 	stdin := &memoryWriteCloser{}
-	app.registerLiveSession("sess-write", "db-01", "10.0.0.2:22", "tester", "SSH-2.0-Go", stdin)
+	app.registerLiveSession("sess-write", "db-01", "10.0.0.2:22", "operator-user", "SSH-2.0-Go", stdin)
 	defer app.releaseLiveSession("sess-write")
 
 	rec := serveSSHAs("operator", app, http.MethodPost, "/api/v1/ssh/sessions/sess-write/share",

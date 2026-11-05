@@ -518,6 +518,11 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
 		return
 	}
+	hostname := strings.TrimSpace(in.Hostname)
+	if hostname != "" && !principal.allowsHostname(hostname) {
+		writeErr(w, http.StatusForbidden, "agent_hostname_mismatch", "心跳主机名与注册身份不一致，请重新注册")
+		return
+	}
 	now := fmtT(nowT())
 	_, err := a.db.ExecContext(r.Context(), `UPDATE agents SET last_seen_at=?, last_ip=?,
 		hostname=CASE WHEN ?='' THEN hostname ELSE ? END,

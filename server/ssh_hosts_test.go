@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -303,5 +305,72 @@ func TestDialSSHHostTOFUAndShell(t *testing.T) {
 	h.HostKey = "SHA256:not-the-real-fingerprint"
 	if _, _, err := app.dialSSHHost(context.Background(), h); err == nil {
 		t.Fatal("指纹不匹配时应拒绝连接")
+	}
+}
+
+func TestSSHHostUpdateInvalidatesPool(t *testing.T) {
+	addrA, fingerprintA := startTestSSHServer(t)
+	addrB, fingerprintB := startTestSSHServer(t)
+	split := func(addr string) (string, int) {
+		host, portText, err := net.SplitHostPort(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port, _ := strconv.Atoi(portText)
+		return host, port
+	}
+	hostA, portA := split(addrA)
+	hostB, portB := split(addrB)
+
+	app := newRuntimeTestApp(t)
+	t.Cleanup(app.closeSSHPool)
+	sealed, err := app.sealSSHSecret("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := app.db.Exec(`INSERT INTO ssh_hosts(name, host, port, username, auth_type, secret, passphrase,
+		host_key, note, tags, created_by, created_at, updated_at, last_connected_at)
+		VALUES('pool-update', ?, ?, 'tester', 'password', ?, '', ?, '', '', 'tester', '', '', '')`,
+		hostA, portA, sealed, fingerprintA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.LastInsertId()
+	before, err := app.getSSHHost(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientA, _, release, err := app.acquireSSHHost(context.Background(), before)
+	if err != nil {
+		t.Fatalf("连接原主机失败：%v", err)
+	}
+	release()
+
+	req := newCatalogRequest(t, http.MethodPatch, "/api/v1/ssh/hosts/x",
+		map[string]any{"host": hostB, "port": portB}, "operator")
+	req.SetPathValue("id", strconv.FormatInt(id, 10))
+	rec := httptest.NewRecorder()
+	app.handleSSHHostUpdate(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("更新主机失败：%d %s", rec.Code, rec.Body.String())
+	}
+	app.sshPoolMu.Lock()
+	_, cached := app.sshPool[id]
+	app.sshPoolMu.Unlock()
+	if cached {
+		t.Fatal("更新后旧连接仍留在连接池")
+	}
+
+	after, err := app.getSSHHost(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientB, observed, release, err := app.acquireSSHHost(context.Background(), after)
+	if err != nil {
+		t.Fatalf("连接更新后主机失败：%v", err)
+	}
+	defer release()
+	if clientA == clientB || observed != fingerprintB {
+		t.Fatalf("更新后仍复用旧主机连接：fingerprint=%s", observed)
 	}
 }

@@ -1172,6 +1172,7 @@ vulnagent_selfcheck_failed 0
 
 - `signature = HMAC-SHA256(token, job.id + "|" + job.action + "|" + job.params)`；Agent 必须校验后再执行，签名不符直接丢弃。
 - 同一资产存在 `running` 作业时不再派发新作业，避免并发变更。
+- 运行作业租约为 3 分钟；服务启动、定时调度及 Agent 拉取前会回收过期尝试，未超过 `maxAttempts` 时重新排队，否则标记失败并保留 `expired` 尝试记录。
 
 ### POST /agent/jobs/{id}/claim
 
@@ -1187,12 +1188,16 @@ vulnagent_selfcheck_failed 0
   "error": "连接超时",
   "exitCode": -1,
   "durationMs": 12000,
-  "retryable": true
+  "retryable": true,
+  "attempt": 1
 }
 ```
 
 - `status` 仅接受 `succeeded | failed`。
+- `attempt` 为领取时的尝试编号；旧 Agent 缺省时使用服务端当前尝试编号。完成按 `job_id + attempt` 幂等，重复或迟到结果返回 200 且 `applied=false`，不会覆盖新尝试。
 - 失败且 `retryable=true` 且未超过最大次数时，服务端按指数退避 + 抖动写入 `next_run_at`，作业回到 `pending`；响应 `retryScheduled: true`。
+- 成功响应示例：`{ "ok": true, "applied": true, "status": "pending", "retryScheduled": true }`。
+- Agent 先把结果写入 `<数据目录>/agent-results/`（目录 0700、文件 0600），成功回传后删除，失败或重启后自动续传。
 - 作业不属于该 hostname 时返回 `403 forbidden`。
 
 ### GET /assets/{id}/jobs?limit=50
@@ -1663,7 +1668,7 @@ vulnagent_selfcheck_failed 0
 
 ### 12.4 会话协同
 
-分享链接只对**在线会话**有效，令牌使用 SHA-256 存储、明文只返回一次；所有接口要求登录，可写权限仅对 operator 及以上角色生效（viewer 打开可写链接自动降级为只读）。
+分享链接只对**在线会话**有效，令牌使用 SHA-256 存储、明文只返回一次；创建、查看和撤销分享仅允许会话发起人或管理员，其他 operator 返回 `403 forbidden`。所有接口要求登录，可写权限仅对 operator 及以上角色生效（viewer 打开可写链接自动降级为只读）。
 
 #### POST /ssh/sessions/{id}/share（operator+）
 
@@ -2141,7 +2146,7 @@ Agent 的 `status` 事件新增：
 | 方法 | 路径 | 认证 | 说明 |
 |---|---|---|---|
 | POST | `/agents/enroll` | 注册令牌 | `{token, name?, hostname, os?, osVersion?, version?}` → `{agentId, secret}` |
-| POST | `/agents/heartbeat` | Agent 身份 | 更新主机信息与 `lastSeenAt`，返回待执行命令数 |
+| POST | `/agents/heartbeat` | Agent 身份 | 更新主机信息与 `lastSeenAt`，返回待执行命令数；hostname 改绑返回 `403 agent_hostname_mismatch` |
 | GET | `/agents/commands` | Agent 身份 | 拉取最多 5 条待执行命令，并标记为 `claimed` |
 | POST | `/agents/commands/{id}/result` | Agent 身份 | `{status:"succeeded"\|"failed", output, error}` |
 | POST | `/agent/report` | 全局令牌或 Agent 身份 | SBOM 上报；绑定集群时资产自动写入 `cluster_id` |

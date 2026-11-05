@@ -464,6 +464,7 @@ func (a *App) handleSSHHostUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "更新 SSH 主机失败")
 		return
 	}
+	a.invalidateSSHHost(id)
 	next.ID = id
 	next.Secret, next.Passphrase = secret, passphrase
 	next.HasSecret = secret != ""
@@ -490,6 +491,7 @@ func (a *App) handleSSHHostDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "删除 SSH 主机失败")
 		return
 	}
+	a.invalidateSSHHost(id)
 	a.audit(r, "ssh.host.delete", h.Name, fmt.Sprintf("%s@%s:%d", h.Username, h.Host, h.Port))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

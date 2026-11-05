@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"vulnagent/server/internal/agentexec"
 )
 
 func setupAgentToken(t *testing.T, app *App, token string) {
@@ -88,6 +92,21 @@ func TestHostJobQueueClaimAndResult(t *testing.T) {
 		t.Fatalf("结果未落库：%+v", done)
 	}
 
+	// 旧 Agent 不带 attempt 时也能识别重复回传，不重复写尝试历史。
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/agent/jobs/"+first.ID+"/result",
+		strings.NewReader(`{"hostname":"ticket-host","status":"succeeded","output":"duplicate","exitCode":0}`))
+	req.SetPathValue("id", first.ID)
+	req.Header.Set("Authorization", "Bearer test-agent-token")
+	rec = httptest.NewRecorder()
+	app.handleAgentJobResult(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"applied":false`) {
+		t.Fatalf("重复结果应被忽略：%d %s", rec.Code, rec.Body.String())
+	}
+	var attempts int
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM host_job_attempts WHERE job_id=?`, first.ID).Scan(&attempts); err != nil || attempts != 1 {
+		t.Fatalf("重复回传不应新增尝试记录：count=%d err=%v", attempts, err)
+	}
+
 	// 资产作业列表（控制台）
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/assets/"+strconv.FormatInt(assetID, 10)+"/jobs", nil)
 	req.SetPathValue("id", strconv.FormatInt(assetID, 10))
@@ -98,6 +117,58 @@ func TestHostJobQueueClaimAndResult(t *testing.T) {
 	app.handleAssetJobs(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), first.ID) {
 		t.Fatalf("资产作业列表异常：%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgentResultOutboxRetriesPersistently(t *testing.T) {
+	t.Setenv("VA_DATA_DIR", t.TempDir())
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/agent/jobs/JOB-OUTBOX/result" {
+			t.Errorf("结果回传路径异常：%s", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("解析结果请求失败：%v", err)
+		}
+		if payload["attempt"] != float64(1) || payload["hostname"] != "job-host" {
+			t.Errorf("结果缺少尝试编号或主机名：%+v", payload)
+		}
+		if calls.Add(1) == 1 {
+			http.Error(w, "temporary outage", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"applied":true}`))
+	}))
+	defer server.Close()
+
+	pending := agentPendingResult{
+		Hostname: "job-host", JobID: "JOB-OUTBOX", Attempt: 1,
+		Result: agentexec.Result{Status: "succeeded", Output: "completed"},
+	}
+	if err := persistAgentJobResult(pending); err != nil {
+		t.Fatalf("持久化结果失败：%v", err)
+	}
+	if err := flushAgentJobResults(context.Background(), server.URL, agentAuth{Token: "token"}); err == nil {
+		t.Fatal("首次回传失败应保留错误")
+	}
+	if _, err := os.Stat(agentResultPath(pending)); err != nil {
+		t.Fatalf("失败后结果文件应保留：%v", err)
+	}
+	items, err := loadAgentJobResults()
+	if err != nil || len(items) != 1 || items[0].JobID != pending.JobID {
+		t.Fatalf("重启加载结果异常：%+v err=%v", items, err)
+	}
+
+	if err := flushAgentJobResults(context.Background(), server.URL, agentAuth{Token: "token"}); err != nil {
+		t.Fatalf("续传结果失败：%v", err)
+	}
+	if _, err := os.Stat(agentResultPath(pending)); !os.IsNotExist(err) {
+		t.Fatalf("成功后结果文件应删除：%v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("回传次数异常：%d", calls.Load())
 	}
 }
 

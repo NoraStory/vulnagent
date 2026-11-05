@@ -183,6 +183,7 @@ func (a *App) handleAssetSSHHostLink(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "internal_error", "更新 SSH 主机失败")
 			return
 		}
+		a.invalidateSSHHost(existing.ID)
 		existing.Name, existing.Port = h.Name, h.Port
 		existing.Username, existing.AuthType = h.Username, h.AuthType
 		existing.Secret, existing.Passphrase = sealed, passphrase

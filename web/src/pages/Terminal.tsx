@@ -579,6 +579,7 @@ export function TerminalPage() {
   const agentScrollRef = useRef<HTMLDivElement | null>(null);
   const agentAbort = useRef(new Map<string, AbortController>());
   const agentStreaming = useRef(new Set<string>());
+  const [agentStreamingKeys, setAgentStreamingKeys] = useState<ReadonlySet<string>>(new Set());
   const aiInputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? null;
   const activeAi = activeTab ? aiByTab[activeTab.key] ?? [] : [];
@@ -626,11 +627,30 @@ export function TerminalPage() {
       .catch(() => undefined);
   }, [loadHosts, loadSessions]);
 
+  useEffect(() => {
+    return () => {
+      agentAbort.current.forEach((controller) => controller.abort());
+      agentAbort.current.clear();
+      agentStreaming.current.clear();
+    };
+  }, []);
+
+  function updateAgentStreaming(key: string, streaming: boolean) {
+    if (streaming) agentStreaming.current.add(key);
+    else agentStreaming.current.delete(key);
+    setAgentStreamingKeys((prev) => {
+      const next = new Set(prev);
+      if (streaming) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+
   // 页面重新进入时恢复仍在后台运行的 Agent 任务
   useEffect(() => {
     if (!activeTab) return;
     const key = activeTab.key;
-    if (agentByTab[key]?.runId) return;
+    if (agentByTab[key]?.status === "running") return;
     const hostId = activeTab.host.id;
     let cancelled = false;
     api
@@ -640,7 +660,10 @@ export function TerminalPage() {
         if (!running || cancelled) return;
         const detail = await api.sshAgentRunDetail(running.id);
         if (cancelled) return;
-        setAgentByTab((prev) => (prev[key] ? prev : { ...prev, [key]: runDetailToView(detail) }));
+        setAgentByTab((prev) => {
+          if (prev[key]?.status === "running") return prev;
+          return { ...prev, [key]: runDetailToView(detail) };
+        });
         setAiMode("agent");
       })
       .catch(() => undefined);
@@ -652,7 +675,7 @@ export function TerminalPage() {
   // 后台运行轮询：SSE 断开或离开页面后，通过运行详情继续展示进度与审批
   useEffect(() => {
     if (!activeTab || !agentState?.runId || agentState.status !== "running") return;
-    if (agentStreaming.current.has(activeTab.key)) return;
+    if (agentStreamingKeys.has(activeTab.key)) return;
     const key = activeTab.key;
     const runId = agentState.runId;
     let cancelled = false;
@@ -671,7 +694,7 @@ export function TerminalPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeTab?.key, agentState?.runId, agentState?.status]);
+  }, [activeTab?.key, agentState?.runId, agentState?.status, agentStreamingKeys]);
 
   // 支持从集群节点跳转：/terminal?hostId=3 自动打开对应主机
   useEffect(() => {
@@ -774,6 +797,14 @@ export function TerminalPage() {
       setActiveKey(remaining.length > 0 ? remaining[remaining.length - 1].key : "");
     }
     paneRefs.current.delete(key);
+    agentAbort.current.get(key)?.abort();
+    agentAbort.current.delete(key);
+    updateAgentStreaming(key, false);
+    setAgentByTab((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     setAiByTab((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -956,6 +987,7 @@ export function TerminalPage() {
     const key = activeTab.key;
     const controller = new AbortController();
     agentAbort.current.set(key, controller);
+    updateAgentStreaming(key, true);
     setAgentByTab((prev) => ({
       ...prev,
       [key]: {
@@ -970,6 +1002,7 @@ export function TerminalPage() {
     }));
 
     const handle = (event: SshAgentEvent) => {
+      if (agentAbort.current.get(key) !== controller) return;
       if (event.type === "done" && source === "qa") {
         // 把执行结论写回问答上下文，便于下一轮继续追问
         const summary = String(event.data?.summary ?? "");
@@ -1059,20 +1092,29 @@ export function TerminalPage() {
     };
 
     try {
-      agentStreaming.current.add(key);
       await api.sshAgentRun(activeTab.host.id, goal, mode, aiSearch, handle, controller.signal, skillId || undefined);
       void loadSessions();
     } catch (err) {
       if (!controller.signal.aborted) {
-        updateAgentState(key, (current) => ({
-          ...current,
-          status: "error",
-          error: err instanceof ApiError ? err.message : "Agent 运行失败"
-        }));
+        const message = err instanceof ApiError ? err.message : "Agent 连接中断";
+        updateAgentState(key, (current) => {
+          if (current.status !== "running") return current;
+          if (current.runId) {
+            return {
+              ...current,
+              status: "running",
+              error: "",
+              warnings: [...(current.warnings ?? []), `连接中断，正在通过详情轮询恢复：${message}`]
+            };
+          }
+          return { ...current, status: "error", error: message };
+        });
       }
     } finally {
-      agentStreaming.current.delete(key);
-      agentAbort.current.delete(key);
+      if (agentAbort.current.get(key) === controller) {
+        agentAbort.current.delete(key);
+        updateAgentStreaming(key, false);
+      }
     }
   }
 
@@ -1109,7 +1151,7 @@ export function TerminalPage() {
     }
     agentAbort.current.get(key)?.abort();
     agentAbort.current.delete(key);
-    agentStreaming.current.delete(key);
+    updateAgentStreaming(key, false);
     updateAgentState(key, (current) => ({ ...current, status: "error", error: "已手动停止", pending: undefined }));
   }
 

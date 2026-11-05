@@ -402,6 +402,11 @@ func runServer() {
 		sshApprovals: make(map[string]chan bool), sshApprovalMeta: make(map[string]sshApprovalInfo),
 		sshRunCancels: make(map[string]context.CancelFunc)}
 	slog.Info("自身依赖 SBOM 摘要", "digest", app.selfDigest)
+	if n, err := app.recoverExpiredHostJobs(context.Background()); err != nil {
+		slog.Warn("启动时回收过期主机作业失败", "err", err)
+	} else if n > 0 {
+		slog.Info("启动时已回收过期主机作业", "count", n)
+	}
 	// 上次进程退出时仍在运行的 SSH Agent 任务标记为中断，避免长期停留在 running
 	if _, err := db.Exec(`UPDATE ssh_agent_runs SET status='failed', error='服务重启，运行中断', finished_at=? WHERE status='running'`,
 		fmtT(nowT())); err != nil {
@@ -440,6 +445,7 @@ func runServer() {
 	app.startScanScheduler(scanCtx)
 	app.startIntelSyncScheduler(scanCtx)
 	app.startClusterCheckScheduler(scanCtx)
+	app.startHostJobRecoveryScheduler(scanCtx)
 
 	mux := http.NewServeMux()
 	app.routes(mux)

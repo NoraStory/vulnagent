@@ -67,12 +67,6 @@ func (a *App) queueHostJob(assetID int64, action string, params json.RawMessage,
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%s", assetID, action, string(normalized))))
 	key := hex.EncodeToString(sum[:])
 	since := fmtT(nowT().Add(-10 * time.Minute))
-	if existing, found, err := a.jobRepo().ExistingByIdempotency(ctx, key, since); err != nil {
-		return ports.HostJob{}, err
-	} else if found {
-		return existing, nil
-	}
-
 	idBytes := make([]byte, 8)
 	if _, err := rand.Read(idBytes); err != nil {
 		return ports.HostJob{}, err
@@ -91,8 +85,12 @@ func (a *App) queueHostJob(assetID int64, action string, params json.RawMessage,
 		MaxAttempts:    3,
 		CreatedAt:      now,
 	}
-	if err := a.jobRepo().Create(ctx, job); err != nil {
+	stored, created, err := a.jobRepo().CreateIdempotent(ctx, job, since)
+	if err != nil {
 		return ports.HostJob{}, err
+	}
+	if !created {
+		return stored, nil
 	}
 	slog.Info("主机作业已排队", "jobId", job.ID, "assetId", assetID, "action", action, "by", requestedBy)
 	return job, nil
@@ -139,6 +137,33 @@ func (a *App) assetHostname(assetID int64) (string, error) {
 	return hostname, err
 }
 
+const hostJobLease = 3 * time.Minute
+
+func (a *App) recoverExpiredHostJobs(ctx context.Context) (int, error) {
+	now := nowT()
+	return a.jobRepo().RecoverExpired(ctx, fmtT(now), fmtT(now.Add(-hostJobLease)))
+}
+
+func (a *App) startHostJobRecoveryScheduler(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				n, err := a.recoverExpiredHostJobs(ctx)
+				if err != nil {
+					slog.Warn("回收过期主机作业失败", "err", err)
+				} else if n > 0 {
+					slog.Info("已回收过期主机作业", "count", n)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
 // handleAgentJobs 返回该主机当前可执行的作业
 func (a *App) handleAgentJobs(w http.ResponseWriter, r *http.Request) {
 	principal, ok := a.authenticateAgent(r)
@@ -153,6 +178,10 @@ func (a *App) handleAgentJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	if !principal.allowsHostname(hostname) {
 		writeErr(w, http.StatusForbidden, "hostname_mismatch", "主机名与 Agent 注册身份不一致")
+		return
+	}
+	if _, err := a.recoverExpiredHostJobs(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal_error", "回收过期主机作业失败")
 		return
 	}
 	jobs, err := a.jobRepo().DueForHost(r.Context(), hostname, fmtT(nowT()), 5)
@@ -248,15 +277,22 @@ func (a *App) handleAgentJobResult(w http.ResponseWriter, r *http.Request) {
 		status = "pending"
 		nextRun = fmtT(nowT().Add(jobRetryDelay(job.Attempts)))
 	}
-	if err := a.jobRepo().Complete(r.Context(), id, status, req.Output, req.Error, req.ExitCode, now, nextRun); err != nil {
+	attempt := req.Attempt
+	if attempt <= 0 {
+		attempt = job.Attempts // 兼容尚未上报尝试编号的旧 Agent
+	}
+	applied, err := a.jobRepo().CompleteOnce(r.Context(), id, attempt, status, req.Output, req.Error, req.ExitCode, now, nextRun)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "写入作业结果失败")
 		return
 	}
-	a.auditAs("Agent "+hostname, "agent", clientIP(r), r.UserAgent(), "host.job.result", id,
-		fmt.Sprintf("%s → %s（exit=%d，重试=%v）", job.Action, status, req.ExitCode, nextRun != ""))
-	slog.Info("主机作业完成", "jobId", id, "action", job.Action, "status", status,
-		"exitCode", req.ExitCode, "retry", nextRun != "")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": status, "retryScheduled": nextRun != ""})
+	if applied {
+		a.auditAs("Agent "+hostname, "agent", clientIP(r), r.UserAgent(), "host.job.result", id,
+			fmt.Sprintf("%s → %s（exit=%d，重试=%v）", job.Action, status, req.ExitCode, nextRun != ""))
+		slog.Info("主机作业完成", "jobId", id, "action", job.Action, "status", status,
+			"exitCode", req.ExitCode, "retry", nextRun != "")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "applied": applied, "status": status, "retryScheduled": applied && nextRun != ""})
 }
 
 // handleAssetJobs 控制台查看资产作业历史

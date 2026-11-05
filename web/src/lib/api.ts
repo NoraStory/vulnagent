@@ -1047,8 +1047,8 @@ export const api = {
     });
   },
 
-  harnessMessages(id: string): Promise<HarnessMessagesResponse> {
-    return request(`/agent/sessions/${encodeURIComponent(id)}/messages`);
+  harnessMessages(id: string, signal?: AbortSignal): Promise<HarnessMessagesResponse> {
+    return request(`/agent/sessions/${encodeURIComponent(id)}/messages`, { signal });
   },
 
   harnessChat(

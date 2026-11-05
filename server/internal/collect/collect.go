@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"vulnagent/server/internal/platform/config"
 )
 
 // Component 归一化后的组件（PURL + 版本）
@@ -62,6 +64,9 @@ func Collect(opts Options) (Report, error) {
 		Warnings:    []string{},
 	}
 	rep.Hostname, _ = os.Hostname()
+	if hostname := strings.TrimSpace(config.Load().Hostname); hostname != "" {
+		rep.Hostname = hostname
+	}
 	rep.IP = primaryIP()
 	rep.OS = runtime.GOOS
 

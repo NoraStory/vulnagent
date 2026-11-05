@@ -35,7 +35,7 @@ spec:
               env:
                 - name: TZ
                   value: Asia/Shanghai
-                - name: HOSTNAME
+                - name: VA_HOSTNAME
                   valueFrom:
                     fieldRef:
                       fieldPath: spec.nodeName

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -744,8 +743,13 @@ func normalizeClusterNode(name, role, host string, port int, url string, sshHost
 	if node.Port < 0 || node.Port > 65535 {
 		return node, errors.New("端口必须在 0-65535 之间")
 	}
-	if node.URL != "" && !strings.HasPrefix(node.URL, "http://") && !strings.HasPrefix(node.URL, "https://") {
-		return node, errors.New("URL 必须以 http:// 或 https:// 开头")
+	if node.URL != "" {
+		if !strings.HasPrefix(node.URL, "http://") && !strings.HasPrefix(node.URL, "https://") {
+			return node, errors.New("URL 必须以 http:// 或 https:// 开头")
+		}
+		if err := validateIntegrationEndpoint(node.URL); err != nil {
+			return node, fmt.Errorf("HTTP 检查地址不安全：%w", err)
+		}
 	}
 	if node.Path != "" && !strings.HasPrefix(node.Path, "/") {
 		return node, errors.New("文件路径必须是绝对路径")
@@ -935,6 +939,90 @@ func (a *App) handleClusterNodeDelete(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 健康检查 ----------
 
+// clusterHTTPBlockedIP 阻断云元数据、链路本地和不可路由目标；合法集群私网与回环测试地址仍允许。
+func clusterHTTPBlockedIP(ip net.IP) bool {
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip.Equal(net.IPv4bcast) {
+		return true
+	}
+	switch ip.String() {
+	case "100.100.100.200", "fd00:ec2::254":
+		return true
+	}
+	return false
+}
+
+// clusterHTTPHostIPs 在拨号前解析并校验全部候选地址，避免只校验 URL 字面量或 DNS 轮换绕过。
+func clusterHTTPHostIPs(ctx context.Context, host string) ([]net.IP, error) {
+	canonical := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	switch canonical {
+	case "metadata.google.internal", "metadata", "instance-data":
+		return nil, errors.New("不允许指向云元数据地址")
+	}
+	if ip := net.ParseIP(canonical); ip != nil {
+		if clusterHTTPBlockedIP(ip) {
+			return nil, errors.New("不允许指向链路本地或云元数据地址")
+		}
+		return []net.IP{ip}, nil
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", canonical)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, errors.New("目标主机没有可用地址")
+	}
+	for _, ip := range ips {
+		if clusterHTTPBlockedIP(ip) {
+			return nil, errors.New("目标解析到链路本地或云元数据地址")
+		}
+	}
+	return ips, nil
+}
+
+func clusterHTTPDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := clusterHTTPHostIPs(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: 6 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+func newClusterHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// 健康检查直连目标，确保 DNS 与实际连接都经过同一安全校验。
+	transport.Proxy = nil
+	transport.DialContext = clusterHTTPDialContext
+	return &http.Client{
+		Timeout:   8 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("HTTP 检查重定向次数过多")
+			}
+			if err := validateIntegrationEndpoint(req.URL.String()); err != nil {
+				return fmt.Errorf("HTTP 检查重定向目标不安全：%w", err)
+			}
+			return nil
+		},
+	}
+}
+
 func (a *App) effectiveCheckType(node clusterNodeRecord) string {
 	if node.CheckType != "" && node.CheckType != "auto" {
 		return node.CheckType
@@ -974,7 +1062,7 @@ func (a *App) checkClusterNode(ctx context.Context, node clusterNodeRecord) (str
 			}
 			target = fmt.Sprintf("http://%s/api/v1/healthz", net.JoinHostPort(node.Host, strconv.Itoa(node.Port)))
 		}
-		client := &http.Client{Timeout: 8 * time.Second}
+		client := newClusterHTTPClient()
 		req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, target, nil)
 		if err != nil {
 			return "failed", 0, "URL 无效"
@@ -984,10 +1072,9 @@ func (a *App) checkClusterNode(ctx context.Context, node clusterNodeRecord) (str
 			return "failed", time.Since(started).Milliseconds(), httpCheckFailure(target, node, err)
 		}
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		latency := time.Since(started).Milliseconds()
 		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-			return "ok", latency, fmt.Sprintf("HTTP %d · %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			return "ok", latency, fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
 		return "failed", latency, fmt.Sprintf("HTTP %d", resp.StatusCode)
 	case "tcp":

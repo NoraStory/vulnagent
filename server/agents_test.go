@@ -112,6 +112,18 @@ func TestAgentEnrollmentHeartbeatAndCommands(t *testing.T) {
 		t.Fatalf("Agent 列表异常：%+v", list.Items)
 	}
 
+	// 心跳不能改绑主机，否则后续作业校验会读取被篡改的绑定。
+	rec = httptest.NewRecorder()
+	req = agentJSONRequest("POST", "/api/v1/agents/heartbeat", map[string]any{"hostname": "host-2"}, headers)
+	app.handleAgentHeartbeat(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("改绑主机名应返回 403，实际 %d %s", rec.Code, rec.Body.String())
+	}
+	stored, err := app.agentByID(t.Context(), enrolled.AgentID)
+	if err != nil || stored.Hostname != "host-1" {
+		t.Fatalf("改绑被拒绝后主机名不应变化：%+v err=%v", stored, err)
+	}
+
 	rec = httptest.NewRecorder()
 	req = newCatalogRequest(t, "POST", "/api/v1/agents/x/commands", map[string]any{"action": "ping"}, "operator")
 	req.SetPathValue("id", enrolled.AgentID)

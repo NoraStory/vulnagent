@@ -44,6 +44,37 @@ func (r *JobRepo) Create(ctx context.Context, job ports.HostJob) error {
 	return err
 }
 
+// CreateIdempotent 在同一写事务内完成窗口去重与插入；失败、取消和过期记录不占用幂等键。
+func (r *JobRepo) CreateIdempotent(ctx context.Context, job ports.HostJob, since string) (ports.HostJob, bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ports.HostJob{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	existing, err := scanJob(tx.QueryRowContext(ctx, jobSelect+`
+		WHERE idempotency_key = ? AND created_at >= ? AND status IN ('pending','running','succeeded')
+		ORDER BY created_at DESC LIMIT 1`, job.IdempotencyKey, since))
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ports.HostJob{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO host_jobs(id, asset_id, action, params, risk, status,
+		requested_by, approval_id, idempotency_key, attempts, max_attempts, next_run_at, output, error,
+		exit_code, created_at, started_at, finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		job.ID, job.AssetID, job.Action, job.Params, job.Risk, job.Status, job.RequestedBy,
+		job.ApprovalID, job.IdempotencyKey, job.Attempts, job.MaxAttempts, job.NextRunAt, job.Output,
+		job.Error, job.ExitCode, job.CreatedAt, job.StartedAt, job.FinishedAt); err != nil {
+		return ports.HostJob{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ports.HostJob{}, false, err
+	}
+	return job, true, nil
+}
+
 // ByID 按 ID 读取作业
 func (r *JobRepo) ByID(ctx context.Context, id string) (ports.HostJob, bool, error) {
 	job, err := scanJob(r.db.QueryRowContext(ctx, jobSelect+` WHERE host_jobs.id = ?`, id))
@@ -111,7 +142,7 @@ func (r *JobRepo) Claim(ctx context.Context, id, hostname, now string) (ports.Ho
 	return job, true, nil
 }
 
-// Complete 写入执行结果；nextRunAt 非空表示进入重试
+// Complete 写入执行结果；nextRunAt 非空表示进入重试。
 func (r *JobRepo) Complete(ctx context.Context, id, status, output, errText string, exitCode int, now, nextRunAt string) error {
 	job, found, err := r.ByID(ctx, id)
 	if err != nil {
@@ -120,27 +151,115 @@ func (r *JobRepo) Complete(ctx context.Context, id, status, output, errText stri
 	if !found {
 		return ports.ErrNotFound
 	}
+	_, err = r.CompleteOnce(ctx, id, job.Attempts, status, output, errText, exitCode, now, nextRunAt)
+	return err
+}
+
+// CompleteOnce 按尝试编号幂等完成运行中的作业；重复或迟到结果返回 applied=false。
+func (r *JobRepo) CompleteOnce(ctx context.Context, id string, attempt int, status, output, errText string, exitCode int, now, nextRunAt string) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	job, err := scanJob(tx.QueryRowContext(ctx, jobSelect+` WHERE host_jobs.id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ports.ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	var completed int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM host_job_attempts WHERE job_id=? AND attempt=?`, id, attempt).Scan(&completed); err != nil {
+		return false, err
+	}
+	if completed > 0 || attempt <= 0 || job.Status != "running" || job.Attempts != attempt {
+		return false, nil
+	}
 
 	finishedAt := now
 	if nextRunAt != "" {
 		finishedAt = ""
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE host_jobs SET status = ?, output = ?, error = ?,
-		exit_code = ?, finished_at = ?, next_run_at = ? WHERE id = ?`,
-		status, output, errText, exitCode, finishedAt, nextRunAt, id); err != nil {
-		return err
+	result, err := tx.ExecContext(ctx, `UPDATE host_jobs SET status = ?, output = ?, error = ?,
+		exit_code = ?, finished_at = ?, next_run_at = ? WHERE id = ? AND status = 'running' AND attempts = ?`,
+		status, output, errText, exitCode, finishedAt, nextRunAt, id, attempt)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n != 1 {
+		return false, nil
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO host_job_attempts(job_id, attempt, status, output,
 		error, started_at, finished_at) VALUES(?,?,?,?,?,?,?)`,
-		id, job.Attempts, status, output, errText, job.StartedAt, finishedAt); err != nil {
-		return err
+		id, attempt, status, output, errText, job.StartedAt, finishedAt); err != nil {
+		return false, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RecoverExpired 回收超过租约的运行作业，并留下过期尝试记录以拒绝迟到结果。
+func (r *JobRepo) RecoverExpired(ctx context.Context, now, cutoff string) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, jobSelect+`
+		WHERE host_jobs.status='running' AND host_jobs.started_at<>'' AND host_jobs.started_at<=?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	jobs := make([]ports.HostJob, 0, 4)
+	for rows.Next() {
+		job, scanErr := scanJob(rows)
+		if scanErr != nil {
+			rows.Close()
+			return 0, scanErr
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	recovered := 0
+	for _, job := range jobs {
+		status := "pending"
+		errText := "Agent 执行租约超时，已重新排队"
+		nextRunAt := now
+		finishedAt := ""
+		if job.Attempts >= job.MaxAttempts {
+			status = "failed"
+			errText = "Agent 执行租约超时，已超过最大尝试次数"
+			nextRunAt = ""
+			finishedAt = now
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE host_jobs SET status=?, next_run_at=?, error=?, finished_at=?
+			WHERE id=? AND status='running'`, status, nextRunAt, errText, finishedAt, job.ID); err != nil {
+			return recovered, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO host_job_attempts(job_id, attempt, status, output,
+			error, started_at, finished_at) VALUES(?,?,?,?,?,?,?)`,
+			job.ID, job.Attempts, "expired", "", errText, job.StartedAt, now); err != nil {
+			return recovered, err
+		}
+		recovered++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return recovered, nil
 }
 
 // ListByAsset 返回资产最近作业

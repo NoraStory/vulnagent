@@ -235,6 +235,22 @@ func sharePermission(value string) (string, error) {
 	return "", errors.New("permission 必须为 read 或 write")
 }
 
+// canManageSSHShares 仅允许会话发起人或管理员管理分享；离线会话从持久化记录读取发起人。
+func (a *App) canManageSSHShares(ctx context.Context, sessionID string, u *User) bool {
+	if u == nil {
+		return false
+	}
+	if roleRank(u.Role) >= roleRank("admin") {
+		return true
+	}
+	if live := a.liveSession(sessionID); live != nil {
+		return live.owner == u.Username
+	}
+	var owner string
+	err := a.db.QueryRowContext(ctx, `SELECT actor FROM ssh_sessions WHERE id=?`, sessionID).Scan(&owner)
+	return err == nil && owner == u.Username
+}
+
 // handleSSHShareCreate 为活动会话生成一次性分享链接（令牌只返回一次）。
 func (a *App) handleSSHShareCreate(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireRole(w, r, "operator")
@@ -245,6 +261,10 @@ func (a *App) handleSSHShareCreate(w http.ResponseWriter, r *http.Request) {
 	live := a.liveSession(sessionID)
 	if live == nil {
 		writeErr(w, http.StatusConflict, "session_not_live", "会话不在线，无法分享")
+		return
+	}
+	if !a.canManageSSHShares(r.Context(), sessionID, u) {
+		writeErr(w, http.StatusForbidden, "forbidden", "仅会话发起人或管理员可以创建分享")
 		return
 	}
 	var req struct {
@@ -288,10 +308,15 @@ func (a *App) handleSSHShareCreate(w http.ResponseWriter, r *http.Request) {
 
 // handleSSHShares 列出会话当前有效的分享链接（不含令牌）。
 func (a *App) handleSSHShares(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "operator"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	sessionID := r.PathValue("id")
+	if !a.canManageSSHShares(r.Context(), sessionID, u) {
+		writeErr(w, http.StatusForbidden, "forbidden", "仅会话发起人或管理员可以查看分享")
+		return
+	}
 	rows, err := a.db.QueryContext(r.Context(), `SELECT id, permission, created_by, created_at, expires_at
 		FROM ssh_share_links WHERE session_id=? ORDER BY id DESC`, sessionID)
 	if err != nil {
@@ -323,7 +348,8 @@ func (a *App) handleSSHShares(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleSSHShareRevoke(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireRole(w, r, "operator"); !ok {
+	u, ok := requireRole(w, r, "operator")
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -338,6 +364,10 @@ func (a *App) handleSSHShareRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "读取分享链接失败")
+		return
+	}
+	if !a.canManageSSHShares(r.Context(), sessionID, u) {
+		writeErr(w, http.StatusForbidden, "forbidden", "仅会话发起人或管理员可以撤销分享")
 		return
 	}
 	if _, err := a.db.ExecContext(r.Context(), `DELETE FROM ssh_share_links WHERE id=?`, id); err != nil {

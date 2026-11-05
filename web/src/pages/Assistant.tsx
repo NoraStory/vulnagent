@@ -318,6 +318,12 @@ export function AssistantPage() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // stickRef 记录用户是否停留在底部：在底部时新消息自动跟随，上翻阅读时不打断
   const stickRef = useRef(true);
+  const mountedRef = useRef(true);
+  const activeIdRef = useRef(activeId);
+  const messagesSeqRef = useRef(0);
+  const messagesAbortRef = useRef<AbortController | null>(null);
+  const streamSeqRef = useRef(0);
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   const active = sessions.find((session) => session.id === activeId);
   const mode = active?.approvalMode ?? pendingMode;
@@ -383,16 +389,48 @@ export function AssistantPage() {
     };
   }, []);
 
-  const loadMessages = useCallback(async (sessionId: string) => {
-    const result = await api.harnessMessages(sessionId);
-    const restored: Item[] = (result.pendingApprovals ?? []).map((approval) => ({
-      key: `ap-${approval.id}`,
-      kind: "approval",
-      approval,
-      status: "pending"
-    }));
-    setItems([...toItems(result.messages ?? []), ...restored]);
-    setActiveSkillId(result.activeSkillId ?? "");
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      streamSeqRef.current += 1;
+      messagesSeqRef.current += 1;
+      messagesAbortRef.current?.abort();
+      messagesAbortRef.current = null;
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  const loadMessages = useCallback(async (sessionId: string): Promise<boolean> => {
+    const requestSeq = ++messagesSeqRef.current;
+    messagesAbortRef.current?.abort();
+    const controller = new AbortController();
+    messagesAbortRef.current = controller;
+    try {
+      const result = await api.harnessMessages(sessionId, controller.signal);
+      if (!mountedRef.current || activeIdRef.current !== sessionId || messagesSeqRef.current !== requestSeq) {
+        return false;
+      }
+      const restored: Item[] = (result.pendingApprovals ?? []).map((approval) => ({
+        key: `ap-${approval.id}`,
+        kind: "approval",
+        approval,
+        status: "pending"
+      }));
+      setItems([...toItems(result.messages ?? []), ...restored]);
+      setActiveSkillId(result.activeSkillId ?? "");
+      return true;
+    } catch (err) {
+      if (controller.signal.aborted) return false;
+      throw err;
+    } finally {
+      if (messagesAbortRef.current === controller) messagesAbortRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -463,11 +501,13 @@ export function AssistantPage() {
   // refreshMessages 主动与后端对齐，用于处理过期审批或其它窗口已处理的情况
   async function refreshMessages() {
     if (!activeId || busy) return;
+    const sessionId = activeId;
     try {
-      await loadMessages(activeId);
-      setError("");
+      if (await loadMessages(sessionId)) setError("");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "刷新会话失败");
+      if (mountedRef.current && activeIdRef.current === sessionId) {
+        setError(err instanceof ApiError ? err.message : "刷新会话失败");
+      }
     }
   }
 
@@ -542,12 +582,39 @@ export function AssistantPage() {
     }
   }, []);
 
+  function streamIsCurrent(sessionId: string, operation: number): boolean {
+    return mountedRef.current && activeIdRef.current === sessionId && streamSeqRef.current === operation;
+  }
+
+  function resetActiveStream() {
+    streamSeqRef.current += 1;
+    messagesSeqRef.current += 1;
+    messagesAbortRef.current?.abort();
+    messagesAbortRef.current = null;
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+    setBusy(false);
+    setDecidingId("");
+  }
+
+  function activateSession(sessionId: string) {
+    if (activeIdRef.current === sessionId) return;
+    resetActiveStream();
+    activeIdRef.current = sessionId;
+    setActiveId(sessionId);
+  }
+
   async function ensureSession(text: string): Promise<string> {
     if (activeId) return activeId;
+    const previousId = activeIdRef.current;
     const title = text.length > 18 ? `${text.slice(0, 18)}…` : text;
     const { session } = await api.harnessCreateSession(title, pendingMode);
     setSessions((prev) => [session, ...prev]);
-    setActiveId(session.id);
+    // 创建期间如果用户已选择其他会话，新建会话只进入列表，不抢回焦点。
+    if (activeIdRef.current === previousId) {
+      activeIdRef.current = session.id;
+      setActiveId(session.id);
+    }
     return session.id;
   }
 
@@ -568,45 +635,77 @@ export function AssistantPage() {
       content = "请按技能指引开始：先说明你能做的诊断项，然后等待我描述具体问题。";
     }
     if (skillId && skillId !== activeSkillId) setActiveSkillId(skillId);
+    const operation = ++streamSeqRef.current;
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
     setError("");
     setBusy(true);
     setInput("");
     setSlashOpen(false);
     try {
       const sessionId = await ensureSession(content);
+      if (!streamIsCurrent(sessionId, operation)) return;
       setItems((prev) => [...prev, { key: `u-${Date.now()}`, kind: "user", content }]);
-      await api.harnessChat(sessionId, content, skillId || undefined, handleEvent);
+      await api.harnessChat(
+        sessionId,
+        content,
+        skillId || undefined,
+        (event) => {
+          if (streamIsCurrent(sessionId, operation)) handleEvent(event);
+        },
+        controller.signal
+      );
+      if (!streamIsCurrent(sessionId, operation)) return;
       const refreshed = await api.harnessSessions();
-      setSessions(refreshed.sessions ?? []);
+      if (streamIsCurrent(sessionId, operation)) setSessions(refreshed.sessions ?? []);
     } catch (err) {
+      if (controller.signal.aborted || !mountedRef.current || streamSeqRef.current !== operation) return;
       const message = err instanceof ApiError ? err.message : "无法连接助手服务";
       setError(message);
       setItems((prev) => [...prev, { key: `e-${Date.now()}`, kind: "error", content: message }]);
     } finally {
-      setBusy(false);
+      if (streamSeqRef.current === operation) {
+        streamAbortRef.current = null;
+        if (mountedRef.current) setBusy(false);
+      }
     }
   }
 
-  async function resume() {
-    if (!activeId) return;
+  async function resume(sessionId = activeId) {
+    if (!sessionId) return;
+    const operation = ++streamSeqRef.current;
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
     setBusy(true);
     setError("");
     try {
-      await api.harnessResume(activeId, handleEvent);
+      await api.harnessResume(
+        sessionId,
+        (event) => {
+          if (streamIsCurrent(sessionId, operation)) handleEvent(event);
+        },
+        controller.signal
+      );
     } catch (err) {
+      if (controller.signal.aborted || !streamIsCurrent(sessionId, operation)) return;
       const message = err instanceof ApiError ? err.message : "继续对话失败";
       setError(message);
     } finally {
-      setBusy(false);
+      if (streamSeqRef.current === operation) {
+        streamAbortRef.current = null;
+        if (mountedRef.current) setBusy(false);
+      }
     }
   }
 
   async function decide(approval: HarnessApproval, decision: "approve" | "reject", key: string) {
-    if (decidingId) return;
+    if (decidingId || !activeId) return;
+    const sessionId = activeId;
     setDecidingId(approval.id);
     setError("");
     try {
       await api.harnessDecision(approval.id, decision, passwords[approval.id] ?? "");
+      if (!mountedRef.current || activeIdRef.current !== sessionId) return;
       setItems((prev) =>
         prev.map((item) =>
           item.key === key && item.kind === "approval"
@@ -614,9 +713,10 @@ export function AssistantPage() {
             : item
         )
       );
-      // 无论批准还是拒绝，都让模型基于工具结果收尾
-      await resume();
+      // 无论批准还是拒绝，都让模型基于原会话的工具结果收尾。
+      await resume(sessionId);
     } catch (err) {
+      if (!mountedRef.current || activeIdRef.current !== sessionId) return;
       const message = err instanceof ApiError ? err.message : "审批失败";
       // 409 表示审批已被处理或过期：标记为过期并及时同步，避免一直卡在待确认
       const expired =
@@ -628,27 +728,33 @@ export function AssistantPage() {
             : item
         )
       );
-      if (expired && activeId) {
+      if (expired) {
         try {
-          await loadMessages(activeId);
-          setError("审批已失效或已在其他窗口处理，已同步最新会话状态");
+          if (await loadMessages(sessionId)) {
+            setError("审批已失效或已在其他窗口处理，已同步最新会话状态");
+          }
         } catch {
-          setError(message);
+          if (activeIdRef.current === sessionId) setError(message);
         }
       }
     } finally {
-      setDecidingId("");
+      setDecidingId((current) => (current === approval.id ? "" : current));
     }
   }
 
   async function createSession() {
+    resetActiveStream();
+    const operation = streamSeqRef.current;
     try {
       const { session } = await api.harnessCreateSession("排查会话", pendingMode);
       setSessions((prev) => [session, ...prev]);
-      setActiveId(session.id);
+      if (!mountedRef.current || streamSeqRef.current !== operation) return;
+      activateSession(session.id);
       setItems([]);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "创建会话失败");
+      if (streamSeqRef.current === operation) {
+        setError(err instanceof ApiError ? err.message : "创建会话失败");
+      }
     }
   }
 
@@ -682,7 +788,7 @@ export function AssistantPage() {
         key={session.id}
         type="button"
         onClick={() => {
-          setActiveId(session.id);
+          activateSession(session.id);
           onPick?.();
         }}
         className={`mb-1 flex w-full flex-col items-start gap-0.5 rounded-[10px] px-2.5 py-2 text-left transition-colors ${

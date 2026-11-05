@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -13,24 +16,34 @@ const sshPoolIdleTTL = 3 * time.Minute
 // sshPoolEntry 一台主机共享的 SSH 连接。
 // ssh.Client 支持并发 NewSession，因此同一连接可被多个只读请求复用。
 type sshPoolEntry struct {
-	client      *ssh.Client
-	fingerprint string
-	lastUsed    time.Time
-	inflight    int
+	client        *ssh.Client
+	fingerprint   string
+	configVersion string
+	lastUsed      time.Time
+	inflight      int
+}
+
+func sshHostConfigVersion(host sshHost) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s",
+		host.Host, host.Port, host.Username, host.AuthType, host.Secret, host.Passphrase, host.HostKey)))
+	return hex.EncodeToString(sum[:])
 }
 
 // acquireSSHHost 获取可复用的 SSH 连接；返回的 release 必须在请求结束时调用。
 // 复用前会打开一个空会话探测连接是否仍然可用，失效时自动重连。
 func (a *App) acquireSSHHost(ctx context.Context, host sshHost) (*ssh.Client, string, func(), error) {
 	now := time.Now()
+	version := sshHostConfigVersion(host)
 	a.sshPoolMu.Lock()
 	a.cleanupSSHPoolLocked(now)
 	if entry, ok := a.sshPool[host.ID]; ok && entry.client != nil {
-		if err := probeSSHClient(entry.client); err == nil {
-			entry.inflight++
-			entry.lastUsed = now
-			a.sshPoolMu.Unlock()
-			return entry.client, entry.fingerprint, func() { a.releaseSSHHost(host.ID) }, nil
+		if entry.configVersion == version {
+			if err := probeSSHClient(entry.client); err == nil {
+				entry.inflight++
+				entry.lastUsed = now
+				a.sshPoolMu.Unlock()
+				return entry.client, entry.fingerprint, func() { a.releaseSSHHost(host.ID) }, nil
+			}
 		}
 		_ = entry.client.Close()
 		delete(a.sshPool, host.ID)
@@ -44,14 +57,16 @@ func (a *App) acquireSSHHost(ctx context.Context, host sshHost) (*ssh.Client, st
 
 	a.sshPoolMu.Lock()
 	if entry, ok := a.sshPool[host.ID]; ok && entry.client != nil && entry.client != client {
-		// 并发重连时复用先建好的连接，避免同一主机保留两条长连接
-		if err := probeSSHClient(entry.client); err == nil {
-			_ = client.Close()
-			entry.inflight++
-			entry.lastUsed = now
-			cachedFingerprint := entry.fingerprint
-			a.sshPoolMu.Unlock()
-			return entry.client, cachedFingerprint, func() { a.releaseSSHHost(host.ID) }, nil
+		// 并发重连时只复用配置一致的连接，避免更新前发起的旧拨号覆盖新配置。
+		if entry.configVersion == version {
+			if err := probeSSHClient(entry.client); err == nil {
+				_ = client.Close()
+				entry.inflight++
+				entry.lastUsed = now
+				cachedFingerprint := entry.fingerprint
+				a.sshPoolMu.Unlock()
+				return entry.client, cachedFingerprint, func() { a.releaseSSHHost(host.ID) }, nil
+			}
 		}
 		_ = entry.client.Close()
 	}
@@ -59,7 +74,7 @@ func (a *App) acquireSSHHost(ctx context.Context, host sshHost) (*ssh.Client, st
 		a.sshPool = make(map[int64]*sshPoolEntry)
 	}
 	a.sshPool[host.ID] = &sshPoolEntry{
-		client: client, fingerprint: fingerprint, lastUsed: now, inflight: 1,
+		client: client, fingerprint: fingerprint, configVersion: version, lastUsed: now, inflight: 1,
 	}
 	a.sshPoolMu.Unlock()
 	return client, fingerprint, func() { a.releaseSSHHost(host.ID) }, nil
@@ -91,6 +106,16 @@ func (a *App) cleanupSSHPoolLocked(now time.Time) {
 			_ = entry.client.Close()
 			delete(a.sshPool, id)
 		}
+	}
+}
+
+// invalidateSSHHost 在地址或凭据变化后立即关闭旧连接，进行中的请求也会随连接关闭而终止。
+func (a *App) invalidateSSHHost(hostID int64) {
+	a.sshPoolMu.Lock()
+	defer a.sshPoolMu.Unlock()
+	if entry, ok := a.sshPool[hostID]; ok {
+		_ = entry.client.Close()
+		delete(a.sshPool, hostID)
 	}
 }
 

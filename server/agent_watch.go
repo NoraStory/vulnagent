@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -36,6 +37,9 @@ func runAgentWatch(server string, auth agentAuth, initial collect.Report, interv
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := flushAgentJobResults(ctx, server, auth); err != nil {
+		fmt.Fprintf(os.Stderr, "续传历史作业结果失败（将继续重试）：%v\n", err)
+	}
 	exe, _ := os.Executable()
 	fmt.Fprintf(os.Stderr, "Agent 常驻模式已启动：hostname=%s interval=%s reportInterval=%s enrolled=%v\n",
 		hostname, interval, reportInterval, auth.enrolled())
@@ -100,6 +104,10 @@ func postAgentReport(server string, auth agentAuth, report collect.Report, timeo
 }
 
 func pollHostJobs(ctx context.Context, server string, auth agentAuth, hostname, exe string) {
+	if err := flushAgentJobResults(ctx, server, auth); err != nil {
+		fmt.Fprintf(os.Stderr, "续传作业结果失败：%v\n", err)
+		return
+	}
 	jobs, err := listHostJobs(ctx, server, auth, hostname)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "拉取作业失败：%v\n", err)
@@ -132,8 +140,13 @@ func pollHostJobs(ctx context.Context, server string, auth agentAuth, hostname, 
 			JobID: claimed.ID, Action: claimed.Action, Params: json.RawMessage(claimed.Params),
 		}, agentexec.DefaultOptions(), exe)
 		cancel()
-		if err := postJobResult(ctx, server, auth, hostname, claimed.ID, res); err != nil {
-			fmt.Fprintf(os.Stderr, "回传作业 %s 结果失败：%v\n", claimed.ID, err)
+		pending := agentPendingResult{Hostname: hostname, JobID: claimed.ID, Attempt: claimed.Attempts, Result: res}
+		if err := persistAgentJobResult(pending); err != nil {
+			fmt.Fprintf(os.Stderr, "持久化作业 %s 结果失败：%v\n", claimed.ID, err)
+			continue
+		}
+		if err := flushAgentJobResults(ctx, server, auth); err != nil {
+			fmt.Fprintf(os.Stderr, "回传作业 %s 结果失败（已持久化，将自动重试）：%v\n", claimed.ID, err)
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "作业 %s 完成：%s（exit=%d，%dms）\n",
@@ -197,18 +210,108 @@ func claimHostJob(ctx context.Context, server string, auth agentAuth, hostname, 
 	return payload.Job, nil
 }
 
-func postJobResult(ctx context.Context, server string, auth agentAuth, hostname, jobID string, res agentexec.Result) error {
+type agentPendingResult struct {
+	Hostname string           `json:"hostname"`
+	JobID    string           `json:"jobId"`
+	Attempt  int              `json:"attempt"`
+	Result   agentexec.Result `json:"result"`
+}
+
+func agentResultOutboxDir() string {
+	return filepath.Join(dataDirFromEnv(), "agent-results")
+}
+
+func agentResultPath(pending agentPendingResult) string {
+	return filepath.Join(agentResultOutboxDir(), fmt.Sprintf("%x-%d.json", pending.JobID, pending.Attempt))
+}
+
+// persistAgentJobResult 每个尝试单独落盘；成功回传后删除，崩溃重启可从目录恢复。
+func persistAgentJobResult(pending agentPendingResult) error {
+	if pending.JobID == "" || pending.Attempt <= 0 || pending.Hostname == "" {
+		return fmt.Errorf("结果缺少 jobId、attempt 或 hostname")
+	}
+	if err := os.MkdirAll(agentResultOutboxDir(), 0o700); err != nil {
+		return err
+	}
+	path := agentResultPath(pending)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	data, err := json.Marshal(pending)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func loadAgentJobResults() ([]agentPendingResult, error) {
+	entries, err := os.ReadDir(agentResultOutboxDir())
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	items := make([]agentPendingResult, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(agentResultOutboxDir(), entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var pending agentPendingResult
+		if err := json.Unmarshal(data, &pending); err != nil {
+			return nil, fmt.Errorf("解析结果文件 %s：%w", entry.Name(), err)
+		}
+		if pending.JobID == "" || pending.Attempt <= 0 || pending.Hostname == "" {
+			return nil, fmt.Errorf("结果文件 %s 缺少必要字段", entry.Name())
+		}
+		items = append(items, pending)
+	}
+	return items, nil
+}
+
+func flushAgentJobResults(ctx context.Context, server string, auth agentAuth) error {
+	items, err := loadAgentJobResults()
+	if err != nil {
+		return err
+	}
+	for _, pending := range items {
+		if err := postJobResult(ctx, server, auth, pending); err != nil {
+			return err
+		}
+		if err := os.Remove(agentResultPath(pending)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("清理已回传结果：%w", err)
+		}
+	}
+	return nil
+}
+
+func postJobResult(ctx context.Context, server string, auth agentAuth, pending agentPendingResult) error {
 	payload := map[string]any{
-		"hostname":   hostname,
-		"status":     res.Status,
-		"output":     res.Output,
-		"error":      res.Error,
-		"exitCode":   res.ExitCode,
-		"durationMs": res.DurationMs,
-		"retryable":  res.Retryable,
+		"hostname":   pending.Hostname,
+		"status":     pending.Result.Status,
+		"output":     pending.Result.Output,
+		"error":      pending.Result.Error,
+		"exitCode":   pending.Result.ExitCode,
+		"durationMs": pending.Result.DurationMs,
+		"retryable":  pending.Result.Retryable,
+		"attempt":    pending.Attempt,
 	}
 	body, _ := json.Marshal(payload)
-	endpoint := trimServer(server) + "/api/v1/agent/jobs/" + url.PathEscape(jobID) + "/result"
+	endpoint := trimServer(server) + "/api/v1/agent/jobs/" + url.PathEscape(pending.JobID) + "/result"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err

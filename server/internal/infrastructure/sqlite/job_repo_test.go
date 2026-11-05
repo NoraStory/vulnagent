@@ -115,3 +115,125 @@ func TestJobRepoRetryAndIdempotency(t *testing.T) {
 		t.Fatalf("应按创建时间倒序：%+v", list)
 	}
 }
+
+func TestJobRepoCreateIdempotentWindowAndTerminalStates(t *testing.T) {
+	repo, assetID := openJobDB(t)
+	ctx := context.Background()
+	since := "2026-01-01T09:55:00+08:00"
+
+	first := sampleJob("JOB-IDEM-1", assetID, "key-window", "2026-01-01T10:00:00+08:00")
+	stored, created, err := repo.CreateIdempotent(ctx, first, since)
+	if err != nil || !created || stored.ID != first.ID {
+		t.Fatalf("首次创建失败：created=%v job=%+v err=%v", created, stored, err)
+	}
+	duplicate := sampleJob("JOB-IDEM-DUP", assetID, "key-window", "2026-01-01T10:01:00+08:00")
+	stored, created, err = repo.CreateIdempotent(ctx, duplicate, since)
+	if err != nil || created || stored.ID != first.ID {
+		t.Fatalf("窗口内应返回原作业：created=%v job=%+v err=%v", created, stored, err)
+	}
+
+	if _, err := repo.db.Exec(`UPDATE host_jobs SET status='failed', finished_at=created_at WHERE id=?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second := sampleJob("JOB-IDEM-2", assetID, "key-window", "2026-01-01T10:02:00+08:00")
+	stored, created, err = repo.CreateIdempotent(ctx, second, since)
+	if err != nil || !created || stored.ID != second.ID {
+		t.Fatalf("失败后应允许新建：created=%v job=%+v err=%v", created, stored, err)
+	}
+
+	if _, err := repo.db.Exec(`UPDATE host_jobs SET status='canceled', finished_at=created_at WHERE id=?`, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	third := sampleJob("JOB-IDEM-3", assetID, "key-window", "2026-01-01T10:03:00+08:00")
+	stored, created, err = repo.CreateIdempotent(ctx, third, since)
+	if err != nil || !created || stored.ID != third.ID {
+		t.Fatalf("取消后应允许新建：created=%v job=%+v err=%v", created, stored, err)
+	}
+
+	if _, err := repo.db.Exec(`UPDATE host_jobs SET status='succeeded', finished_at=created_at WHERE id=?`, third.ID); err != nil {
+		t.Fatal(err)
+	}
+	fourth := sampleJob("JOB-IDEM-4", assetID, "key-window", "2026-01-01T10:21:00+08:00")
+	stored, created, err = repo.CreateIdempotent(ctx, fourth, "2026-01-01T10:11:00+08:00")
+	if err != nil || !created || stored.ID != fourth.ID {
+		t.Fatalf("超出窗口应允许新建：created=%v job=%+v err=%v", created, stored, err)
+	}
+	var count int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM host_jobs WHERE idempotency_key=?`, "key-window").Scan(&count); err != nil || count != 4 {
+		t.Fatalf("历史作业应全部保留：count=%d err=%v", count, err)
+	}
+}
+
+func TestJobRepoCompleteOnceRejectsDuplicate(t *testing.T) {
+	repo, assetID := openJobDB(t)
+	ctx := context.Background()
+	job := sampleJob("JOB-ONCE", assetID, "key-once", "2026-01-01T10:00:00+08:00")
+	if err := repo.Create(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := repo.Claim(ctx, job.ID, "job-host", "2026-01-01T10:01:00+08:00"); err != nil || !ok {
+		t.Fatalf("抢占失败：ok=%v err=%v", ok, err)
+	}
+	applied, err := repo.CompleteOnce(ctx, job.ID, 1, "succeeded", "first", "", 0, "2026-01-01T10:02:00+08:00", "")
+	if err != nil || !applied {
+		t.Fatalf("首次完成失败：applied=%v err=%v", applied, err)
+	}
+	applied, err = repo.CompleteOnce(ctx, job.ID, 1, "succeeded", "duplicate", "", 0, "2026-01-01T10:03:00+08:00", "")
+	if err != nil || applied {
+		t.Fatalf("重复完成应被忽略：applied=%v err=%v", applied, err)
+	}
+	got, _, _ := repo.ByID(ctx, job.ID)
+	if got.Output != "first" {
+		t.Fatalf("重复结果覆盖了首次结果：%+v", got)
+	}
+	var attempts int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM host_job_attempts WHERE job_id=?`, job.ID).Scan(&attempts); err != nil || attempts != 1 {
+		t.Fatalf("重复完成不应新增尝试记录：count=%d err=%v", attempts, err)
+	}
+}
+
+func TestJobRepoLeaseRecovery(t *testing.T) {
+	repo, assetID := openJobDB(t)
+	ctx := context.Background()
+	job := sampleJob("JOB-LEASE", assetID, "key-lease", "2026-01-01T10:00:00+08:00")
+	if err := repo.Create(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := repo.Claim(ctx, job.ID, "job-host", "2026-01-01T10:00:30+08:00"); err != nil || !ok {
+		t.Fatalf("抢占失败：ok=%v err=%v", ok, err)
+	}
+	if n, err := repo.RecoverExpired(ctx, "2026-01-01T10:01:00+08:00", "2026-01-01T09:59:00+08:00"); err != nil || n != 0 {
+		t.Fatalf("未到期作业不应回收：n=%d err=%v", n, err)
+	}
+	if n, err := repo.RecoverExpired(ctx, "2026-01-01T10:04:00+08:00", "2026-01-01T10:01:00+08:00"); err != nil || n != 1 {
+		t.Fatalf("到期作业应回收：n=%d err=%v", n, err)
+	}
+	got, _, _ := repo.ByID(ctx, job.ID)
+	if got.Status != "pending" || got.NextRunAt == "" {
+		t.Fatalf("租约回收后应重新排队：%+v", got)
+	}
+	if applied, err := repo.CompleteOnce(ctx, job.ID, 1, "succeeded", "late", "", 0, "2026-01-01T10:04:30+08:00", ""); err != nil || applied {
+		t.Fatalf("过期尝试的迟到结果应被忽略：applied=%v err=%v", applied, err)
+	}
+
+	if _, ok, err := repo.Claim(ctx, job.ID, "job-host", "2026-01-01T10:05:00+08:00"); err != nil || !ok {
+		t.Fatalf("第二次抢占失败：ok=%v err=%v", ok, err)
+	}
+	if n, err := repo.RecoverExpired(ctx, "2026-01-01T10:09:00+08:00", "2026-01-01T10:06:00+08:00"); err != nil || n != 1 {
+		t.Fatalf("第二次租约回收失败：n=%d err=%v", n, err)
+	}
+	if _, ok, err := repo.Claim(ctx, job.ID, "job-host", "2026-01-01T10:10:00+08:00"); err != nil || !ok {
+		t.Fatalf("第三次抢占失败：ok=%v err=%v", ok, err)
+	}
+	if n, err := repo.RecoverExpired(ctx, "2026-01-01T10:14:00+08:00", "2026-01-01T10:11:00+08:00"); err != nil || n != 1 {
+		t.Fatalf("第三次租约回收失败：n=%d err=%v", n, err)
+	}
+	got, _, _ = repo.ByID(ctx, job.ID)
+	if got.Status != "failed" || got.FinishedAt == "" {
+		t.Fatalf("超过最大尝试次数后应失败：%+v", got)
+	}
+	var expired int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM host_job_attempts WHERE job_id=? AND status='expired'`, job.ID).Scan(&expired); err != nil || expired != 3 {
+		t.Fatalf("每次租约回收都应留痕：count=%d err=%v", expired, err)
+	}
+}

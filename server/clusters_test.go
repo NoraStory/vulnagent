@@ -100,6 +100,42 @@ func TestProjectsClustersAndHealthCheck(t *testing.T) {
 	}
 }
 
+func TestClusterHTTPCheckSecurityBoundaries(t *testing.T) {
+	app := newRuntimeTestApp(t)
+	for _, target := range []string{
+		"http://169.254.169.254/latest/meta-data",
+		"http://100.100.100.200/latest/meta-data",
+		"http://metadata.google.internal/computeMetadata/v1",
+	} {
+		status, _, _ := app.checkClusterNode(context.Background(), clusterNodeRecord{Role: "backend", CheckType: "http", URL: target})
+		if status != "failed" {
+			t.Fatalf("元数据地址 %q 应检查失败", target)
+		}
+		if _, err := normalizeClusterNode("node", "backend", "", 0, target, 0, "http", "", ""); err == nil {
+			t.Fatalf("节点地址 %q 应在保存时被拒绝", target)
+		}
+	}
+
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("internal-response-secret"))
+	}))
+	defer health.Close()
+	status, _, detail := app.checkClusterNode(context.Background(), clusterNodeRecord{Role: "backend", CheckType: "http", URL: health.URL})
+	if status != "ok" || detail != "HTTP 200" || strings.Contains(detail, "internal-response-secret") {
+		t.Fatalf("健康检查不应返回响应正文：status=%s detail=%q", status, detail)
+	}
+
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data", http.StatusFound)
+	}))
+	defer redirect.Close()
+	status, _, detail = app.checkClusterNode(context.Background(), clusterNodeRecord{Role: "backend", CheckType: "http", URL: redirect.URL})
+	if status != "failed" || !strings.Contains(detail, "重定向目标不安全") {
+		t.Fatalf("重定向到元数据地址应被阻断：status=%s detail=%q", status, detail)
+	}
+}
+
 func TestClusterJobRunsAsync(t *testing.T) {
 	app := newRuntimeTestApp(t)
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
